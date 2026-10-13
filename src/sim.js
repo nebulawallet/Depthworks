@@ -1,6 +1,6 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
 import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER } from './data.js';
-import { S, world, invAdd, invGet, invGive, invRoom, roomFor, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify } from './state.js';
+import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify } from './state.js';
 const isClient = () => S.net.role === 'client';
 
 export const SPACING = .25;
@@ -24,7 +24,7 @@ export function createEntity(type, x, y, z, dir = 0, dy = 0) {
     case 'furnace': e.recipe = null; e.inp = {}; e.out = {}; e.crafting = false; break;
     case 'assembler': e.recipe = null; e.inp = {}; e.out = {}; e.crafting = false; break;
     case 'lab': e.inp = {}; e.unit = null; break;
-    case 'chest': e.items = null; e.store = {}; e.count = 0; break;
+    case 'chest': e.items = null; e.store = new Inventory(def.cap); break;
     case 'transmitter': e.inp = {}; e.charging = false; break;
   }
   return e;
@@ -43,7 +43,7 @@ export function canAccept(e, it, manual = false) {
   if (usesFuel(e) && ITEMS[it]?.fuel && e.kind !== 'chest')
     return (e.fuel === 0 || e.fuelType === it) && e.fuel < (manual ? ITEMS[it].stack : 5);
   switch (e.kind) {
-    case 'chest': return roomFor(e.store, it, def.cap) > 0;
+    case 'chest': return e.store.room(it) > 0;
     case 'furnace': {
       const r = smeltRecipe(it); if (!r) return false;
       if (e.recipe && e.recipe !== r.id && (e.crafting || Object.values(e.inp).some(v => v > 0))) return false;
@@ -61,7 +61,7 @@ export function canAccept(e, it, manual = false) {
 export function insert(e, it) {
   if (usesFuel(e) && ITEMS[it]?.fuel && e.kind !== 'chest') { e.fuelType = it; e.fuel++; return; }
   switch (e.kind) {
-    case 'chest': e.store[it] = (e.store[it] || 0) + 1; e.count++; break;
+    case 'chest': e.store.add(it, 1); break;
     case 'furnace': e.recipe = smeltRecipe(it).id; e.inp[it] = (e.inp[it] || 0) + 1; break;
     default: e.inp[it] = (e.inp[it] || 0) + 1;
   }
@@ -76,7 +76,7 @@ export function take(e, ok) {
     return e.items.splice(best, 1)[0].type;
   }
   switch (e.kind) {
-    case 'chest': for (const it in e.store) if (e.store[it] > 0 && ok(it)) { if (--e.store[it] === 0) delete e.store[it]; e.count--; e.lastActive = S.T; return it; } break;
+    case 'chest': for (const it of e.store.counts().keys()) if (ok(it)) { e.store.remove(it, 1); e.lastActive = S.T; return it; } break;
     case 'furnace': case 'assembler': for (const it in e.out) if (e.out[it] > 0 && ok(it)) { if (--e.out[it] === 0) delete e.out[it]; return it; } break;
     case 'drill': if (e.buffer && ok(e.buffer)) { const it = e.buffer; e.buffer = null; return it; } break;
   }
@@ -395,7 +395,7 @@ export function computeVolume() {
 
 // ---------------------------------------------------------------- hand crafting
 export function planCraft(rid, times) {
-  const sim = new Map(actor.inv), queue = [];
+  const sim = actor.inv.counts(), queue = [];
   const craftInto = (r, t, internal) => {
     for (const [k, n] of Object.entries(r.in)) if (!need(k, n * t)) return false;
     const giveOut = {};
@@ -425,8 +425,8 @@ export function maxCraftable(rid) {
 export function queueCraft(rid, times = 1) {
   const plan = planCraft(rid, times);
   if (!plan) return false;
-  const inv = actor.inv;
-  for (const k of new Set([...inv.keys(), ...plan.sim.keys()])) { const v = plan.sim.get(k) || 0; if (v > 0) inv.set(k, v); else inv.delete(k); }
+  const inv = actor.inv, before = inv.counts();
+  for (const k of new Set([...before.keys(), ...plan.sim.keys()])) { const d = (plan.sim.get(k) || 0) - (before.get(k) || 0); if (d < 0) inv.remove(k, -d); else if (d > 0) inv.add(k, d); }
   actor.craft.push(...plan.queue); if (actor.local) bus.emit('inv'); return true;
 }
 export function cancelCraft(i) {
@@ -567,7 +567,7 @@ export function fastTransfer(e, sel) {
     return n;
   }
   const grab = (obj, it) => { const k = Math.min(obj[it], invRoom(it)); if (k > 0) { invAdd(it, k); obj[it] -= k; n += k; if (!obj[it]) delete obj[it]; } };
-  if (e.store) { for (const it of Object.keys(e.store)) { const before = e.store[it]; grab(e.store, it); e.count -= before - (e.store[it] || 0); } }
+  if (e.store) for (const [it, have] of e.store.counts()) { const k = Math.min(have, invRoom(it)); if (k > 0) { e.store.remove(it, k); invAdd(it, k); n += k; } }
   if (e.out) for (const it of Object.keys(e.out)) grab(e.out, it);
   if (e.buffer && invRoom(e.buffer) > 0) { invAdd(e.buffer); e.buffer = null; n++; }
   return n;
@@ -663,7 +663,8 @@ export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false) {
 export function refundContents(e) {
   const add = o => { for (const [k, v] of Object.entries(o || {})) if (v > 0) invGive(k, v); };
   if (e.items) e.items.forEach(it => invGive(it.type));
-  add(e.store); add(e.inp); add(e.out);
+  if (e.store) for (const [k, v] of e.store.counts()) invGive(k, v);
+  add(e.inp); add(e.out);
   if (e.fuel) invGive(e.fuelType, e.fuel);
   if (e.held) invGive(e.held);
   if (e.buffer) invGive(e.buffer);
@@ -708,8 +709,7 @@ export function entityCommand(e, cmd, arg) {
   switch (cmd) {
     case 'takeinp': takeFrom(e.inp, arg); break;
     case 'takeout': takeFrom(e.out, arg); break;
-    case 'takestore': if (e.store) e.count -= takeFrom(e.store, arg); break;
-    case 'takeall': if (e.store) { for (const k of Object.keys(e.store)) takeFrom(e.store, k); e.count = 0; } break;
+    case 'takeall': if (e.store) for (const [k, v] of e.store.counts()) { const got = Math.min(v, invRoom(k)); e.store.remove(k, got); invAdd(k, got); } break;
     case 'takebuf': if (e.buffer) { invGive(e.buffer); e.buffer = null; } break;
     case 'takefuel': if (e.fuel) { invGive(e.fuelType, e.fuel); e.fuel = 0; e.fuelType = null; } break;
     case 'takebelt': if (e.items) { e.items.forEach(i => invGive(i.type)); e.items.length = 0; } break;
@@ -719,4 +719,129 @@ export function entityCommand(e, cmd, arg) {
     case 'pitch': e.dy = e.dy === 0 ? 1 : e.dy === 1 ? -1 : 0; bus.emit('remesh', e); break;
     case 'rotate': rotateEntity(e); break;
   }
+}
+
+// ---------------------------------------------------------------- slots: drag and drop between inventories
+// Machines expose typed slots like Factorio's: fuel, input, result, one per ingredient or science pack.
+// A slot reference is { p: index } for the acting engineer's inventory, or { e: [x, y, z], s: slotId } for a machine.
+const firstKey = o => Object.keys(o || {}).find(k => o[k] > 0) || null;
+const PACKS = ['red_pack', 'green_pack', 'blue_pack', 'resonance_pack'];
+export function entSlots(e) {
+  const out = [];
+  if (!e) return out;
+  if (e.fuel !== undefined) out.push({ id: 'fuel', group: 'Fuel', it: e.fuel ? e.fuelType : null, n: e.fuel, hint: 'coal' });
+  switch (e.kind) {
+    case 'furnace': {
+      const it = firstKey(e.inp);
+      out.push({ id: 'src', group: 'Input', it, n: it ? e.inp[it] : 0, hint: 'iron_ore' });
+      const outs = Object.keys(e.out).filter(k => e.out[k] > 0);
+      if (!outs.length) out.push({ id: 'res:', group: 'Result', it: null, n: 0, hint: RECIPE[e.recipe] ? Object.keys(RECIPE[e.recipe].out)[0] : 'iron_plate' });
+      for (const k of outs) out.push({ id: 'res:' + k, group: 'Result', it: k, n: e.out[k] });
+      break;
+    }
+    case 'assembler': {
+      const r = RECIPE[e.recipe]; if (!r) break;
+      for (const k of Object.keys(r.in)) out.push({ id: 'in:' + k, group: 'Ingredients', it: e.inp[k] ? k : null, n: e.inp[k] || 0, hint: k });
+      for (const k of Object.keys(r.out)) out.push({ id: 'res:' + k, group: 'Result', it: e.out[k] ? k : null, n: e.out[k] || 0, hint: k });
+      break;
+    }
+    case 'lab': for (const k of PACKS) out.push({ id: 'in:' + k, group: 'Science packs', it: e.inp[k] ? k : null, n: e.inp[k] || 0, hint: k }); break;
+    case 'transmitter': out.push({ id: 'in:resonance_pack', group: 'Resonance packs', it: e.inp.resonance_pack ? 'resonance_pack' : null, n: e.inp.resonance_pack || 0, hint: 'resonance_pack' }); break;
+    case 'drill': out.push({ id: 'buf', group: 'Output', it: e.buffer, n: e.buffer ? 1 : 0 }); break;
+    case 'chest': e.store.slots.forEach((s, i) => out.push({ id: 'c:' + i, group: 'Storage', it: s?.it || null, n: s?.n || 0 })); break;
+  }
+  return out;
+}
+function entSlotAccept(e, id, it) {
+  if (!it) return 0;
+  const st = stackOf(it);
+  if (id === 'fuel') return ITEMS[it]?.fuel && (!e.fuel || e.fuelType === it) ? st - e.fuel : 0;
+  if (id === 'src') {
+    const r = smeltRecipe(it), cur = firstKey(e.inp);
+    if (!r || (cur && cur !== it) || (e.crafting && e.recipe !== r.id)) return 0;
+    return st - (e.inp[it] || 0);
+  }
+  if (id.startsWith('in:')) {
+    const k = id.slice(3);
+    if (k !== it || (e.kind === 'assembler' && !RECIPE[e.recipe]?.in[k])) return 0;
+    return st - (e.inp[k] || 0);
+  }
+  if (id.startsWith('c:')) return e.store.slotAccept(+id.slice(2), it);
+  return 0;   // results and drill output only come out
+}
+function entSlotPut(e, id, it, n) {
+  const k = Math.min(n, entSlotAccept(e, id, it));
+  if (k <= 0) return 0;
+  if (id === 'fuel') { e.fuelType = it; e.fuel += k; }
+  else if (id === 'src') { e.recipe = smeltRecipe(it).id; e.inp[it] = (e.inp[it] || 0) + k; }
+  else if (id.startsWith('in:')) e.inp[it] = (e.inp[it] || 0) + k;
+  else if (id.startsWith('c:')) e.store.slotPut(+id.slice(2), it, k);
+  return k;
+}
+function entSlotTake(e, id, n) {
+  if (id === 'fuel') { const it = e.fuelType, k = Math.min(n, e.fuel); e.fuel -= k; if (!e.fuel) e.fuelType = null; return [it, k]; }
+  if (id === 'buf') { const it = e.buffer; if (!it) return [null, 0]; e.buffer = null; return [it, 1]; }
+  if (id.startsWith('c:')) { const i = +id.slice(2), it = e.store.slots[i]?.it; return [it, e.store.slotTake(i, n)]; }
+  const obj = id.startsWith('res:') ? e.out : e.inp, k2 = id === 'src' ? firstKey(e.inp) : id.slice(id.indexOf(':') + 1);
+  if (!k2 || !obj[k2]) return [null, 0];
+  const k = Math.min(n, obj[k2]); obj[k2] -= k; if (!obj[k2]) delete obj[k2];
+  return [k2, k];
+}
+const refEnt = r => r.e ? world.ents.get(key(r.e[0], r.e[1], r.e[2])) : null;
+function refGet(r) {
+  if (r.p !== undefined) { const s = actor.inv.slots[r.p]; return { it: s?.it || null, n: s?.n || 0 }; }
+  const e = refEnt(r), s = e && entSlots(e).find(x => x.id === r.s);
+  return s ? { it: s.it, n: s.n } : { it: null, n: 0 };
+}
+const refAccept = (r, it) => r.p !== undefined ? actor.inv.slotAccept(r.p, it) : refEnt(r) ? entSlotAccept(refEnt(r), r.s, it) : 0;
+const refPut = (r, it, n) => r.p !== undefined ? actor.inv.slotPut(r.p, it, n) : refEnt(r) ? entSlotPut(refEnt(r), r.s, it, n) : 0;
+function refTake(r, n) {
+  if (r.p !== undefined) { const it = actor.inv.slots[r.p]?.it; return [it, actor.inv.slotTake(r.p, n)]; }
+  const e = refEnt(r); return e ? entSlotTake(e, r.s, n) : [null, 0];
+}
+const isStorage = r => r.p !== undefined || (r.s && r.s.startsWith('c:'));
+const nearEnough = r => !r.e || distTo(r.e[0], r.e[2]) <= PLAYER.reach + 1;
+// Move up to n items from one slot to another. Storage slots swap if they hold different things.
+export function moveItems(from, to, n) {
+  if (!nearEnough(from) || !nearEnough(to)) { notify('toast', 'out of reach'); return 0; }
+  const a = refGet(from); if (!a.it) return 0;
+  n = Math.min(n || a.n, a.n);
+  const b = refGet(to);
+  if (b.it && b.it !== a.it) {
+    if (isStorage(from) && isStorage(to) && n === a.n) {
+      const [ia, na] = refTake(from, a.n), [ib, nb] = refTake(to, b.n);
+      refPut(to, ia, na); refPut(from, ib, nb);
+      if (actor.local) bus.emit('inv');
+      return na;
+    }
+    notify('toast', 'that slot already holds something else'); return 0;
+  }
+  const k = Math.min(n, refAccept(to, a.it));
+  if (k <= 0) { notify('toast', to.p !== undefined ? 'that slot is full' : `that slot won't take ${ITEMS[a.it].name.toLowerCase()}`); return 0; }
+  const [it, got] = refTake(from, k);
+  refPut(to, it, got);
+  if (actor.local) bus.emit('inv');
+  return got;
+}
+// Shift+click: send a whole stack to the other side (inventory <-> the open machine).
+export function shiftMove(from, entPos) {
+  if (!nearEnough(from)) { notify('toast', 'out of reach'); return 0; }
+  const a = refGet(from); if (!a.it) return 0;
+  let moved = 0;
+  if (from.p !== undefined) {
+    const e = entPos ? world.ents.get(key(entPos[0], entPos[1], entPos[2])) : null;
+    if (!e) return 0;
+    if (e.store) { const left = e.store.add(a.it, a.n); moved = a.n - left; actor.inv.slotTake(from.p, moved); }
+    else for (const s of entSlots(e)) {
+      const k = Math.min(a.n - moved, entSlotAccept(e, s.id, a.it));
+      if (k > 0) { actor.inv.slotTake(from.p, k); entSlotPut(e, s.id, a.it, k); moved += k; }
+      if (moved >= a.n) break;
+    }
+    if (!moved) notify('toast', `it won't take ${ITEMS[a.it].name.toLowerCase()}`);
+  } else {
+    const k = Math.min(a.n, invRoom(a.it));
+    if (k > 0) { const [it, got] = refTake(from, k); actor.inv.add(it, got); moved = got; } else notify('toast', 'inventory full');
+  }
+  if (actor.local) bus.emit('inv');
+  return moved;
 }

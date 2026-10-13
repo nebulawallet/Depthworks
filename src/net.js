@@ -8,7 +8,7 @@
 import { Peer } from 'peerjs';
 import { S, world, bus, key, newPlayer, asActor, notify, inv } from './state.js';
 import { ITEMS, TECH } from './data.js';
-import { place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch } from './sim.js';
+import { place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove } from './sim.js';
 import { serialize, entToJSON, entFromJSON, applyEntJSON } from './save.js';
 
 const PREFIX = 'depthworks-v1-';
@@ -20,7 +20,7 @@ export const netInfo = () => ({ role: S.net.role, code: S.net.code, players: [..
 
 const makeCode = () => Array.from({ length: 6 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
 export const cleanName = n => (String(n || '').replace(/[^\p{L}\p{N} _\-.]/gu, '').trim().slice(0, 16)) || 'Engineer';
-const invToList = m => [...m].filter(([, v]) => v > 0);
+const invToList = inv => inv.toList();
 
 // ---------------------------------------------------------------- actions (same entry point for everyone)
 // Solo and host apply immediately; a friend's browser forwards to the host.
@@ -43,6 +43,8 @@ function applyAction(op) {
     case 'fast': if (e) { const n = fastTransfer(e, op.sel); notify('toast', n ? `${op.sel ? 'put in' : 'took'} ${n} item${n > 1 ? 's' : ''}` : 'nothing to move'); } break;
     case 'drop': dropAt({ x: op.x, y: op.y, z: op.z }, op.sel); break;
     case 'cmd': if (e) entityCommand(e, op.cmd, op.arg); break;
+    case 'move': moveItems(op.from, op.to, op.n); break;
+    case 'shift': shiftMove(op.from, op.ent); break;
     case 'research': { const t = TECH[op.id]; if (t && !S.research.done.has(op.id) && techAvailable(t)) S.research.current = op.id; break; }
   }
   return null;
@@ -81,10 +83,10 @@ function onHostMessage(conn, m) {
     const used = new Set([...S.players.values()].map(p => p.color));
     const p = newPlayer(conn.peer, name, COLORS.find(col => !used.has(col)) ?? COLORS[S.players.size % COLORS.length]);
     const back = S.remoteInv?.[name];
-    if (back) { for (const [k, v] of back.inv) p.inv.set(k, v); p.x = back.x; p.z = back.z; }
+    if (back) { p.inv.loadAny(back.inv); p.x = back.x; p.z = back.z; }
     else {   // newcomers land next to the host with the same starter kit everyone gets
       p.x = S.player.x + 1.2; p.z = S.player.z + .6;
-      for (const [k, v] of Object.entries({ iron_plate: 8, burner_drill: 1, furnace: 1 })) p.inv.set(k, v);
+      for (const [k, v] of Object.entries({ iron_plate: 8, burner_drill: 1, furnace: 1 })) p.inv.add(k, v);
     }
     S.players.set(p.id, p);
     net.conns.set(conn.peer, { conn, p, cache: new Map() });
@@ -109,7 +111,8 @@ function dropFriend(id) {
   net.conns.delete(id);
   const p = c.p;
   (S.remoteInv ||= {})[p.name] = { inv: invToList(p.inv), x: p.x, z: p.z };   // their stuff waits for them
-  for (const q of p.craft) for (const [k, n] of Object.entries(q.give || {})) p.inv.set(k, (p.inv.get(k) || 0) + n);
+  for (const q of p.craft) for (const [k, n] of Object.entries(q.give || {})) p.inv.add(k, n);
+  (S.remoteInv[p.name]).inv = invToList(p.inv);
   S.players.delete(id);
   systemChat(`${p.name} left`);
   bus.emit('players');
@@ -243,7 +246,7 @@ function applyState(m) {
   for (const id of [...S.players.keys()]) if (!seen.has(id)) { S.players.delete(id); bus.emit('players'); }
   // me
   const you = m.you;
-  inv.clear(); for (const [k, v] of you.inv) inv.set(k, v);
+  inv.loadAny(you.inv);
   S.player.craft = you.craft || [];
   S.player.mining = you.mining;
   bus.emit('inv');
@@ -286,3 +289,4 @@ export function netTick(dt) {
   }
 }
 export function leave() { try { net.peer?.destroy(); } catch { /* ignore */ } }
+

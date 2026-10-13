@@ -4,7 +4,7 @@ import { S, world, inv, bus, key } from './state.js';
 import { place } from './sim.js';
 
 const SLOT = 'depthworks.save.v3';
-const FIELDS = ['recipe', 'filter', 'inp', 'out', 'store', 'count', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit'];
+const FIELDS = ['recipe', 'filter', 'inp', 'out', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit'];
 
 export function hasSave() { try { return !!localStorage.getItem(SLOT); } catch { return false; } }
 export function wipeSave() { try { localStorage.removeItem(SLOT); } catch { /* storage unavailable */ } }
@@ -15,14 +15,21 @@ export function entToJSON(e) {
   const o = { t: e.type, x: e.x, y: e.y, z: e.z, d: e.dir, dy: e.dy };
   for (const f of FIELDS) if (e[f] !== undefined) o[f] = e[f];
   if (e.items) o.items = e.items.map(i => [i.type, +i.p.toFixed(3)]);
+  if (e.store) o.store = e.store.toList();
   if (e.pair) o.pair = [e.pair.x, e.pair.z];
   return o;
+}
+// Chests hold slot lists; saves from before slots stored { item: count }.
+function loadStore(e, s) {
+  if (!e.store || !s) return;
+  if (Array.isArray(s)) e.store.loadList(s); else { e.store.clear(); for (const [k, v] of Object.entries(s)) e.store.add(k, v); }
 }
 // Copy state onto an existing entity. Rebuilds its model if something visible changed.
 export function applyEntJSON(e, o, forceRemesh = false) {
   const visual = forceRemesh || o.d !== e.dir || (o.dy ?? 0) !== (e.dy ?? 0) || (o.recipe ?? null) !== (e.recipe ?? null) || (o.role ?? null) !== (e.role ?? null);
   for (const f of FIELDS) if (o[f] !== undefined) e[f] = o[f] && typeof o[f] === 'object' ? { ...o[f] } : o[f];
   if (o.items && e.items) e.items = o.items.map(([type, p]) => ({ type, p }));
+  loadStore(e, o.store);
   if (o.st !== undefined) e.status = o.st;
   if (o.age !== undefined) e.lastActive = S.T - o.age;
   if (o.ph !== undefined) e.t = o.ph;   // inserter swing phase
@@ -39,6 +46,7 @@ export function entFromJSON(o) {
   if (typeof e !== 'object' || !e) return e;
   for (const f of FIELDS) if (o[f] !== undefined) e[f] = o[f] && typeof o[f] === 'object' ? { ...o[f] } : o[f];
   if (o.items) e.items = o.items.map(([type, p]) => ({ type, p }));
+  loadStore(e, o.store);
   e.dy = o.dy;
   return e;
 }
@@ -50,7 +58,7 @@ export function serialize() {
     research: { done: [...S.research.done], current: S.research.current, progress: S.research.progress },
     signal: { stage: S.signal.stage, pulses: S.signal.pulses, taught: [...S.signal.taught], seen: [...S.signal.seen], log: S.signal.log },
     stats: S.stats, craft: S.player.craft, goalsDone: [...(S.goalsDone || [])], remoteInv: S.remoteInv || {},
-    inv: [...inv], ores: [...world.ores].map(([k, o]) => [k, o.type, o.amount]),
+    invSlots: inv.toList(), ores: [...world.ores].map(([k, o]) => [k, o.type, o.amount]),
     frames: [...world.frames.values()].map(f => [f.x, f.y, f.z]), ents: [...world.ents.values()].map(entToJSON),
     feats: [...world.feats].map(([k, f]) => [k, f.type, +f.v.toFixed(3)]), ground: world.ground,
   });
@@ -75,7 +83,7 @@ export function loadData(d, asGuest = false) {
   if (!asGuest) {
     Object.assign(S.player, d.player); S.hotbar = d.hotbar; S.hotbarSeen = new Set(d.hotbarSeen || []); Object.assign(S.cam, d.cam); S.pix = d.pix || 3;
     S.player.craft = d.craft || []; S.goalsDone = new Set(d.goalsDone || []); S.remoteInv = d.remoteInv || {};
-    inv.clear(); for (const [k, v] of d.inv) inv.set(k, v);
+    if (d.invSlots) inv.loadList(d.invSlots); else { inv.clear(); for (const [k, v] of d.inv || []) inv.add(k, v); }
   }
   S.research.done = new Set(d.research.done); S.research.current = d.research.current; S.research.progress = d.research.progress;
   Object.assign(S.signal, { stage: d.signal.stage, pulses: d.signal.pulses, taught: new Set(d.signal.taught), seen: new Set(d.signal.seen), log: d.signal.log });

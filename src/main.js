@@ -2,7 +2,7 @@ import { ENTITIES, HOTBAR_SIZE, OLD_HOTBARS, TIERS, PLAYER } from './data.js';
 import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, startingInventory, layerRange, layerLockReason, itemName } from './state.js';
 import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo } from './sim.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
-import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat } from './ui.js';
+import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor } from './ui.js';
 import { save, load, loadData, hasSave, wipeSave } from './save.js';
 import { doAction, host, join, netTick, leave, rememberFriends, cleanName } from './net.js';
 import './signal.js';
@@ -44,7 +44,7 @@ function begin(fresh) {
 function beginGuest(data, you) {
   loadData(data, true);
   Object.assign(S.player, { x: you.x, z: you.z, face: 0 });
-  inv.clear(); for (const [k, v] of you.inv) inv.set(k, v);
+  inv.loadAny(you.inv);
   S.hotbar = Array(HOTBAR_SIZE).fill(null); S.hotbarSeen = new Set();
   enterWorld(false);
   toast(`Joined as ${S.player.name}. Enter to chat.`, 3500, 'good');
@@ -138,13 +138,13 @@ addEventListener('keydown', e => {
   keys.add(e.code);
   const c = e.code;
   if (c === 'Tab') { e.preventDefault(); toggleMode(); return; }
-  if (c === 'Escape') { if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else selectItem(null); return; }
+  if (c === 'Escape') { if (cancelCursor()) return; if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else selectItem(null); return; }
   if (c === 'Enter' || c === 'NumpadEnter') { e.preventDefault(); keys.clear(); openChat(); return; }
   if (c === 'KeyF') S.player.pickup = true;
   const drop = () => hover && doAction({ a: 'drop', x: hover.x, y: hover.y, z: hover.z, sel: S.sel });
   if (e.repeat) { if (c === 'KeyZ') drop(); return; }
   if (c.startsWith('Digit')) { const i = (+c.slice(5) + 9) % 10; const it = S.hotbar[i]; selectItem(it && it !== S.sel ? it : null); return; }
-  if (c === 'KeyE' || c === 'KeyI') { closeEntity(); sfx(S.modal === 'inventory' ? 'close' : 'open'); return toggleModal('inventory'); }
+  if (c === 'KeyE' || c === 'KeyI') { if (entityOpen()) { closeEntity(); sfx('close'); return; } sfx(S.modal === 'inventory' ? 'close' : 'open'); return toggleModal('inventory'); }
   if (c === 'KeyT') { sfx(S.modal === 'research' ? 'close' : 'open'); return toggleModal('research'); }
   if (c === 'KeyH' || c === 'F1') return toggleModal('help');
   if (c === 'KeyG') return $('signal').classList.toggle('collapsed');
@@ -282,5 +282,5 @@ frame();
 window.depthworks = {
   S, world, inv, place, removeAt, simulate, begin, beginGuest, save, load, completeResearch, computeVolume, TIERS, held, doAction, host, join,
   run(seconds, input) { for (let i = 0; i < seconds * 20; i++) { simulate(.05, input); netTick(.05); } },
-  give(it, n = 100) { inv.set(it, (inv.get(it) || 0) + n); bus.emit('inv'); },
+  give(it, n = 100) { inv.add(it, n); bus.emit('inv'); },
 };

@@ -76,8 +76,9 @@ Built:
 - **Factorio controls:** E inventory, Q pipette, R rotate, Z drop, hold F to pick up, Ctrl+click to
   move items in or out of machines. Hold right-click to mine ore, trees, rocks and buildings, with a
   progress bar at the cursor and a pickaxe animation.
-- **Inventory and crafting:** 80 slots with stack sizes, and items that don't fit spill onto the
-  ground. Crafting is recursive (missing parts get crafted), with left / right / shift for 1 / 5 /
+- **Inventory and crafting:** 80 real slots with stack sizes, and items that don't fit spill onto the
+  ground. Opening a machine shows its typed slots (fuel, input, result, ingredients, packs, storage)
+  next to your inventory. You drag stacks between them, right-drag for half, or shift+click to send across. Crafting is recursive (missing parts get crafted), with left / right / shift for 1 / 5 /
   all. The crafting queue sits in the corner and can be cancelled.
 - **Burner start:** you land with 8 iron plates, a burner drill and a stone furnace. Burner drills
   and inserters (which can leech their own fuel), wood from trees, stone and coal from rocks, and

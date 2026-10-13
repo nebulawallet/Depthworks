@@ -1,7 +1,7 @@
 // HUD and panels. Panels re-render on a timer, so actions use pointerdown delegation via data-act.
 import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER } from './data.js';
-import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, stackOf, slotsUsed } from './state.js';
-import { canAccept, maxCraftable, techAvailable, isActive, powerSummary } from './sim.js';
+import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange } from './state.js';
+import { maxCraftable, techAvailable, isActive, powerSummary, entSlots } from './sim.js';
 import { iconHTML, iconURL, fmtN } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
 import { project } from './scene.js';
@@ -37,7 +37,7 @@ function recipeTip(r) {
 // ---------------------------------------------------------------- modals
 const modals = ['inventory', 'research', 'help', 'title'];
 export function openModal(id) { for (const m of modals) $(m).style.display = m === id ? '' : 'none'; S.modal = id; renderModal(); }
-export function closeModals() { for (const m of modals) $(m).style.display = 'none'; S.modal = null; }
+export function closeModals() { for (const m of modals) $(m).style.display = 'none'; S.modal = null; if (cursor) { cursor = null; showGhost(); } }
 export function toggleModal(id) { S.modal === id ? closeModals() : openModal(id); }
 function renderModal() {
   if (S.modal === 'inventory') renderInventory();
@@ -50,7 +50,7 @@ export function selectItem(it) {
 }
 // Factorio-style: the first time you hold a new kind of building it takes the first free quickbar slot.
 function autoFillHotbar() {
-  for (const [it, n] of inv) {
+  for (const [it, n] of inv.counts()) {
     if (n <= 0 || !ENTITIES[it] || S.hotbarSeen.has(it)) continue;
     S.hotbarSeen.add(it);
     if (S.hotbar.includes(it)) continue;
@@ -76,19 +76,75 @@ export function renderHotbar() {
   $('hand').style.display = hand ? '' : 'none';
 }
 
-// ---------------------------------------------------------------- inventory + crafting
-// The character inventory as Factorio shows it: fixed slots, items split into stacks, auto-sorted.
-function invSlotsHTML(act = 'invpick', tipExtra = it => ENTITIES[it] ? 'click to hold it' : '') {
-  const items = [...inv.entries()].filter(([, n]) => n > 0).sort((a, b) => order(a[0]) - order(b[0]));
-  const cells = [];
-  for (const [it, n] of items) {
-    const st = stackOf(it);
-    for (let left = n; left > 0; left -= st) cells.push(`<div class="cell slotc${ENTITIES[it] ? ' placeable' : ''}${it === S.sel ? ' on' : ''}" data-act="${act}:${it}"${tipAttr(`<b>${itemName(it)}</b> <span class="dim">${n} total · stack ${st}</span>${tipExtra(it) ? `<div class="dim">${tipExtra(it)}</div>` : ''}`)}>${iconHTML(it, Math.min(st, left))}</div>`);
-  }
-  const used = cells.length;
-  while (cells.length < PLAYER.inventory) cells.push('<div class="cell slotc emptyc"></div>');
-  return { html: `<div class="slots">${cells.join('')}</div>`, used };
+// ---------------------------------------------------------------- slots: drag and drop
+// Slot refs in the DOM: "p:<i>" is your inventory slot i, "e:<id>" is a slot of the open machine.
+// Nothing leaves a slot until you drop it somewhere: the drop is one move, run by the game rules
+// (on the host in co-op), so stacks can't get lost in transit.
+let cursor = null;   // { ref, it, n, mode: 'drag' | 'held', moved, x, y, button }
+const ghost = document.createElement('div'); ghost.id = 'cursorStack'; document.body.append(ghost);
+function readRef(ref) {
+  if (ref.startsWith('p:')) { const sl = inv.slots[+ref.slice(2)]; return { it: sl?.it || null, n: sl?.n || 0 }; }
+  const sl = panelEnt && entSlots(panelEnt).find(x => x.id === ref.slice(2));
+  return { it: sl?.it || null, n: sl?.n || 0 };
 }
+function wire(ref) { return ref.startsWith('p:') ? { p: +ref.slice(2) } : { e: [panelEnt.x, panelEnt.y, panelEnt.z], s: ref.slice(2) }; }
+function refreshSlots() { if (panelEnt) renderEntity(); if (S.modal === 'inventory') renderInventory(); renderHotbar(); }
+function showGhost(x, y) {
+  if (!cursor) { ghost.style.display = 'none'; return; }
+  setHTML(ghost, iconHTML(cursor.it, cursor.n));
+  ghost.style.display = 'block'; ghost.style.left = x + 'px'; ghost.style.top = y + 'px';
+}
+export function cancelCursor() { if (!cursor) return false; cursor = null; showGhost(); refreshSlots(); return true; }
+function dropOn(ref, n) {
+  if (!cursor || ref === cursor.ref) return;
+  if (ref.startsWith('e:') && !panelEnt) return;
+  doAction({ a: 'move', from: wire(cursor.ref), to: wire(ref), n });
+  bus.emit('uiclick');
+}
+function slotHTML(ref, it, n, hint, extra = '') {
+  const lifted = cursor && cursor.ref === ref ? cursor.n : 0, shown = n - lifted;
+  const tip = it ? `<b>${itemName(it)}</b> <span class="dim">× ${n}</span>${extra ? `<div class="dim">${extra}</div>` : ''}<div class="dim">drag to move · right-drag: half · shift+click: send across</div>`
+    : hint ? `<span class="dim">${extra || itemName(hint) + ' goes here'}</span>` : '';
+  const inner = it && shown > 0 ? iconHTML(it, shown) : hint ? `<span class="ghosticon">${iconHTML(hint)}</span>` : '';
+  return `<div class="cell slotc${!it || shown <= 0 ? ' emptyc' : ''}${it && ENTITIES[it] && it === S.sel ? ' on' : ''}" data-slot="${ref}"${tip ? tipAttr(tip) : ''}>${inner}</div>`;
+}
+document.addEventListener('pointerdown', ev => {
+  const el = ev.target.closest?.('[data-slot]');
+  if (!el) { if (cursor?.mode === 'held' && !ev.target.closest?.('.panel')) cancelCursor(); return; }
+  ev.preventDefault();
+  const ref = el.dataset.slot;
+  if (cursor?.mode === 'held') {                                     // put the picked-up stack down
+    if (ref === cursor.ref) { cancelCursor(); return; }
+    const one = ev.button === 2;
+    dropOn(ref, one ? 1 : cursor.n);
+    if (one && cursor.n > 1) { cursor.n--; showGhost(ev.clientX, ev.clientY); } else cursor = null;
+    showGhost(ev.clientX, ev.clientY); refreshSlots(); return;
+  }
+  const sl = readRef(ref); if (!sl.it) return;
+  if (ev.shiftKey) { doAction({ a: 'shift', from: wire(ref), ent: panelEnt ? [panelEnt.x, panelEnt.y, panelEnt.z] : null }); bus.emit('uiclick'); refreshSlots(); return; }
+  cursor = { ref, it: sl.it, n: ev.button === 2 ? Math.ceil(sl.n / 2) : sl.n, mode: 'drag', moved: false, x: ev.clientX, y: ev.clientY, button: ev.button };
+  showGhost(ev.clientX, ev.clientY); refreshSlots();
+});
+addEventListener('pointermove', ev => {
+  if (!cursor) return;
+  if (Math.hypot(ev.clientX - cursor.x, ev.clientY - cursor.y) > 6) cursor.moved = true;
+  ghost.style.left = ev.clientX + 'px'; ghost.style.top = ev.clientY + 'px';
+});
+addEventListener('pointerup', ev => {
+  if (!cursor || cursor.mode !== 'drag') return;
+  const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-slot]');
+  if (cursor.moved) { if (target) dropOn(target.dataset.slot, cursor.n); cursor = null; }
+  else if (cursor.ref.startsWith('p:') && ENTITIES[cursor.it] && !panelEnt && cursor.button === 0) {
+    selectItem(cursor.it); closeModals(); cursor = null;              // clicking a building in your bag picks it up to build with
+  } else cursor.mode = 'held';                                         // picked up: click another slot to put it down
+  showGhost(ev.clientX, ev.clientY); refreshSlots();
+});
+// Your inventory as a grid of real slots.
+function invGridHTML() {
+  return `<div class="slots">${inv.slots.map((sl, i) => slotHTML('p:' + i, sl?.it, sl?.n || 0, null, sl && ENTITIES[sl.it] && !panelEnt ? 'click: hold it to build' : '')).join('')}</div>`;
+}
+
+// ---------------------------------------------------------------- inventory + crafting
 const TABS = ['Logistics', 'Production', 'Intermediates', 'Science'];
 S.craftTab = 'Logistics';
 function recipeTab(r) {
@@ -96,7 +152,6 @@ function recipeTab(r) {
   return ITEMS[r.id]?.shape === 'pack' ? 'Science' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'lift', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
 }
 function renderInventory() {
-  const { html, used } = invSlotsHTML();
   const rs = RECIPES.filter(r => r.cat === 'craft' && recipeUnlocked(r) && recipeTab(r) === S.craftTab);
   const tabs = TABS.map(t => `<div class="tab ${t === S.craftTab ? 'on' : ''}" data-act="tab:${t}">${t}</div>`).join('');
   const recHtml = rs.map(r => {
@@ -105,7 +160,7 @@ function renderInventory() {
   }).join('');
   setHTML($('invBody'), `
     <div class="cols2">
-      <div><h3>Character <span class="dim">${used}/${PLAYER.inventory} slots</span></h3>${html}</div>
+      <div><h3>Character <span class="dim">${inv.used()}/${PLAYER.inventory} slots</span></h3>${invGridHTML()}</div>
       <div><h3>Crafting</h3><div class="tabs">${tabs}</div><div class="grid">${recHtml}</div>
         <div class="dim" style="margin-top:8px">Missing parts are crafted for you if you have what they need. Numbers show how many you could make.</div></div>
     </div>`);
@@ -132,21 +187,36 @@ function renderResearch() {
   setHTML($('resBody'), `<div class="dim" style="margin-bottom:6px">${cur ? `Researching <b>${cur.name}</b>. Labs need: ${Object.keys(cur.cost).map(p => itemName(p)).join(', ')}.` : 'Pick a technology. Labs will pull the packs they need from what you feed them.'}</div><div class="techs">${cards}</div>`);
 }
 
-// ---------------------------------------------------------------- entity panel
+// ---------------------------------------------------------------- machine window (machine slots + your inventory)
 let panelEnt = null;
-export function openEntity(e) { panelEnt = e; $('entity').style.display = ''; $('epCanvasWrap').style.display = e.kind === 'transmitter' ? '' : 'none'; renderEntity(); }
-export function closeEntity() { panelEnt = null; $('entity').style.display = 'none'; }
+export function openEntity(e) {
+  panelEnt = e; cursor = null; showGhost();
+  $('entity').style.display = ''; $('epCanvasWrap').style.display = e.kind === 'transmitter' ? '' : 'none';
+  renderEntity();
+}
+export function closeEntity() { panelEnt = null; cursor = null; showGhost(); $('entity').style.display = 'none'; }
 export const entityOpen = () => panelEnt;
 bus.on('removed', e => { if (e === panelEnt) closeEntity(); });
 
-const slot = (it, n, act, tipText) => `<div class="cell" ${act ? `data-act="${act}"` : ''}${tipAttr(`<b>${itemName(it)}</b>${tipText ? `<div class="dim">${tipText}</div>` : ''}`)}>${iconHTML(it, n)}</div>`;
-const putButtons = (e, items) => items.filter(it => invGet(it) > 0 && canAccept(e, it, true))
-  .map(it => `<button data-act="put:${it}">${iconHTML(it, invGet(it))} put in</button>`).join('');
-const FUELS = ['coal', 'wood'];
-const fuelSlot = e => e.fuel === undefined ? '' : `<h4>Fuel</h4><div class="grid">${slot(e.fuelType || 'coal', e.fuel, e.fuel ? 'takefuel' : '', `${e.burn.toFixed(1)} MJ burning${e.fuel ? ' · click to take' : ''}`)}</div><div class="btns">${putButtons(e, FUELS)}</div>`;
 function statusLine(e) {
   const ok = isActive(e) && S.T - e.lastActive < 1;
   return `<div class="status ${ok ? 'ok' : 'idle'}">● ${e.status || (ok ? 'working' : 'idle')}</div>`;
+}
+// The machine's own slots, grouped like Factorio's panels (Fuel / Input / Result ...), with a progress bar between.
+function machineSlotsHTML(e, progress) {
+  const groups = [];
+  for (const sl of entSlots(e)) {
+    let g = groups.find(x => x.name === sl.group);
+    if (!g) groups.push(g = { name: sl.group, cells: [] });
+    const extra = sl.id === 'fuel' ? `${e.burn.toFixed(1)} MJ burning` : sl.id.startsWith('res') || sl.id === 'buf' ? 'take it out: drag or shift+click' : '';
+    g.cells.push(slotHTML('e:' + sl.id, sl.it, sl.n, sl.hint, extra));
+  }
+  let html = '';
+  for (const g of groups) {
+    html += `<div class="sgroup"><h4>${g.name}</h4><div class="${g.name === 'Storage' ? 'slots chest' : 'grid'}">${g.cells.join('')}</div></div>`;
+    if (progress !== undefined && (g.name === 'Input' || g.name === 'Ingredients')) html += `<div class="sgroup arrow">▶<div class="bar"><i style="width:${Math.min(1, progress) * 100}%"></i></div></div>`;
+  }
+  return html ? `<div class="mslots">${html}</div>` : '';
 }
 function renderEntity() {
   const e = panelEnt; if (!e) return;
@@ -154,49 +224,30 @@ function renderEntity() {
   const pbar = p => `<div class="bar"><i style="width:${Math.min(1, p) * 100}%"></i></div>`;
   switch (e.kind) {
     case 'assembler': {
-      const r = RECIPE[e.recipe];
       const rs = RECIPES.filter(x => x.cat === 'craft' && recipeUnlocked(x));
       body += `<h4>Recipe</h4><div class="grid small">${rs.map(x => `<div class="cell ${x.id === e.recipe ? 'on' : ''}" data-act="recipe:${x.id}"${tipAttr(recipeTip(x))}>${iconHTML(x.id)}</div>`).join('')}</div>`;
-      if (r) {
-        body += `<h4>Input</h4><div class="grid">${Object.keys(r.in).map(k => slot(k, e.inp[k] || 0, e.inp[k] ? `takeinp:${k}` : '', 'click to take')).join('')}</div>`;
-        body += `<h4>Progress</h4>${pbar(e.prog)}<h4>Output</h4><div class="grid">${Object.keys(r.out).map(k => slot(k, e.out[k] || 0, e.out[k] ? `takeout:${k}` : '', 'click to take')).join('')}</div>`;
-        body += `<div class="btns">${putButtons(e, Object.keys(r.in))}</div>`;
-      }
+      body += RECIPE[e.recipe] ? machineSlotsHTML(e, e.prog) : '<div class="dim" style="margin-top:6px">Pick a recipe to see its slots.</div>';
       break;
     }
-    case 'furnace': {
-      body += fuelSlot(e);
-      body += `<h4>Input</h4><div class="grid">${Object.entries(e.inp).map(([k, n]) => slot(k, n, `takeinp:${k}`, 'click to take')).join('') || '<span class="dim">empty</span>'}</div>`;
-      body += `<h4>Progress</h4>${pbar(e.prog)}`;
-      body += `<h4>Output</h4><div class="grid">${Object.entries(e.out).map(([k, n]) => slot(k, n, `takeout:${k}`, 'click to take')).join('') || '<span class="dim">empty</span>'}</div>`;
-      body += `<div class="btns">${putButtons(e, ['iron_ore', 'copper_ore', 'stone', 'iron_plate', 'crystal', 'abyssal_ore'])}</div>`;
-      break;
-    }
+    case 'furnace': body += machineSlotsHTML(e, e.prog); break;
     case 'drill': {
       const o = world.ores.get(key(e.x, e.y, e.z));
       body += `<h4>Deposit</h4>${o ? `${iconHTML(o.type)} ${itemName(o.type)} · ${fmtN(o.amount)} left` : '<span class="dim">exhausted</span>'}`;
-      body += `<h4>Progress</h4>${pbar(e.timer)}${e.buffer ? `<div class="grid">${slot(e.buffer, 1, 'takebuf', 'waiting to be pushed out')}</div>` : ''}`;
-      body += fuelSlot(e);
+      body += `<h4>Mining</h4>${pbar(e.timer)}` + machineSlotsHTML(e);
       body += `<div class="dim">${def.power ? def.power + ' kW' : 'burner'} · ${def.rate * 60}/min · pushes ore toward ${DIR_NAMES[e.dir]}</div>`;
       break;
     }
-    case 'chest': {
-      body += `<h4>Contents ${slotsUsed(e.store)}/${def.cap} slots</h4><div class="grid">${Object.entries(e.store).map(([k, n]) => slot(k, n, `takestore:${k}`, 'click to take all')).join('') || '<span class="dim">empty</span>'}</div>`;
-      body += `<div class="btns"><button data-act="takeall">take everything</button>${S.sel && invGet(S.sel) ? `<button data-act="put:${S.sel}">${iconHTML(S.sel, invGet(S.sel))} store hand item</button>` : ''}</div>`;
-      break;
-    }
+    case 'chest': body += `<div class="dim">${e.store.used()}/${def.cap} slots used</div>` + machineSlotsHTML(e); break;
     case 'lab': {
       const t = TECH[S.research.current];
       body += `<h4>Research</h4>${t ? `${t.name} · ${S.research.progress[t.id] || 0}/${t.count}${pbar(e.prog)}` : '<span class="dim">none: press T</span>'}`;
-      body += `<h4>Packs</h4><div class="grid">${['red_pack', 'green_pack', 'blue_pack', 'resonance_pack'].map(p => slot(p, e.inp[p] || 0, e.inp[p] ? `takeinp:${p}` : '')).join('')}</div>`;
-      body += `<div class="btns">${putButtons(e, ['red_pack', 'green_pack', 'blue_pack', 'resonance_pack'])}</div>`;
+      body += machineSlotsHTML(e);
       break;
     }
-    case 'generator': {
-      body += fuelSlot(e);
+    case 'generator':
+      body += machineSlotsHTML(e);
       body += `<h4>Load</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.out)} / ${def.out} kW</div>`;
       break;
-    }
     case 'solar': body += `<div>${def.out} kW, always on.</div>`; break;
     case 'pole': {
       const n = e.net;
@@ -207,11 +258,11 @@ function renderEntity() {
     }
     case 'inserter': {
       body += `<div class="dim">${def.reach} tile reach · ${(1 / (def.swing * 2)).toFixed(2)} swings/s · ${def.power ? def.power + ' kW' : 'burner'}</div>`;
-      body += fuelSlot(e);
+      body += machineSlotsHTML(e);
       body += `<div>pitch: <b>${e.dy === 0 ? 'level' : e.dy > 0 ? 'lifts up a layer' : 'drops down a layer'}</b></div>`;
       body += `<div class="btns"><button data-act="pitch">change pitch</button><button data-act="rotate">rotate</button></div>`;
       if (def.filter) {
-        const known = Object.keys(ITEMS).filter(it => invGet(it) > 0 || S.stats.made[it]);
+        const known = Object.keys(ITEMS).filter(it => invGet(it) > 0 || S.stats.made?.[it]);
         body += `<h4>Filter</h4><div class="grid small">${known.map(it => `<div class="cell ${e.filter === it ? 'on' : ''}" data-act="filter:${it}"${tipAttr(itemName(it))}>${iconHTML(it)}</div>`).join('')}</div>`;
       }
       if (e.held) body += `<h4>Holding</h4>${iconHTML(e.held)} ${itemName(e.held)}`;
@@ -225,20 +276,15 @@ function renderEntity() {
       break;
     case 'transmitter': {
       const sent = sentenceFor(e), ask = currentAsk();
-      body += `<h4>Charge</h4>${pbar(e.prog)}<h4>Resonance packs</h4><div class="grid">${slot('resonance_pack', e.inp.resonance_pack || 0, '')}</div>`;
-      body += `<div class="btns">${putButtons(e, ['resonance_pack'])}</div>`;
+      body += `<h4>Charge</h4>${pbar(e.prog)}` + machineSlotsHTML(e);
       body += `<div class="dim">It hears every working machine within ${HEAR_RADIUS} tiles, nearest first. Change what is running around it to change what you say.</div>`;
       body += `<div class="dim">will send: ${sent.join(' · ')}</div>`;
       if (ask) body += `<div class="ask">they asked for: ${ask.ask.join(' · ')} ${ask.ask.every(g => sent.includes(g)) ? '<b class="okc">✓ this sentence answers it</b>' : ''}</div>`;
       break;
     }
   }
-  // your own items this machine will take, Factorio-style: click a stack to move it in
-  if (!['belt', 'splitter', 'lift', 'underground', 'pole', 'solar'].includes(e.kind)) {
-    const accepted = [...inv.keys()].filter(it => invGet(it) > 0 && canAccept(e, it, true)).sort((a, b) => order(a) - order(b));
-    if (accepted.length) body += `<h4>From your inventory <span class="dim">(click to put in)</span></h4><div class="grid small">${accepted.map(it => `<div class="cell" data-act="put:${it}"${tipAttr(`put ${itemName(it)} in`)}>${iconHTML(it, invGet(it))}</div>`).join('')}</div>`;
-  }
   setHTML($('epBody'), `<div class="eph"><img src="${iconURL(e.type)}"> <b>${def.name}</b> <span class="dim">L${e.y} · ${DIR_NAMES[e.dir]}</span><span class="x" data-act="close">✕</span></div>${statusLine(e)}${body}`);
+  setHTML($('epInv'), `<h3>Character <span class="dim">${inv.used()}/${PLAYER.inventory}</span></h3>${invGridHTML()}<div class="dim tiny">drag stacks between your inventory and the machine · shift+click sends a stack across</div>`);
 }
 
 // ---------------------------------------------------------------- actions
@@ -250,7 +296,6 @@ function act(a, ev) {
       if (ev.button === 2) { S.hotbar[i] = S.sel || null; renderHotbar(); return; }
       const it = S.hotbar[i]; selectItem(it && it === S.sel ? null : it); return;
     }
-    case 'invpick': selectItem(S.sel === arg ? null : arg); if (ENTITIES[arg]) closeModals(); else renderInventory(); return;
     case 'tab': S.craftTab = arg; renderInventory(); return;
     case 'craft': {
       const r = RECIPE[arg];
@@ -393,6 +438,7 @@ export function updateUI(dt, hover) {
   if ((slowT += dt) < .2) return;
   slowT = 0;
   renderStatus(); renderGoals(); renderHotbar(); updateSignalText(); renderCoop();
+  if (panelEnt && Math.hypot(panelEnt.x + .5 - S.player.x, panelEnt.z + .5 - S.player.z) > PLAYER.reach + 2) closeEntity();   // walked away
   if (panelEnt) renderEntity();
   if (S.modal === 'inventory') renderInventory();
   if (S.modal === 'research') renderResearch();

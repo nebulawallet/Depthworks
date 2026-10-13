@@ -26,9 +26,51 @@ export const S = {
 // Every engineer has their own body, inventory and crafting queue. S.player is the one on this screen.
 export function newPlayer(id, name = 'Engineer', color = 0xe07a2e, local = false) {
   return { id, name, color, local, x: 48.5, z: 52.5, vx: 0, vz: 0, face: 0, walk: 0, moving: false,
-    mining: null, mineCell: null, pickup: false, inv: local ? null : new Map(), craft: [] };
+    mining: null, mineCell: null, pickup: false, inv: local ? null : new Inventory(PLAYER.inventory), craft: [] };
 }
-export const inv = new Map();
+
+// ---------------------------------------------------------------- inventories
+// Real slots, like Factorio: each slot holds one stack, and stacks stay where you put them.
+// Used for the engineer and for chests; machines expose their own typed slots (see sim.js).
+export class Inventory {
+  constructor(size) { this.slots = new Array(size).fill(null); }
+  count(it) { let n = 0; for (const s of this.slots) if (s && s.it === it) n += s.n; return n; }
+  room(it) { const st = stackOf(it); let r = 0; for (const s of this.slots) r += !s ? st : s.it === it ? st - s.n : 0; return r; }
+  // Fill partial stacks of the same item first, then empty slots in order. Returns what did not fit.
+  add(it, n) {
+    if (n <= 0) return 0;
+    const st = stackOf(it);
+    for (const s of this.slots) if (n > 0 && s && s.it === it && s.n < st) { const k = Math.min(n, st - s.n); s.n += k; n -= k; }
+    for (let i = 0; i < this.slots.length && n > 0; i++) if (!this.slots[i]) { const k = Math.min(n, st); this.slots[i] = { it, n: k }; n -= k; }
+    return n;
+  }
+  // Take from the last stacks first, so the front of the inventory stays put.
+  remove(it, n) {
+    let got = 0;
+    for (let i = this.slots.length - 1; i >= 0 && got < n; i--) {
+      const s = this.slots[i];
+      if (s && s.it === it) { const k = Math.min(n - got, s.n); s.n -= k; got += k; if (!s.n) this.slots[i] = null; }
+    }
+    return got;
+  }
+  counts() { const m = new Map(); for (const s of this.slots) if (s) m.set(s.it, (m.get(s.it) || 0) + s.n); return m; }
+  used() { let n = 0; for (const s of this.slots) if (s) n++; return n; }
+  clear() { this.slots.fill(null); }
+  isEmpty() { return this.slots.every(s => !s); }
+  toList() { return this.slots.map(s => s ? [s.it, s.n] : 0); }
+  loadList(list) { this.clear(); (list || []).forEach((s, i) => { if (s && i < this.slots.length) this.slots[i] = { it: s[0], n: s[1] }; }); }
+  // A full slot list, or the old [item, count] totals from before inventories had slots.
+  loadAny(list) {
+    if (!Array.isArray(list)) return;
+    if (list.length === this.slots.length) this.loadList(list);
+    else { this.clear(); for (const s of list) if (s) this.add(s[0], s[1]); }
+  }
+  // single-slot operations for drag and drop
+  slotAccept(i, it) { const s = this.slots[i]; return !s ? stackOf(it) : s.it === it ? stackOf(it) - s.n : 0; }
+  slotPut(i, it, n) { const k = Math.min(n, this.slotAccept(i, it)); if (k <= 0) return 0; const s = this.slots[i]; if (s) s.n += k; else this.slots[i] = { it, n: k }; return k; }
+  slotTake(i, n) { const s = this.slots[i]; if (!s) return 0; const k = Math.min(n, s.n); s.n -= k; if (!s.n) this.slots[i] = null; return k; }
+}
+export const inv = new Inventory(PLAYER.inventory);
 S.player = newPlayer('local', 'Engineer', 0xe07a2e, true);
 S.player.inv = inv;
 S.players = new Map([[S.player.id, S.player]]);
@@ -49,19 +91,17 @@ export const world = {
   beltOrder: [], beltDirty: true,
 };
 
-export const invGet = it => actor.inv.get(it) || 0;
-export function invAdd(it, n = 1) { const m = actor.inv; m.set(it, (m.get(it) || 0) + n); if (m.get(it) <= 0) m.delete(it); if (actor.local) bus.emit('inv'); }
+export const invGet = it => actor.inv.count(it);
+export function invAdd(it, n = 1) {
+  if (n > 0) { const left = actor.inv.add(it, n); for (let i = 0; i < left; i++) spill(it, actor.x, actor.z); }
+  else if (n < 0) actor.inv.remove(it, -n);
+  if (actor.local) bus.emit('inv');
+}
 export function invTake(it, n = 1) { if (invGet(it) < n) return false; invAdd(it, -n); return true; }
 
 // Slot accounting, shared by the character and by chests.
 export const stackOf = it => ITEMS[it]?.stack ?? 50;
-export function slotsUsed(map) { let n = 0; for (const [k, v] of (map instanceof Map ? map : Object.entries(map))) if (v > 0) n += Math.ceil(v / stackOf(k)); return n; }
-export function roomFor(map, it, slots) {
-  const have = (map instanceof Map ? map.get(it) : map[it]) || 0, st = stackOf(it);
-  const free = slots - slotsUsed(map);
-  return free * st + (have % st ? st - have % st : 0);
-}
-export const invRoom = it => roomFor(actor.inv, it, PLAYER.inventory);
+export const invRoom = it => actor.inv.room(it);
 // Give items to the player. Whatever does not fit spills onto the ground at their feet.
 export function invGive(it, n = 1) {
   if (n <= 0) return 0;
@@ -154,7 +194,7 @@ export function generateFeatures(seed = 77) {
 // The Factorio start: a handful of plates, one burner drill, one furnace. Everything else you make.
 export function startingInventory() {
   inv.clear(); world.ground.length = 0;
-  for (const [k, v] of Object.entries({ iron_plate: 8, burner_drill: 1, furnace: 1 })) inv.set(k, v);
+  for (const [k, v] of Object.entries({ iron_plate: 8, burner_drill: 1, furnace: 1 })) inv.add(k, v);
 }
 
 export function recipeFor(item) { return RECIPE[item]; }
