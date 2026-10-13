@@ -6,7 +6,7 @@
 // rules (as that player) and streams back world changes plus regular snapshots. Friends also simulate
 // locally between snapshots, so belts and arms keep moving smoothly.
 import { Peer } from 'peerjs';
-import { S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
+import { S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, invGive, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
 import { ITEMS, TECH } from './data.js';
 import { place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory } from './sim.js';
 import { serialize, entToJSON, entFromJSON, applyEntJSON } from './save.js';
@@ -72,6 +72,7 @@ function applyAction(op) {
     case 'rotate': if (e) rotateEntity(e, op.by || 1); break;
     case 'setdir': if (e && e.dir !== op.dir) rotateEntity(e, (op.dir - e.dir + 4) % 4); break;
     case 'craft': if (!queueCraft(op.rid, op.n || 1)) notify('toast', 'missing ingredients for ' + (ITEMS[op.rid]?.name ?? op.rid)); break;
+    case 'give': if (S.sandbox && ITEMS[op.it]) invGive(op.it, Math.max(1, Math.min(1000, Math.floor(op.n) || 1))); break;   // sandbox only
     case 'cancel': cancelCraft(op.i); break;
     case 'fast': if (e) { const n = fastTransfer(e, op.sel); notify('toast', n ? `${op.sel ? 'put in' : 'took'} ${n} item${n > 1 ? 's' : ''}` : 'nothing to move'); } break;
     case 'drop': dropAt({ x: op.x, y: op.y, z: op.z }, op.sel); break;
@@ -194,6 +195,7 @@ bus.on('placed', e => op({ o: 'place', e: entToJSON(e) }));
 bus.on('removed', e => op({ o: 'remove', x: e.x, y: e.y, z: e.z, frame: e.kind === 'frame' }));
 bus.on('remesh', e => { if (e.kind !== 'frame') op({ o: 'update', e: entToJSON(e) }); });
 bus.on('ore', (x, y, z) => op({ o: 'ore', x, y, z }));
+bus.on('orelayer', (x, y, z, d) => op({ o: 'orelayer', x, y, z, layer: d.layer, amount: d.amount }));
 bus.on('feat', (x, z) => op({ o: 'feat', x, z }));
 bus.on('research', id => op({ o: 'research', id }));
 bus.on('pulse', e => op({ o: 'pulse', x: e.x, y: e.y, z: e.z }));
@@ -284,7 +286,7 @@ function rawRemove(x, y, z, frame) {
   if (!e) return;
   map.delete(k);
   if (e.pair) e.pair.pair = null;
-  if (e.items) world.beltDirty = true;
+  if (e.belt) world.beltDirty = true;
   world.powerDirty = true;
   bus.emit('removed', e);
 }
@@ -300,6 +302,7 @@ function applyOp(o) {
     case 'remove': rawRemove(o.x, o.y, o.z, o.frame); break;
     case 'update': { const e = world.ents.get(key(o.e.x, o.e.y, o.e.z)); if (e) applyEntJSON(e, o.e, true); break; }
     case 'ore': if (world.ores.delete(key(o.x, o.y, o.z))) bus.emit('ore', o.x, o.y, o.z); break;
+    case 'orelayer': { const d = world.ores.get(key(o.x, o.y, o.z)); if (d) { d.layer = o.layer; d.amount = o.amount; bus.emit('orelayer', o.x, o.y, o.z, d); } break; }
     case 'feat': if (world.feats.delete(key(o.x, 0, o.z))) bus.emit('feat', o.x, o.z); break;
     case 'research': if (!S.research.done.has(o.id)) completeResearch(o.id); break;
     case 'pulse': bus.emit('pulse', { x: o.x, y: o.y, z: o.z }); break;

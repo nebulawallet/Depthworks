@@ -1,5 +1,5 @@
 import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES } from './data.js';
-import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, generateWater, generateOil, startingInventory, layerRange, layerLockReason, itemName, freshBars, factoryOf } from './state.js';
+import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, generateWater, generateOil, startingInventory, layerRange, layerLockReason, itemName, freshBars, factoryOf, unlockAll } from './state.js';
 import { stockFish } from './fish.js';
 import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo } from './sim.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
@@ -29,10 +29,13 @@ function enterWorld(fresh) {
   bus.emit('players');
   if (fresh) openModal('help');
 }
-function begin(fresh) {
+function begin(fresh, sandbox = false) {
   generateOres();
   S.player.name = nick();
   if (fresh) {
+    S.sandbox = sandbox;
+    S.research = { done: new Set(), current: null, progress: {} }; S.maxTier = 0;
+    if (sandbox) unlockAll();
     Object.assign(S.player, { x: 48.5, z: 52.5, face: 0, fac: 1, veh: null });
     Object.assign(world, { vehicles: [], units: [], routes: [], factories: [{ id: 1, name: 'Main factory', color: '#7ef6ff' }], facNext: 2, nextId: 1 });
     world.roads.clear();
@@ -62,30 +65,31 @@ function titleScreen(view = 'main') {
   const btn = (id, label) => `<button id="${id}">${label}</button>`, msg = $('lobbyMsg');
   msg.textContent = '';
   if (view === 'main') {
-    $('titleBtns').innerHTML = (hasSave() ? btn('bContinue', 'Continue') : '') + btn('bNew', 'New game') + btn('bHost', 'Host co-op') + btn('bJoin', 'Join co-op') + btn('bHelp', 'How to play');
+    $('titleBtns').innerHTML = (hasSave() ? btn('bContinue', 'Continue') : '') + btn('bNew', 'New game') + btn('bSandbox', 'Sandbox') + btn('bHost', 'Host co-op') + btn('bJoin', 'Join co-op') + btn('bHelp', 'How to play');
     $('bContinue')?.addEventListener('click', () => begin(false));
-    $('bNew').addEventListener('click', e => {
+    // both replace the one save slot, so both ask first
+    for (const [id, sandbox] of [['bNew', false], ['bSandbox', true]]) $(id).addEventListener('click', e => {
       if (hasSave() && !e.target.dataset.armed) { e.target.dataset.armed = 1; e.target.textContent = 'Replace save? Click again'; return; }
-      wipeSave(); begin(true);
+      wipeSave(); begin(true, sandbox);
     });
     $('bHost').addEventListener('click', () => titleScreen('host'));
     $('bJoin').addEventListener('click', () => titleScreen('join'));
     $('bHelp').addEventListener('click', () => openModal('help'));
   } else if (view === 'host') {
     $('titleBtns').innerHTML = '<div class="dim">Friends join your world and play in it with you. Keep this tab open while they play.</div>'
-      + (hasSave() ? btn('bHostSaved', 'Host my saved world') : '') + btn('bHostNew', 'Host a new world') + btn('bBack', 'Back');
-    const go = fresh => {
+      + (hasSave() ? btn('bHostSaved', 'Host my saved world') : '') + btn('bHostNew', 'Host a new world') + btn('bHostSand', 'Host a sandbox') + btn('bBack', 'Back');
+    const go = (fresh, sandbox = false) => {
       if (fresh) wipeSave();
-      begin(fresh);
+      begin(fresh, sandbox);
       host({
         onReady: code => { navigator.clipboard?.writeText(code).catch(() => {}); toast(`Invite code: ${code}. Send it to your friends (click the code to copy it).`, 6000, 'good'); },
         onError: m => toast('Could not start co-op: ' + m, 6000),
       });
     };
     $('bHostSaved')?.addEventListener('click', () => go(false));
-    $('bHostNew').addEventListener('click', e => {
+    for (const [id, sandbox] of [['bHostNew', false], ['bHostSand', true]]) $(id).addEventListener('click', e => {
       if (hasSave() && !e.target.dataset.armed) { e.target.dataset.armed = 1; e.target.textContent = 'Replace your save? Click again'; return; }
-      go(true);
+      go(true, sandbox);
     });
     $('bBack').addEventListener('click', () => titleScreen('main'));
   } else if (view === 'join') {

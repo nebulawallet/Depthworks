@@ -1,14 +1,18 @@
 // Save / load to localStorage, and the entity format shared with co-op sync.
 // Saves are per-browser and can disappear, so every storage access is guarded.
-import { S, world, inv, bus, key, GRID, generateWater, generateOil, dryAround, loadBars, WATER_GEN } from './state.js';
+import { S, world, inv, bus, key, GRID, generateWater, generateOil, generateOres, dryAround, loadBars, WATER_GEN, layerSize, spill } from './state.js';
 import { place } from './sim.js';
-import { ENTITIES, TILE } from './data.js';
+import { ENTITIES, TILE, RETIRED } from './data.js';
+import { segItems, setSegItems } from './belts.js';
 import { loadTransport, vehToJSON, unitToJSON } from './transport.js';
 import { stockFish, findBodies, fishToList, fishFromList } from './fish.js';
 
 const SLOT = 'depthworks.save.v3';
-const FIELDS = ['recipe', 'filter', 'inp', 'out', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit',
-  'fac', 'fa', 'fluid', 'mode', 'dname', 'prio', 'vlimit', 'rules', 'fuelFluid', 'sig'];
+const FIELDS = ['recipe', 'filter', 'inp', 'out', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'bufN', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit',
+  'fac', 'fa', 'fluid', 'mode', 'dname', 'prio', 'vlimit', 'rules', 'fuelFluid', 'sig', 'aug', 'pbar', 'sf', 'chL', 'chR', 'midOff'];
+// Belt settings that change how lines are put together: when a friend's copy changes, their lines get rebuilt.
+const BELT_SHAPE = ['aug', 'sf', 'chL', 'chR', 'midOff'];
+const ORE_V = 2;   // ores as [key, type, amount, layer, base] (see newDeposit); older saves had [key, type, amount]
 // Objects and arrays in FIELDS are copied one level deep (rules are a list of small objects).
 const copy = v => Array.isArray(v) ? v.map(x => x && typeof x === 'object' ? { ...x } : x) : v && typeof v === 'object' ? { ...v } : v;
 
@@ -21,7 +25,10 @@ export function entToJSON(e) {
   const o = { t: e.type, x: e.x, y: e.y, z: e.z, d: e.dir, dy: e.dy };
   for (const f of FIELDS) if (e[f] !== undefined) o[f] = e[f];
   if (e.fa) o.fa = Array.from(e.fa, v => Math.round(v || 0));
-  if (e.items) o.items = e.items.map(i => [i.type, +i.p.toFixed(3)]);
+  if (e.belt) {   // items per tile as [type, p, lane]; line settings ride on the line's first tile
+    o.items = segItems(e).map(([t, p, l]) => [t, +p.toFixed(3), l]);
+    if (e.lcfg && (!e.line || e.line.segs[0] === e) && (e.lcfg.name || e.lcfg.filter.length)) o.lcfg = { name: e.lcfg.name, filter: [...e.lcfg.filter] };
+  }
   if (e.store) o.store = e.store.toList();
   if (e.pair) o.pair = [e.pair.x, e.pair.z];
   return o;
@@ -37,8 +44,15 @@ export function applyEntJSON(e, o, forceRemesh = false) {
     || (o.fac ?? 1) !== (e.fac ?? 1) || (o.fluid ?? null) !== (e.fluid ?? null) || (o.sig ?? null) !== (e.sig ?? null);
   if ((o.recipe ?? null) !== (e.recipe ?? null) || (o.fac ?? 1) !== (e.fac ?? 1) || (o.fuelFluid ?? null) !== (e.fuelFluid ?? null)) world.fluidDirty = true;
   if ((o.sig ?? null) !== (e.sig ?? null)) world.railDirty = true;
+  if (e.belt) {
+    if (BELT_SHAPE.some(f => JSON.stringify(o[f] ?? null) !== JSON.stringify(e[f] ?? null))) world.beltDirty = true;
+    if (!e.line || e.line.segs[0] === e) {   // only a line's first tile carries its settings
+      const cfg = { name: o.lcfg?.name || '', filter: [...(o.lcfg?.filter || [])] };
+      if (JSON.stringify(cfg) !== JSON.stringify({ name: e.lcfg?.name || '', filter: e.lcfg?.filter || [] })) { e.lcfg = cfg; world.beltDirty = true; }
+    }
+  }
   for (const f of FIELDS) if (o[f] !== undefined) e[f] = copy(o[f]);
-  if (o.items && e.items) e.items = o.items.map(([type, p]) => ({ type, p }));
+  if (o.items && e.belt) setSegItems(e, o.items);
   loadStore(e, o.store);
   if (o.st !== undefined) e.status = o.st;
   if (o.age !== undefined) e.lastActive = S.T - o.age;
@@ -46,7 +60,7 @@ export function applyEntJSON(e, o, forceRemesh = false) {
   if (o.pair) { const p = world.ents.get(key(o.pair[0], e.y, o.pair[1])); if (p) { e.pair = p; p.pair = e; } }
   if (visual) {
     e.dir = o.d; e.dy = o.dy ?? 0;
-    if (e.items) world.beltDirty = true;
+    if (e.belt) world.beltDirty = true;
     bus.emit('remesh', e);
   }
 }
@@ -55,7 +69,10 @@ export function entFromJSON(o) {
   const e = place(o.t, o.x, o.y, o.z, o.d, o.dy, true);
   if (typeof e !== 'object' || !e) return e;
   for (const f of FIELDS) if (o[f] !== undefined) e[f] = copy(o[f]);
-  if (o.items) e.items = o.items.map(([type, p]) => ({ type, p }));
+  if (o.items && e.belt) e.buf = o.items.map(([type, p, lane]) => [type, p, lane ?? 1]);   // older saves had one lane: those items go on the right
+  if (o.lcfg && e.belt) e.lcfg = { name: o.lcfg.name || '', filter: [...(o.lcfg.filter || [])] };
+  const slots = ENTITIES[e.type].augSlots;
+  if (slots) e.aug = Array.from({ length: slots }, (_, i) => o.aug?.[i] || null);
   loadStore(e, o.store);
   e.dy = o.dy;
   return e;
@@ -86,12 +103,12 @@ function unpackTiles(s) {
 // ---------------------------------------------------------------- whole world
 export function serialize() {
   return JSON.stringify({
-    v: 3, T: S.T, player: { x: S.player.x, z: S.player.z, face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam, pix: S.pix,
+    v: 3, T: S.T, sandbox: S.sandbox, player: { x: S.player.x, z: S.player.z, face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam, pix: S.pix,
     seed: S.seed, tiles: packTiles(), waterGen: WATER_GEN, links: world.links, marks: world.marks,
     research: { done: [...S.research.done], current: S.research.current, progress: S.research.progress },
     signal: { stage: S.signal.stage, pulses: S.signal.pulses, taught: [...S.signal.taught], seen: [...S.signal.seen], log: S.signal.log },
     stats: S.stats, craft: S.player.craft, goalsDone: [...(S.goalsDone || [])], remoteInv: S.remoteInv || {},
-    invSlots: inv.toList(), ores: [...world.ores].map(([k, o]) => [k, o.type, o.amount]),
+    invSlots: inv.toList(), oreV: ORE_V, ores: [...world.ores].map(([k, o]) => [k, o.type, Math.round(o.amount), o.layer, o.base]),
     frames: [...world.frames.values()].map(f => [f.x, f.y, f.z]), ents: [...world.ents.values()].map(entToJSON),
     feats: [...world.feats].map(([k, f]) => [k, f.type, +f.v.toFixed(3)]), ground: world.ground,
     oil: [...world.oil].map(([k, o]) => [k, +o.yield.toFixed(2)]), roads: [...world.roads], factories: world.factories, facNext: world.facNext,
@@ -114,7 +131,8 @@ export function load() {
 // asGuest: joining a friend's world, so keep our own camera, hotbar and settings, and take no inventory from it.
 export function loadData(d, asGuest = false) {
   if (!d || d.v !== 3) return false;
-  S.T = d.T; S.maxTier = d.maxTier;
+  const salvaged = asGuest ? null : retireItems(d);
+  S.T = d.T; S.maxTier = d.maxTier; S.sandbox = !!d.sandbox;
   if (!asGuest) {
     Object.assign(S.player, d.player); loadBars(d.bars, d.hotbar, d.bar); if (d.roadCfg) S.roadCfg = { ...S.roadCfg, ...d.roadCfg }; S.hotbarSeen = new Set(d.hotbarSeen || []); Object.assign(S.cam, d.cam); S.pix = d.pix || 3;
     S.player.craft = d.craft || []; S.goalsDone = new Set(d.goalsDone || []); S.remoteInv = d.remoteInv || {};
@@ -123,7 +141,7 @@ export function loadData(d, asGuest = false) {
   S.research.done = new Set(d.research.done); S.research.current = d.research.current; S.research.progress = d.research.progress;
   Object.assign(S.signal, { stage: d.signal.stage, pulses: d.signal.pulses, taught: new Set(d.signal.taught), seen: new Set(d.signal.seen), log: d.signal.log });
   S.stats = d.stats;
-  world.ores.clear(); for (const [k, type, amount] of d.ores) world.ores.set(k, { type, amount });
+  loadOres(d);
   world.feats.clear(); for (const [k, type, v] of d.feats || []) world.feats.set(k, { type, v });
   world.ground.length = 0; world.ground.push(...(d.ground || []));
   S.seed = d.seed ?? 20261013;
@@ -163,5 +181,57 @@ export function loadData(d, asGuest = false) {
   if (d.fish) fishFromList(d.fish); else stockFish();
   if (S.player.veh && !world.vehicles.some(v => v.id === S.player.veh)) S.player.veh = null;
   world.beltDirty = true; world.powerDirty = true; world.fluidDirty = true; world.railDirty = true;
+  if (salvaged?.n) {   // what retired things were made of goes back to the engineer
+    for (const [it, n] of Object.entries(salvaged.parts)) { const left = inv.add(it, n); for (let i = 0; i < left; i++) spill(it, S.player.x, S.player.z); }
+    setTimeout(() => bus.emit('toast', `Steam generators are gone: use boilers and steam engines. The ${salvaged.n} in this save came back as parts.`, 6000), 1500);
+  }
   return true;
+}
+
+// ---------------------------------------------------------------- old saves
+// Deposits never vanish any more. Older saves get layers and the longer surface layer (with the same share of it
+// left), and every tile they mined out comes back one layer down. The ore layout is fixed, so each tile's original
+// richness can be worked out again.
+function loadOres(d) {
+  world.ores.clear();
+  if (d.oreV === ORE_V) { for (const [k, type, amount, layer, base] of d.ores) world.ores.set(k, { type, amount, layer, base }); return; }
+  generateOres();
+  const orig = new Map(world.ores), kept = new Map(d.ores.map(([k, type, amount]) => [k, { type, amount }]));
+  world.ores.clear();
+  for (const [k, o] of orig) {
+    const now = kept.get(k);
+    if (!now) { o.layer = 1; o.amount = layerSize(o, 1); }
+    else o.amount = Math.max(1, Math.round(Math.min(1, now.amount / o.base) * layerSize(o, 0)));
+    world.ores.set(k, o);
+  }
+  for (const [k, o] of kept) if (!world.ores.has(k)) world.ores.set(k, { type: o.type, base: o.amount, layer: 0, amount: o.amount * 4 });
+}
+// Retired items and buildings (see RETIRED) leave a save before anything is built from it, and each one counts toward
+// the parts it gives back. Fuel in a retired building comes back too; machines set to make one lose that recipe.
+function retireItems(d) {
+  const out = { n: 0, parts: {} }, gone = it => !!RETIRED[it];
+  const give = (it, n) => { if (n > 0) out.parts[it] = (out.parts[it] || 0) + n; };
+  const back = (it, n = 1) => { out.n += n; for (const [p, k] of Object.entries(RETIRED[it])) give(p, k * n); };
+  const slots = list => Array.isArray(list) ? list.map(s => { if (Array.isArray(s) && gone(s[0])) { back(s[0], s[1]); return 0; } return s; }) : list;
+  const counts = o => { for (const it of Object.keys(o || {})) if (gone(it)) { back(it, o[it]); delete o[it]; } };
+  d.ents = (d.ents || []).filter(o => {
+    if (!gone(o.t)) return true;
+    back(o.t); if (o.fuel && o.fuelType) give(o.fuelType, o.fuel);
+    return false;
+  });
+  for (const o of d.ents) {
+    if (Array.isArray(o.store)) o.store = slots(o.store);
+    counts(o.inp); counts(o.out);
+    if (gone(o.held)) { back(o.held); o.held = null; }
+    if (o.items) o.items = o.items.filter(i => !gone(i[0]) || (back(i[0]), false));
+    if (gone(o.recipe)) { for (const [it, n] of Object.entries(o.inp || {})) give(it, n); if (o.crafting) for (const [it, n] of Object.entries(RETIRED[o.recipe])) give(it, n); o.inp = {}; o.recipe = null; o.crafting = false; }
+  }
+  d.invSlots = slots(d.invSlots);
+  if (Array.isArray(d.inv)) d.inv = d.inv.filter(([it, n]) => !gone(it) || (back(it, n), false));
+  for (const p of Object.values(d.remoteInv || {})) p.inv = slots(p.inv);
+  for (const v of d.vehicles || []) v.c = slots(v.c);
+  d.ground = (d.ground || []).filter(g => !gone(g.type) || (back(g.type), false));
+  // queued crafts: a retired thing being made gives back what it was made of
+  d.craft = (d.craft || []).filter(c => { if (!gone(c.rid)) return true; for (const [it, n] of Object.entries(RETIRED[c.rid])) give(it, n * (c.times - (c.done || 0))); return false; });
+  return out;
 }

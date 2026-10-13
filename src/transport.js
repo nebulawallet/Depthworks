@@ -193,7 +193,7 @@ function newUnit(way, cars, path, s, dir0) {
   return u;
 }
 const vehicleOnTile = (x, z) => world.vehicles.find(v => Math.floor(v.x) === x && Math.floor(v.z) === z);
-const solidAt = (x, z) => { const e = world.ents.get(key(x, 0, z)); return !!e && !e.items && e.kind !== 'rail'; };
+const solidAt = (x, z) => { const e = world.ents.get(key(x, 0, z)); return !!e && !e.belt && e.kind !== 'rail'; };
 export function placeVehicle(type, x, z, dir) {
   const st = vstats(type);
   if (!st) return 'that is not a vehicle';

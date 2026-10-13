@@ -1,34 +1,62 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED } from './data.js';
-import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf } from './state.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT } from './data.js';
+import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize } from './state.js';
+import { isBeltLike, dropOnBelt, takeFromBelt, beltWants, beltsTick, touchBelts, clearSeg, segItems, beltCommand, lanesOf } from './belts.js';
 import { rebuildFluids, fluidPre, fluidPost, producerCaps, burnNet, burnRate, draw, push, avail, room, passThrough, fluidConflict, flush, sameFac, isPipeLike } from './fluids.js';
 import { roadAt, removeRoad, isWalkway, roadBlocks, transportTick, rebuildRails, wayNear, vehSlots, vehSlotAccept, vehSlotPut, vehSlotTake, vehicleById, vehicleTarget, removeVehicle, depotCommand } from './transport.js';
 import { fishTarget, catchFish, fishTick } from './fish.js';
 export { sameFac };
 const isClient = () => S.net.role === 'client';
 
-export const SPACING = .25;
+export { isBeltLike };
 const ACTIVE_WINDOW = 8;
 let nextId = 1;
 export const isActive = e => e && S.T - e.lastActive < ACTIVE_WINDOW;
-export const isBeltLike = e => !!(e && e.items);
 const bump = (stat, it, n = 1) => { S.stats[stat] ||= {}; S.stats[stat][it] = (S.stats[stat][it] || 0) + n; };
+
+// ---------------------------------------------------------------- augments
+// Everything augments do to a machine is worked out here, and machines read their numbers from this only.
+export const augSlots = e => ENTITIES[e.type]?.augSlots || 0;
+export function augFits(e, it) {
+  const a = AUGMENTS[ITEMS[it]?.aug];
+  return !!a && augSlots(e) > 0 && (!a.only || a.only.includes(e.kind));
+}
+export function augBonus(list) {
+  const b = { speed: 0, efficiency: 0, productivity: 0, depth: 0 };
+  for (const it of list || []) {
+    const d = ITEMS[it], a = d && AUGMENTS[d.aug]; if (!a) continue;
+    const v = a.tiers[d.tier - 1] || 0;
+    if (d.aug === 'depth') b.depth = Math.max(b.depth, v); else b[d.aug] += v;
+  }
+  return b;
+}
+// speed: work rate multiplier. power: multiplier on power drawn and fuel burned. prod: extra output per output.
+// depth: the deepest deposit layer a drill reaches.
+export function machineStats(e) {
+  const def = ENTITIES[e.type], b = augBonus(e.aug);
+  return { speed: 1 + b.speed, power: Math.max(AUG_RULES.minPower, 1 - b.efficiency), prod: b.productivity,
+    depth: Math.min(DEPOSIT.length - 1, (def.depth ?? 0) + b.depth), bonus: b };
+}
+// Productivity fills a bar; every time it passes 1, one more of the output comes out.
+function prodExtra(e, prod) { if (prod <= 0) return 0; e.pbar = (e.pbar || 0) + prod; const n = Math.floor(e.pbar); e.pbar -= n; return n; }
 
 // ---------------------------------------------------------------- entities
 export function createEntity(type, x, y, z, dir = 0, dy = 0) {
   const def = ENTITIES[type];
   const e = { id: nextId++, type, kind: def.kind, x, y, z, dir, dy: 0, lastActive: -99, prog: 0, status: '', net: null };
-  if (def.burner || def.kind === 'generator') { e.fuel = 0; e.fuelType = null; e.burn = 0; }
+  if (def.burner) { e.fuel = 0; e.fuelType = null; e.burn = 0; }
+  if (def.augSlots) e.aug = new Array(def.augSlots).fill(null);
   switch (def.kind) {
-    case 'belt': case 'splitter': e.items = []; e.len = 1; e.speed = def.speed; e.curve = null; e.rr = 0; break;
-    case 'underground': e.items = []; e.len = 1; e.speed = def.speed; e.role = 'in'; e.pair = null; break;
-    case 'lift': e.items = []; e.len = 1; e.speed = def.speed; e.dy = dy || 1; break;
+    // belts keep their items on their line (belts.js); `buf` holds a tile's items while it has none
+    case 'belt': case 'splitter': e.belt = true; e.buf = []; e.len = 1; e.speed = def.speed; e.curve = null; break;
+    case 'underground': e.belt = true; e.buf = []; e.len = 1; e.speed = def.speed; e.role = 'in'; e.pair = null; break;
+    case 'lift': e.belt = true; e.buf = []; e.len = 1; e.speed = def.speed; e.dy = dy || 1; break;
     case 'inserter': e.t = 0; e.held = null; e.reach = def.reach; e.swing = def.swing; e.dy = dy || 0; e.filter = null; break;
-    case 'drill': e.timer = 0; e.buffer = null; break;
+    case 'drill': e.timer = 0; e.buffer = null; e.bufN = 0; break;
     case 'furnace': e.recipe = null; e.inp = {}; e.out = {}; e.crafting = false; break;
     case 'assembler': e.recipe = null; e.inp = {}; e.out = {}; e.crafting = false; break;
     case 'lab': e.inp = {}; e.unit = null; break;
-    case 'chest': e.items = null; e.store = new Inventory(def.cap); break;
+    case 'chest': e.store = new Inventory(def.cap); break;
     case 'transmitter': e.inp = {}; e.charging = false; break;
     case 'pipe': case 'tank': e.fluid = null; e.fa = []; e.conn = 0; break;
     case 'upipe': e.fluid = null; e.fa = []; e.role = 'in'; e.pair = null; break;
@@ -84,22 +112,20 @@ export function insert(e, it) {
 }
 export function take(e, ok) {
   if (!e) return null;
-  if (isBeltLike(e)) {
-    let best = -1, bd = 9; const mid = pickPoint(e);
-    e.items.forEach((it, i) => { const d = Math.abs(it.p - mid); if (ok(it.type) && d < bd && visibleOnBelt(e, it.p)) { bd = d; best = i; } });
-    if (best < 0) return null;
-    return e.items.splice(best, 1)[0].type;
-  }
+  if (isBeltLike(e)) return takeFromBelt(e, ok);
   switch (e.kind) {
     case 'chest': case 'depot': for (const it of e.store.counts().keys()) if (ok(it)) { e.store.remove(it, 1); e.lastActive = S.T; return it; } break;
     case 'furnace': case 'assembler': for (const it in e.out) if (e.out[it] > 0 && ok(it)) { if (--e.out[it] === 0) delete e.out[it]; return it; } break;
-    case 'drill': if (e.buffer && ok(e.buffer)) { const it = e.buffer; e.buffer = null; return it; } break;
+    case 'drill': if (e.buffer && ok(e.buffer)) { const it = e.buffer; takeBuf(e, 1); return it; } break;
   }
   return null;
 }
-const wants = (t, it) => isBeltLike(t) ? true : canAccept(t, it);
-function give(t, it) {
-  if (isBeltLike(t)) return dropOnBelt(t, it);
+// A drill's output holds what one cycle dug up: one item, or more from deep deposits and productivity.
+const bufCount = e => e.buffer ? Math.max(1, e.bufN || 0) : 0;
+function takeBuf(e, n) { const k = Math.min(n, bufCount(e)); e.bufN = bufCount(e) - k; if (!e.bufN) e.buffer = null; return k; }
+const wants = (t, it) => isBeltLike(t) ? beltWants(t, it) : canAccept(t, it);
+function give(t, it, dir) {
+  if (isBeltLike(t)) return dropOnBelt(t, it, dir, true);
   if (canAccept(t, it)) { insert(t, it); return true; }
   return false;
 }
@@ -111,100 +137,13 @@ function burner(e, want, mw, dt) {
   e.burn -= mw * dt; return 1;
 }
 
-// ---------------------------------------------------------------- belts
-function pickPoint(b) { return b.kind === 'underground' ? (b.role === 'in' ? .25 : b.len - .25) : b.len / 2; }
-export function visibleOnBelt(b, p) { return b.kind !== 'underground' || (b.role === 'in' ? p < .5 : p > b.len - .5); }
-function roomAt(b, q) { for (const it of b.items) if (Math.abs(it.p - q) < SPACING - 1e-6) return false; return true; }
-function insertSorted(b, item) { let i = 0; while (i < b.items.length && b.items[i].p < item.p) i++; b.items.splice(i, 0, item); }
-export function dropOnBelt(b, type) {
-  const q = pickPoint(b);
-  if (!roomAt(b, q)) return false;
-  insertSorted(b, { type, p: q }); b.lastActive = S.T; return true;
-}
-export function primaryNext(b) {
-  const [dx, dz] = DIRS[b.dir];
-  if (b.kind === 'underground' && b.role === 'in') return b.pair;
-  if (b.kind === 'lift') return world.ents.get(key(b.x + dx, b.y + b.dy, b.z + dz));
-  return world.ents.get(key(b.x + dx, b.y, b.z + dz));
-}
-const splitOuts = b => [b.dir, (b.dir + 3) % 4, (b.dir + 1) % 4];
-// Where an item moving in `moveDir` lands on belt t (-1 = refused).
-function entryFor(t, moveDir, from) {
-  if (!isBeltLike(t) || (from && !sameFac(from, t))) return -1;
-  if (t.kind === 'underground' && t.role === 'out') return from && from === t.pair ? 0 : -1;
-  const rel = (moveDir - t.dir + 4) % 4;
-  if (rel === 2) return -1;
-  if (rel === 0) return 0;
-  if (t.kind === 'lift' || t.kind === 'splitter') return -1;
-  if (t.kind === 'belt' && ((rel === 1 && t.curve === 'L') || (rel === 3 && t.curve === 'R'))) return 0;
-  return t.kind === 'underground' ? .25 : t.len / 2;
-}
-function outputsInto(n, b) {
-  if (!isBeltLike(n) || !sameFac(n, b)) return false;
-  if (n.kind === 'splitter') return splitOuts(n).some(d => { const [dx, dz] = DIRS[d]; return world.ents.get(key(n.x + dx, n.y, n.z + dz)) === b; });
-  return primaryNext(n) === b;
-}
-function computeCurve(b) {
-  const [dx, dz] = DIRS[b.dir];
-  if (outputsInto(world.ents.get(key(b.x - dx, b.y, b.z - dz)), b)) return null;
-  for (const ldy of [1, -1]) { const n = world.ents.get(key(b.x - dx, b.y - ldy, b.z - dz)); if (n && n.kind === 'lift' && n.dy === ldy && n.dir === b.dir && sameFac(n, b)) return null; }
-  const side = d => { const [sx, sz] = DIRS[d]; return outputsInto(world.ents.get(key(b.x + sx, b.y, b.z + sz)), b); };
-  const L = side((b.dir + 3) % 4), R = side((b.dir + 1) % 4);
-  return L && !R ? 'L' : R && !L ? 'R' : null;
-}
-export function rebuildBelts() {
-  const belts = [...world.ents.values()].filter(isBeltLike);
-  for (const b of belts) if (b.kind === 'underground' && b.role === 'in') {
-    b.len = b.pair ? Math.max(1, Math.abs(b.pair.x - b.x) + Math.abs(b.pair.z - b.z)) : 1;
-    for (let i = b.items.length - 1; i >= 0; i--) if (b.items[i].p > b.len) { spill(b.items[i].type, b.x + .5, b.z + .5); b.items.splice(i, 1); }
-  }
-  for (const b of belts) if (b.kind === 'belt') { const c = computeCurve(b); if (c !== b.curve) { b.curve = c; bus.emit('remesh', b); } }
-  const seen = new Set(), order = [];
-  const visit = b => {
-    if (seen.has(b)) return; seen.add(b);
-    if (b.kind === 'splitter') for (const d of splitOuts(b)) { const [dx, dz] = DIRS[d]; const n = world.ents.get(key(b.x + dx, b.y, b.z + dz)); if (isBeltLike(n)) visit(n); }
-    else { const n = primaryNext(b); if (isBeltLike(n)) visit(n); }
-    order.push(b);
-  };
-  belts.forEach(visit);
-  world.beltOrder = order; world.beltDirty = false;
-}
-function beltTick(b, dt) {
-  const items = b.items, n = items.length;
-  if (!n) return;
-  let tgt = null, q = -1;
-  if (b.kind !== 'splitter') { tgt = primaryNext(b); q = entryFor(tgt, b.dir, b); }
-  const limit = q === 0 ? b.len + (tgt.items.length ? tgt.items[0].p - SPACING : 1) : b.len;
-  let moved = false;
-  for (let i = n - 1; i >= 0; i--) {
-    const it = items[i], max = i === n - 1 ? limit : items[i + 1].p - SPACING;
-    if (it.p < max) { const np = Math.min(max, it.p + b.speed * dt); if (np > it.p) { it.p = np; moved = true; } }
-  }
-  const f = items[n - 1];
-  if (f.p >= b.len) {
-    let gone = false;
-    if (b.kind === 'splitter') {
-      for (let k = 0; k < 3 && !gone; k++) {
-        const o = (b.rr + k) % 3, od = splitOuts(b)[o], [dx, dz] = DIRS[od];
-        const t = world.ents.get(key(b.x + dx, b.y, b.z + dz)), qq = entryFor(t, od, b);
-        if (qq >= 0 && roomAt(t, qq)) { items.pop(); f.p = qq; insertSorted(t, f); t.lastActive = S.T; b.rr = (o + 1) % 3; gone = true; }
-      }
-    } else if (q >= 0) {
-      const nq = q === 0 ? f.p - b.len : q;
-      if (roomAt(tgt, nq)) { items.pop(); f.p = nq; insertSorted(tgt, f); tgt.lastActive = S.T; gone = true; }
-    }
-    if (!gone) f.p = b.len;
-  }
-  if (moved) b.lastActive = S.T;
-}
-
 // ---------------------------------------------------------------- power networks
 // Poles join into networks by wire reach, by overlapping supply areas, and by cables strung by hand, but only
 // within one voltage (VOLTAGES). Machines inside a pole's supply area join that network.
 export const nets = [];
 export const voltsOf = def => def.volts || [def.volt ?? 0];
 export const autoVolt = def => voltsOf(def)[0];   // the voltage a pole wires itself up on
-const producerKind = e => e.kind === 'generator' || e.kind === 'solar' || e.kind === 'engine' || e.kind === 'fgen';
+const producerKind = e => e.kind === 'solar' || e.kind === 'engine' || e.kind === 'fgen';
 export function rebuildPower() {
   const poles = [...world.ents.values()].filter(e => e.kind === 'pole');
   const parent = new Map(poles.map(p => [p, p]));
@@ -236,7 +175,7 @@ export function rebuildPower() {
   nets.length = 0;
   for (const p of poles) {
     const r = find(p);
-    if (!byRoot.has(r)) { const n = { id: nets.length, poles: [], demand: 0, nextDemand: 0, capacity: 0, sat: 0, produced: 0, gens: [], engines: [], solar: 0, consumers: 0 }; byRoot.set(r, n); nets.push(n); }
+    if (!byRoot.has(r)) { const n = { id: nets.length, poles: [], demand: 0, nextDemand: 0, capacity: 0, sat: 0, produced: 0, engines: [], solar: 0, consumers: 0 }; byRoot.set(r, n); nets.push(n); }
     p.net = byRoot.get(r); p.net.poles.push(p);
   }
   for (const e of world.ents.values()) {
@@ -255,21 +194,12 @@ export function rebuildPower() {
 }
 
 // ---------------------------------------------------------------- fluids (see fluids.js)
-const fuelled = e => e.burn > 0 || e.fuel > 0;
 function powerTick(dt) {
   for (const n of nets) {
     const used = Math.min(n.nextDemand, n.capacity);
     const fromGen = Math.max(0, used - n.solar * ENTITIES.solar.out);
-    const live = n.gens.filter(fuelled);
     // every producer runs at the same fraction of what it could give
-    const could = live.length * ENTITIES.generator.out + n.engines.reduce((s, e) => s + e.cap, 0), k = could ? Math.min(1, fromGen / could) : 0;
-    for (const g of live) {
-      const share = ENTITIES.generator.out * k;
-      burner(g, share > 0, share / 1000, dt);
-      g.load = share / ENTITIES.generator.out;
-      if (share > 0) { g.lastActive = S.T; g.status = 'generating'; } else g.status = 'idle (no demand)';
-    }
-    for (const g of n.gens) if (!live.includes(g)) { g.load = 0; g.status = 'out of fuel'; }
+    const could = n.engines.reduce((s, e) => s + e.cap, 0), k = could ? Math.min(1, fromGen / could) : 0;
     for (const e of n.engines) {
       const def = ENTITIES[e.type], share = e.cap * k;
       e.load = share / def.out;
@@ -283,7 +213,7 @@ function powerTick(dt) {
 }
 
 // ---------------------------------------------------------------- machines
-function craftTick(e, dt, speed, energy) {
+function craftTick(e, dt, speed, energy, prod = 0) {
   const r = RECIPE[e.recipe];
   if (!r) { e.status = 'no recipe'; return false; }
   if (!e.crafting) {
@@ -309,7 +239,8 @@ function craftTick(e, dt, speed, energy) {
   }
   e.prog += dp; e.lastActive = S.T; e.status = 'working';
   if (e.prog >= 1 - 1e-9) {
-    for (const [k, n] of Object.entries(r.out)) { e.out[k] = (e.out[k] || 0) + n; bump('made', k, n); }
+    const extra = prodExtra(e, prod);
+    for (const [k, n] of Object.entries(r.out)) { e.out[k] = (e.out[k] || 0) + n * (1 + extra); bump('made', k, n * (1 + extra)); }
     e.crafting = false; e.prog = 0;
   }
   return true;
@@ -317,51 +248,62 @@ function craftTick(e, dt, speed, energy) {
 function drillOutput(e) {
   const [dx, dz] = DIRS[e.dir], t = world.ents.get(key(e.x + dx, e.y, e.z + dz));
   if (t && !sameFac(e, t)) return;
-  if (!t) { if (e.y === 0) { spill(e.buffer, e.x + dx + .5, e.z + dz + .5); e.buffer = null; } return; }   // Factorio drills drop ore on the ground
+  if (!t) { if (e.y === 0) { for (let i = bufCount(e); i > 0; i--) spill(e.buffer, e.x + dx + .5, e.z + dz + .5); takeBuf(e, bufCount(e)); } return; }   // Factorio drills drop ore on the ground
   if (t.kind === 'inserter') return;
-  if (isBeltLike(t) ? dropOnBelt(t, e.buffer) : canAccept(t, e.buffer) && (insert(t, e.buffer), true)) e.buffer = null;
+  while (e.buffer && (isBeltLike(t) ? dropOnBelt(t, e.buffer, e.dir, false) : canAccept(t, e.buffer) && (insert(t, e.buffer), true))) takeBuf(e, 1);
 }
+// Mining never empties a deposit: when its layer runs out, it drops to the next one down (only the host decides).
 export function depleteOre(x, y, z, n = 1) {
-  const k = key(x, y, z), o = world.ores.get(k); if (!o) return null;
-  o.amount -= n;
-  if (o.amount <= 0 && !isClient()) { world.ores.delete(k); bus.emit('ore', x, y, z); }
+  const o = world.ores.get(key(x, y, z)); if (!o) return null;
+  if (!endless(o)) {
+    o.amount -= n;
+    if (o.amount <= 0 && !isClient()) { o.layer++; o.amount = layerSize(o, o.layer); bus.emit('orelayer', x, y, z, o); }
+  }
   return o.type;
 }
+export const depositLayer = o => DEPOSIT[Math.min(DEPOSIT.length - 1, o?.layer || 0)];
 const noPower = e => !e.net ? 'not connected to power' : 'no power';
 
 function tickEntity(e, dt) {
   const def = ENTITIES[e.type], net = e.net, sat = net ? net.sat : 0;
   const demand = kw => { if (net) net.nextDemand += kw; };
+  const st = def.augSlots ? machineStats(e) : null;
   switch (e.kind) {
     case 'drill': {
       if (e.buffer) { drillOutput(e); if (e.buffer) { const [dx, dz] = DIRS[e.dir], t = world.ents.get(key(e.x + dx, e.y, e.z + dz)); e.status = t && !sameFac(e, t) ? 'output blocked: that belongs to another factory' : 'output blocked'; break; } }
       const ore = world.ores.get(key(e.x, e.y, e.z));
-      if (!ore) { e.status = 'deposit exhausted'; break; }
+      if (!ore) { e.status = 'no deposit under it'; break; }
+      const layer = depositLayer(ore);
+      if (ore.layer > st.depth) { e.status = `needs a depth upgrade: the deposit is down at ${layer.name.toLowerCase()}`; break; }
       let energy;
-      if (def.burner) { energy = burner(e, true, .15, dt); if (!energy) { e.status = 'out of fuel'; break; } }
-      else { demand(def.power); energy = sat; if (sat <= 0) { e.status = noPower(e); break; } }
-      e.timer += dt * def.rate * energy; e.lastActive = S.T; e.status = 'mining';
-      if (e.timer >= 1) { e.timer = 0; e.buffer = depleteOre(e.x, e.y, e.z); bump('made', e.buffer); drillOutput(e); }
+      if (def.burner) { energy = burner(e, true, .15 * st.power, dt); if (!energy) { e.status = 'out of fuel'; break; } }
+      else { demand(def.power * st.power); energy = sat; if (sat <= 0) { e.status = noPower(e); break; } }
+      e.timer += dt * def.rate * st.speed * layer.speed * energy; e.lastActive = S.T; e.status = 'mining';
+      if (e.timer >= 1) {
+        e.timer = 0;
+        const it = depleteOre(e.x, e.y, e.z), n = 1 + (Math.random() < layer.double ? 1 : 0) + prodExtra(e, st.prod);
+        e.buffer = it; e.bufN = n; bump('made', it, n); drillOutput(e);
+      }
       break;
     }
     case 'furnace': {
       if (def.burner) {
         const want = e.crafting || Object.keys(e.inp).length > 0;
         const energy = want ? (e.burn > 0 || e.fuel > 0 ? 1 : 0) : 0;
-        const working = craftTick(e, dt, def.speed, energy);
-        if (working) burner(e, true, .09, dt);
+        const working = craftTick(e, dt, def.speed * st.speed, energy, st.prod);
+        if (working) burner(e, true, .09 * st.power, dt);
         if (working && e.burn <= 0 && !e.fuel) e.status = 'out of fuel';
       } else {
-        if (e.crafting) demand(def.power);
-        craftTick(e, dt, def.speed, sat);
+        if (e.crafting) demand(def.power * st.power);
+        craftTick(e, dt, def.speed * st.speed, sat, st.prod);
         if (e.status === 'no power') e.status = noPower(e);
       }
       if (!e.recipe) e.status = 'waiting for ore';
       break;
     }
     case 'assembler':
-      if (e.crafting) demand(def.power);
-      craftTick(e, dt, def.speed, sat);
+      if (e.crafting) demand(def.power * st.power);
+      craftTick(e, dt, def.speed * st.speed, sat, st.prod);
       if (e.status === 'no power') e.status = noPower(e);
       break;
     case 'lab': {
@@ -374,12 +316,12 @@ function tickEntity(e, dt) {
         for (const p in tech.cost) { if (--e.inp[p] === 0) delete e.inp[p]; bump('used', p); }
         e.unit = tech.id;
       }
-      demand(def.power);
+      demand(def.power * st.power);
       if (sat <= 0) { e.status = noPower(e); break; }
-      e.prog += dt * def.speed * sat / tech.time; e.lastActive = S.T; e.status = 'researching';
+      e.prog += dt * def.speed * st.speed * sat / tech.time; e.lastActive = S.T; e.status = 'researching';
       if (e.prog >= 1) {
         e.unit = null; e.prog = 0;
-        S.research.progress[tech.id] = (S.research.progress[tech.id] || 0) + 1;
+        S.research.progress[tech.id] = Math.min(tech.count, (S.research.progress[tech.id] || 0) + 1 + prodExtra(e, st.prod));
         if (S.research.progress[tech.id] >= tech.count && !isClient()) completeResearch(tech.id);
       }
       break;
@@ -412,7 +354,7 @@ function tickEntity(e, dt) {
       } else {
         e.lastActive = S.T;
         if (e.t < 1) { e.t = Math.min(1, e.t + spd); e.status = 'moving'; }
-        else if (tgt && give(tgt, e.held)) e.held = null;
+        else if (tgt && give(tgt, e.held, e.dir)) e.held = null;
         else e.status = 'target full';
       }
       if (energy <= 0 && moving) e.status = def.burner ? 'out of fuel' : noPower(e);
@@ -431,17 +373,17 @@ function tickEntity(e, dt) {
       if (e.prog >= 1) { e.charging = false; e.prog = 0; if (!isClient()) bus.emit('pulse', e); }
       break;
     }
-    case 'generator': if (!e.net) e.status = 'not connected: put a pole next to it'; break;
     case 'oilpump': {
       const o = world.oil.get(e.x + ',' + e.z), out = e.fb?.[0];
       e.load = 0;
       if (!o || e.y !== 0) { e.status = 'no crude oil under it'; break; }
       if (!out) { e.status = 'connect a pipe or tank to its front'; break; }
       if (room(out) <= 0) { e.status = 'output full'; break; }
-      demand(def.power); if (sat <= 0) { e.status = noPower(e); break; }
-      const got = push(out, def.rate * o.yield / 100 * sat * dt, 'crude_oil');
+      demand(def.power * st.power); if (sat <= 0) { e.status = noPower(e); break; }
+      const rate = def.rate * o.yield / 100 * st.speed, got = push(out, rate * sat * dt, 'crude_oil');
+      if (st.prod > 0) push(out, got * st.prod, 'crude_oil');   // productivity: more crude for the same draw on the well
       if (!isClient()) o.yield = Math.max(20, o.yield - got / 2000);   // deposits slow down as you pump them, never below 20%
-      e.load = sat; e.lastActive = S.T; e.status = `pumping ${(def.rate * o.yield / 100).toFixed(1)}/s`;
+      e.load = sat; e.lastActive = S.T; e.status = `pumping ${(rate * (1 + st.prod)).toFixed(1)}/s`;
       break;
     }
     case 'fpump':
@@ -508,6 +450,7 @@ export function planCraft(rid, times) {
   return { sim, queue };
 }
 export function maxCraftable(rid) {
+  if (S.sandbox) return RECIPE[rid] ? stackOf(rid) : 0;   // anything, as much as you like
   let lo = 0, hi = 1;
   while (hi <= 512 && planCraft(rid, hi)) { lo = hi; hi *= 2; }
   hi = Math.min(hi, 513);
@@ -515,6 +458,11 @@ export function maxCraftable(rid) {
   return lo;
 }
 export function queueCraft(rid, times = 1) {
+  if (S.sandbox) {   // free and instant: whatever the recipe makes, straight into the inventory
+    const r = RECIPE[rid]; if (!r) return false;
+    for (const [k, n] of Object.entries(r.out)) { invGive(k, n * times); bump('made', k, n * times); }
+    notify('crafted', rid); return true;
+  }
   const plan = planCraft(rid, times);
   if (!plan) return false;
   const inv = actor.inv, before = inv.counts();
@@ -550,7 +498,7 @@ function solidShape(cx, cz) {
   const f = world.feats.get(key(cx, 0, cz));
   if (f) return { r: f.type === 'tree' ? .22 : .42 };
   const e = world.ents.get(key(cx, 0, cz));
-  if (!e || e.items) return null;
+  if (!e || e.belt) return null;
   if (e.kind === 'pole') return { r: .15 };
   return { sq: .46 };
 }
@@ -584,7 +532,7 @@ export function playerTick(dt, input) {
   p.vz = (p.vz || 0) + (input.mz * spd - (p.vz || 0)) * a;
   let vx = p.vx, vz = p.vz;
   const under = world.ents.get(key(Math.floor(p.x), 0, Math.floor(p.z)));
-  if (under && under.items && under.kind !== 'lift') { const [dx, dz] = DIRS[under.dir]; vx += dx * under.speed; vz += dz * under.speed; }
+  if (under?.belt && under.kind !== 'lift') { const [dx, dz] = DIRS[under.dir], sp = under.line?.speed ?? under.speed; vx += dx * sp; vz += dz * sp; }
   const stuck = collides(p.x, p.z);
   const nx = p.x + vx * dt; if (stuck || !collides(nx, p.z)) p.x = nx;
   const nz = p.z + vz * dt; if (stuck || !collides(p.x, nz)) p.z = nz;
@@ -604,13 +552,13 @@ export function mineTargetAt(c) {
   if (c.veh) { const v = vehicleById(c.veh); return v ? vehicleTarget(v, c) : null; }
   const k = key(c.x, c.y, c.z), e = world.ents.get(k);
   if (e?.kind === 'rail' && e.sig !== null && e.sig !== undefined) return { kind: 'sig', k, c, time: .2, reach: PLAYER.reach, name: 'Rail signal' };
-  if (e) return { kind: 'ent', k, c, time: e.items ? .15 : e.kind === 'inserter' || e.kind === 'pole' ? .2 : .4, reach: PLAYER.reach, name: ENTITIES[e.type].name };
+  if (e) return { kind: 'ent', k, c, time: e.belt ? .15 : e.kind === 'inserter' || e.kind === 'pole' ? .2 : .4, reach: PLAYER.reach, name: ENTITIES[e.type].name };
   if (world.frames.has(k)) return { kind: 'frame', k, c, time: .3, reach: PLAYER.reach, name: 'Hollow frame' };
   if (c.y === 0) { const f = world.feats.get(k); if (f) return { kind: 'feat', k, c, time: FEATURES[f.type].time, reach: PLAYER.reach, name: FEATURES[f.type].name }; }
   if (c.y === 0 && isWater(c.x, c.z)) { const f = fishTarget(c); return f ? { kind: 'fish', k: 'fish' + f.id, c, fish: f.id, time: .35, reach: PLAYER.reach, name: 'Fish' } : null; }
   if (c.y === 0) { const r = roadAt(c.x, c.z); if (r) return { kind: 'road', k: 'road' + k, c, time: .25, reach: PLAYER.reach, name: ITEMS[r.s]?.name ?? 'Road' }; }
   const o = world.ores.get(k);
-  if (o) return { kind: 'ore', k, c, time: c.y < 0 ? 1.4 : 1, reach: PLAYER.mineReach + (c.y < 0 ? 1 : 0), name: ITEMS[o.type].name, ore: o.type };
+  if (o) return { kind: 'ore', k, c, time: (c.y < 0 ? 1.4 : 1) / depositLayer(o).speed, reach: PLAYER.mineReach + (c.y < 0 ? 1 : 0), name: ITEMS[o.type].name, ore: o.type };
   return null;
 }
 function mineTick(dt) {
@@ -625,15 +573,17 @@ function mineTick(dt) {
   if (m.prog < 1) return;
   m.prog = 0;
   const { x, y, z } = t.c;
-  if (t.kind === 'fish') { if (catchFish(t.fish)) { invGive('raw_fish'); bump('mined', 'raw_fish'); notify('mined', 'ore'); notify('float', '+1 Raw fish', x + .5, .4, z + .5); } }
+  // a popup per thing you dig, which counts up while you keep at it and shows how many you now have
+  const gain = (list, fy) => notify('gain', list.map(([it, n]) => [it, n, invGet(it)]), x + .5, fy, z + .5);
+  if (t.kind === 'fish') { if (catchFish(t.fish)) { invGive('raw_fish'); bump('mined', 'raw_fish'); notify('mined', 'ore'); gain([['raw_fish', 1]], .4); } }
   else if (t.kind === 'road') removeRoad(x, z);
   else if (t.kind === 'sig') { const e = world.ents.get(t.k); if (e) { e.sig = null; invGive('rail_signal'); world.railDirty = true; bus.emit('remesh', e); } }
   else if (t.kind === 'veh') { const r = removeVehicle(t.veh); if (r) notify('toast', r); }
-  else if (t.kind === 'ore') { const it = depleteOre(x, y, z); invGive(it); bump('mined', it); notify('mined', 'ore'); notify('float', `+1 ${ITEMS[it].name}`, x + .5, y + .6, z + .5); }
+  else if (t.kind === 'ore') { const it = depleteOre(x, y, z); invGive(it); bump('mined', it); notify('mined', 'ore'); gain([[it, 1]], y + .6); }
   else if (t.kind === 'feat') {
     const f = world.feats.get(t.k); world.feats.delete(t.k);
     for (const [it, n] of Object.entries(FEATURES[f.type].gives)) { invGive(it, n); bump('mined', it, n); }
-    notify('float', Object.entries(FEATURES[f.type].gives).map(([it, n]) => `+${n} ${ITEMS[it].name}`).join('  '), x + .5, .9, z + .5);
+    gain(Object.entries(FEATURES[f.type].gives), .9);
     bus.emit('feat', x, z); notify('mined', f.type);
   } else {
     const r = removeAt(x, y, z);
@@ -655,12 +605,13 @@ function pickupTick(dt) {
     if (it) { invAdd(it); notify('pickup'); return; }
   }
 }
+export { segItems };
 // Z: drop one of the held item at the cursor, onto a belt if there is one.
 export function dropAt(c, it) {
   if (!it || !invGet(it) || !c) return false;
   if (distTo(c.x, c.z) > PLAYER.reach) { notify('toast', 'out of reach'); return false; }
   const b = world.ents.get(key(c.x, c.y, c.z));
-  if (isBeltLike(b)) { if (!dropOnBelt(b, it)) return false; }
+  if (isBeltLike(b)) { if (!dropOnBelt(b, it)) { if (lanesOf(b) === 3) notify('toast', 'bus belts only take items from the belt behind them'); return false; } }
   else if (c.y === 0 && isWater(c.x, c.z)) { notify('toast', 'it would sink'); return false; }
   else if (c.y === 0) world.ground.push({ type: it, x: c.x + .3 + Math.random() * .4, z: c.z + .3 + Math.random() * .4 });
   else return false;
@@ -677,32 +628,32 @@ export function fastTransfer(e, sel) {
   const grab = (obj, it) => { const k = Math.min(obj[it], invRoom(it)); if (k > 0) { invAdd(it, k); obj[it] -= k; n += k; if (!obj[it]) delete obj[it]; } };
   if (e.store) for (const [it, have] of e.store.counts()) { const k = Math.min(have, invRoom(it)); if (k > 0) { e.store.remove(it, k); invAdd(it, k); n += k; } }
   if (e.out) for (const it of Object.keys(e.out)) grab(e.out, it);
-  if (e.buffer && invRoom(e.buffer) > 0) { invAdd(e.buffer); e.buffer = null; n++; }
+  if (e.buffer) { const it = e.buffer, k = takeBuf(e, invRoom(it)); if (k) { invAdd(it, k); n += k; } }
   return n;
 }
 
 // ---------------------------------------------------------------- main tick
-let volTimer = 0;
+let volTimer = 0, touchTimer = 0;
 export function simulate(dt, input = { mx: 0, mz: 0 }) {
   S.T += dt;
-  if (world.beltDirty) rebuildBelts();
   if (world.powerDirty !== false) rebuildPower();
   if (world.fluidDirty !== false) rebuildFluids();
-  for (const n of nets) { n.gens = []; n.engines = []; n.solar = 0; }
+  for (const n of nets) { n.engines = []; n.solar = 0; }
   fluidPre(dt);
   producerCaps(dt);
   for (const e of world.ents.values()) {
     if (!e.net) continue;
-    if (e.kind === 'generator') e.net.gens.push(e); else if (e.kind === 'solar') e.net.solar++;
+    if (e.kind === 'solar') e.net.solar++;
     else if (e.kind === 'engine' || e.kind === 'fgen') e.net.engines.push(e);
   }
   for (const n of nets) {
-    n.capacity = n.solar * ENTITIES.solar.out + n.gens.filter(fuelled).length * ENTITIES.generator.out + n.engines.reduce((s, e) => s + e.cap, 0);
+    n.capacity = n.solar * ENTITIES.solar.out + n.engines.reduce((s, e) => s + e.cap, 0);
     n.sat = n.demand > 0 ? Math.min(1, n.capacity / n.demand) : (n.capacity > 0 ? 1 : 0);
   }
   if (world.railDirty !== false) rebuildRails();
-  for (const b of world.beltOrder) beltTick(b, dt);
-  for (const e of world.ents.values()) if (!e.items) tickEntity(e, dt);
+  beltsTick(dt);
+  if ((touchTimer += dt) > .25) { touchTimer = 0; touchBelts(); }
+  for (const e of world.ents.values()) if (!e.belt) tickEntity(e, dt);
   powerTick(dt);
   transportTick(dt);
   fishTick(dt);
@@ -724,7 +675,7 @@ export function powerSummary() {
 }
 
 // ---------------------------------------------------------------- building
-const FAST_REPLACE = new Set(['belt', 'inserter']);
+const FAST_REPLACE = new Set(['belt', 'inserter']);   // belts only for belts with the same number of lanes
 export function canPlace(type, x, y, z, dir = S.dir, dy = S.dy, opts = {}) {
   if (x < 0 || z < 0 || x >= GRID || z >= GRID) return 'out of bounds';
   if (invGet(type) < 1) return `no ${ENTITIES[type].name} in inventory`;
@@ -739,7 +690,8 @@ export function canPlace(type, x, y, z, dir = S.dir, dy = S.dy, opts = {}) {
   if (type === 'frame') return world.frames.has(k) ? 'occupied' : y >= LAYER_MAX ? 'too high' : null;
   const ex = world.ents.get(k);
   if (ex) {
-    if (FAST_REPLACE.has(def.kind) && ex.kind === def.kind && (ex.type !== type || ex.dir !== dir || (def.kind === 'inserter' && ex.dy !== dy))) return null;
+    if (FAST_REPLACE.has(def.kind) && ex.kind === def.kind && (def.kind !== 'belt' || lanesOf(ex) === (def.lanes ?? 2))
+      && (ex.type !== type || ex.dir !== dir || (def.kind === 'inserter' && ex.dy !== dy))) return null;
     return 'occupied';
   }
   if (def.kind === 'drill' && !world.ores.has(k)) return world.oil.has(x + ',' + z) && y === 0 ? 'that is crude oil: it needs a pumpjack' : 'drills need a deposit underneath';
@@ -767,7 +719,9 @@ export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false, fac =
   const e = createEntity(type, x, y, z, dir, ent.kind === 'lift' ? (dy || 1) : ent.kind === 'inserter' ? dy : 0);
   if (!ent.shared) e.fac = factoryOf(fac ?? actorFac())?.id ?? 1;
   if (old) {   // fast replace keeps what was on it
-    if (old.items && e.items) e.items = old.items;
+    if (old.belt && e.belt) { e.buf = segItems(old).map(it => [...it]); e.lcfg = old.lcfg; e.aug = old.aug; }
+    else if (old.aug && e.aug) e.aug = [...old.aug, ...e.aug].slice(0, e.aug.length);   // same kind, so the same slot count
+    else for (const a of old.aug || []) if (a) invGive(a);
     if (old.held) e.held = old.held;
     if (old.type !== type) invGive(old.type);
     if (old.fuel && e.fuel !== undefined) { e.fuel = old.fuel; e.fuelType = old.fuelType; e.burn = old.burn; }
@@ -782,7 +736,7 @@ export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false, fac =
     }
   }
   world.ents.set(k, e);
-  if (e.items) world.beltDirty = true;
+  if (e.belt) world.beltDirty = true;
   if (e.kind === 'rail') world.railDirty = true;
   world.powerDirty = true; world.fluidDirty = true;
   bus.emit('placed', e);
@@ -790,13 +744,14 @@ export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false, fac =
 }
 export function refundContents(e) {
   const add = o => { for (const [k, v] of Object.entries(o || {})) if (v > 0) invGive(k, v); };
-  if (e.items) e.items.forEach(it => invGive(it.type));
+  if (e.belt) for (const it of clearSeg(e)) invGive(it);
+  for (const a of e.aug || []) if (a) invGive(a);
   if (e.store) for (const [k, v] of e.store.counts()) invGive(k, v);
   add(e.inp); add(e.out);
   if (e.sig !== null && e.sig !== undefined) invGive('rail_signal');
   if (e.fuel) invGive(e.fuelType, e.fuel);
   if (e.held) invGive(e.held);
-  if (e.buffer) invGive(e.buffer);
+  if (e.buffer) invGive(e.buffer, bufCount(e));
   if (e.crafting && RECIPE[e.recipe]) add(RECIPE[e.recipe].in);
   if (e.charging) invGive('resonance_pack');
 }
@@ -808,7 +763,7 @@ export function removeAt(x, y, z) {
     refundContents(e); invGive(e.type);
     if (e.kind === 'pole') dropLinksAt(x, y, z, true);
     if (e.pair) { e.pair.pair = null; bus.emit('remesh', e.pair); }
-    if (e.items) world.beltDirty = true;
+    if (e.belt) world.beltDirty = true;
     if (e.kind === 'rail') world.railDirty = true;
     world.powerDirty = true; world.fluidDirty = true;
     bus.emit('removed', e); return 'removed';
@@ -872,7 +827,7 @@ export function rotateEntity(e, by = 1) {
   if (e.kind === 'rail') return;
   e.dir = (e.dir + by + 4) % 4;
   if ((e.kind === 'underground' || e.kind === 'upipe') && e.pair) { e.pair.pair = null; bus.emit('remesh', e.pair); e.pair = null; }
-  if (e.items) world.beltDirty = true;
+  if (e.belt) world.beltDirty = true;
   if (e.fb || e.fa) world.fluidDirty = true;
   bus.emit('remesh', e);
 }
@@ -895,9 +850,9 @@ export function entityCommand(e, cmd, arg) {
     case 'takeinp': takeFrom(e.inp, arg); break;
     case 'takeout': takeFrom(e.out, arg); break;
     case 'takeall': if (e.store) for (const [k, v] of e.store.counts()) { const got = Math.min(v, invRoom(k)); e.store.remove(k, got); invAdd(k, got); } break;
-    case 'takebuf': if (e.buffer) { invGive(e.buffer); e.buffer = null; } break;
+    case 'takebuf': if (e.buffer) { const it = e.buffer; invGive(it, takeBuf(e, bufCount(e))); } break;
     case 'takefuel': if (e.fuel) { invGive(e.fuelType, e.fuel); e.fuel = 0; e.fuelType = null; } break;
-    case 'takebelt': if (e.items) { e.items.forEach(i => invGive(i.type)); e.items.length = 0; } break;
+    case 'takebelt': if (e.belt) for (const it of clearSeg(e)) invGive(it); break;
     case 'put': { let n = 0; while (invGet(arg) > 0 && canAccept(e, arg, true) && n < 500) { insert(e, arg); invAdd(arg, -1); n++; } if (!n) notify('toast', 'it will not take that'); break; }
     case 'recipe': setRecipe(e, arg); break;
     case 'filter': e.filter = e.filter === arg ? null : arg; break;
@@ -906,7 +861,7 @@ export function entityCommand(e, cmd, arg) {
     case 'flush': flush(e); notify('toast', 'line flushed'); break;
     case 'valve': if (e.kind === 'valve' && ['check', 'overflow', 'topup'].includes(arg)) e.mode = arg; break;
     case 'fac': setFactory([e], +arg); break;
-    default: if (e.kind === 'depot') depotCommand(e, cmd, arg);
+    default: if (e.kind === 'depot') depotCommand(e, cmd, arg); else if (e.belt) beltCommand(e, cmd, arg);
   }
 }
 // Move buildings to another factory. Their links to the old one (belts, power, pipes) fall apart.
@@ -947,9 +902,10 @@ export function entSlots(e) {
     }
     case 'lab': for (const k of PACKS) out.push({ id: 'in:' + k, group: 'Science packs', it: e.inp[k] ? k : null, n: e.inp[k] || 0, hint: k }); break;
     case 'transmitter': out.push({ id: 'in:resonance_pack', group: 'Resonance packs', it: e.inp.resonance_pack ? 'resonance_pack' : null, n: e.inp.resonance_pack || 0, hint: 'resonance_pack' }); break;
-    case 'drill': out.push({ id: 'buf', group: 'Output', it: e.buffer, n: e.buffer ? 1 : 0 }); break;
+    case 'drill': out.push({ id: 'buf', group: 'Output', it: e.buffer, n: bufCount(e) }); break;
     case 'chest': case 'depot': e.store.slots.forEach((s, i) => out.push({ id: 'c:' + i, group: 'Storage', it: s?.it || null, n: s?.n || 0 })); break;
   }
+  if (!e.belt) (e.aug || []).forEach((it, i) => out.push({ id: 'aug:' + i, group: 'Augments', it, n: it ? 1 : 0, hint: e.kind === 'drill' && i === e.aug.length - 1 ? 'depth_aug_1' : 'speed_aug_1' }));
   return out;
 }
 // The slots of whatever a panel shows: a machine or a vehicle.
@@ -969,6 +925,7 @@ function entSlotAccept(e, id, it) {
     return st - (e.inp[k] || 0);
   }
   if (id.startsWith('c:')) return e.store.slotAccept(+id.slice(2), it);
+  if (id.startsWith('aug:')) return !e.aug?.[+id.slice(4)] && augFits(e, it) ? 1 : 0;
   return 0;   // results and drill output only come out
 }
 function entSlotPut(e, id, it, n) {
@@ -978,11 +935,13 @@ function entSlotPut(e, id, it, n) {
   else if (id === 'src') { e.recipe = smeltRecipe(it).id; e.inp[it] = (e.inp[it] || 0) + k; }
   else if (id.startsWith('in:')) e.inp[it] = (e.inp[it] || 0) + k;
   else if (id.startsWith('c:')) e.store.slotPut(+id.slice(2), it, k);
+  else if (id.startsWith('aug:')) e.aug[+id.slice(4)] = it;
   return k;
 }
 function entSlotTake(e, id, n) {
   if (id === 'fuel') { const it = e.fuelType, k = Math.min(n, e.fuel); e.fuel -= k; if (!e.fuel) e.fuelType = null; return [it, k]; }
-  if (id === 'buf') { const it = e.buffer; if (!it) return [null, 0]; e.buffer = null; return [it, 1]; }
+  if (id === 'buf') { const it = e.buffer; return it ? [it, takeBuf(e, n)] : [null, 0]; }
+  if (id.startsWith('aug:')) { const i = +id.slice(4), it = e.aug?.[i]; if (!it) return [null, 0]; e.aug[i] = null; return [it, 1]; }
   if (id.startsWith('c:')) { const i = +id.slice(2), it = e.store.slots[i]?.it; return [it, e.store.slotTake(i, n)]; }
   const obj = id.startsWith('res:') ? e.out : e.inp, k2 = id === 'src' ? firstKey(e.inp) : id.slice(id.indexOf(':') + 1);
   if (!k2 || !obj[k2]) return [null, 0];

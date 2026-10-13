@@ -28,11 +28,12 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 |---|---|
 | `src/data.js` | Pure data: items (stack sizes), entities, recipes, techs, tiers, tiles, fluids, voltages, quickbars, the alien script |
 | `src/state.js` | Shared mutable state `S`, `world` maps and tile grids, `Inventory` class, players, `actor`, the event `bus`, world generation (ores, trees, water, rivers), quickbars |
-| `src/sim.js` | All game rules: belts, machines, power networks and voltages, cables, research, precision, crafting, the engineer, building, slots, map marks, factory reassignment |
+| `src/sim.js` | All game rules: machines and their augments (`machineStats`), drills and deposit layers, power networks and voltages, cables, research, precision, crafting, the engineer, building, slots, map marks, factory reassignment |
+| `src/belts.js` | Belts: lanes (2, or 3 on bus belts), lines (runs of tiles simulated as one), the nodes where lines end (splitters, bus channels, side-loads, other belts), line settings, networks |
 | `src/fluids.js` | Fluid networks: fluid boxes per entity, pipes, underground pipes, pumps, valves, tanks, machine ports, throughput, the steam chain |
 | `src/transport.js` | Roads (tile layer), rails and signal blocks, vehicles and driving, A* over road/rail/water tiles, the shared path follower, depots, routes and schedules |
 | `src/fish.js` | Water bodies, fish and their populations, fishing nets on boats |
-| `src/logistics.js` | The logistics window (L): one route editor and map for rail, road and sea |
+| `src/logistics.js` | The logistics window (L): one route editor and map for rail, road and sea, plus the belt lines tab (line editor, map, network diagram) |
 | `src/net.js` | Co-op: `doAction`, hosting/joining, op broadcast, snapshots, chat |
 | `src/save.js` | Save/load and the entity JSON format (shared with net sync) |
 | `src/scene.js` | Rendering: camera, post pass, terrain, clutter, particles, entity meshes, picking, arrows, preview |
@@ -45,7 +46,7 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 
 Modules talk through direct imports plus `bus` events (`placed`, `removed`, `remesh`, `ore`, `feat`, `research`,
 `tier`, `pulse`, `signal`, `inv`, `players`, `chat`, `power`, `links`, `marks`, `openmap`, `roads`, `routes`,
-`factories`, `vehicles`, `fluids`, `announce`, …).
+`factories`, `vehicles`, `fluids`, `announce`, `orelayer`, `belts`, `gain`, …).
 
 Keys go through `input.js`: check `is('action', e.code)` (or `isDown` for held keys), never a hard-coded code,
 so players can rebind them. Add new actions to `ACTIONS`.
@@ -99,6 +100,14 @@ so players can rebind them. Add new actions to `ACTIONS`.
     are units (`world.units`) with a tile `path` and a position `s` along it (`evalPath`); cars and tanks are free
     vehicles. Route logic (`plan`, `schedule`, `dockTick`) is shared by all three ways. The host moves every
     vehicle; guests only show the snapshots. Bump `world.wayVersion` when roads or rails change so paths get checked.
+15. **Belts are lines** (`belts.js`). Items live on a line's lanes, not on tiles; a tile is `e.belt` with `line`/`off`.
+    Use `dropOnBelt`, `takeFromBelt`, `putAt`, `segItems`, `clearSeg`, never a tile's own list. Anything that changes how
+    tiles connect (placing, removing, rotating, splitter filters, bus channels, line augments) sets `world.beltDirty`.
+    Line settings (`lcfg`) live on the line's first tile; augments sit on whichever tile holds them.
+16. **Augments:** machines read speed, power, productivity and reach from `machineStats(e)` only. New producers get
+    slots from `augSlots` (default 2 for `PRODUCER_KINDS`).
+17. **Deposits** never disappear: `depleteOre` moves them down a `DEPOSIT` layer. Tune layers in `data.js`.
+18. **Retired things** go in `RETIRED` (data.js) with what they give back; `save.js` takes them out of old saves.
 
 ## Style
 

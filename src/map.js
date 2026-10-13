@@ -35,7 +35,7 @@ function topThing(x, z) {
 function entColor(e) {
   if (e.kind === 'frame') return FRAME;
   const c = rgb(ENTITIES[e.type].color);
-  return e.items ? shade(c, .75) : c;
+  return e.belt ? shade(c, .75) : c;
 }
 const OIL = rgb(0x231c2a), RAIL = rgb(0x9a8a76);
 const hexRgb = h => rgb(parseInt((h || '#888888').slice(1), 16));
@@ -69,7 +69,7 @@ function tileColor(x, z) {
   return c;
 }
 function prodColor(e) {
-  if (e.items) return S.T - e.lastActive < 1 && e.items.length ? STATUS.ok : STATUS.none;
+  if (e.belt) return S.T - e.lastActive < 1 && e.nItems ? STATUS.ok : STATUS.none;
   if (e.kind === 'pole' || e.kind === 'chest') return STATUS.none;
   if (PROBLEM.test(e.status || '')) return STATUS.bad;
   return S.T - e.lastActive < 1.5 ? STATUS.ok : STATUS.idle;

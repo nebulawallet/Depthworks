@@ -1,5 +1,5 @@
 // Shared mutable game state.
-import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE } from './data.js';
+import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE, DEPOSIT } from './data.js';
 
 export const GRID = 96;
 const K = GRID / 64;  // world layout was designed on a 64 grid
@@ -23,6 +23,7 @@ export const S = {
   seed: 20261013,               // world seed for water; ores and trees use their own fixed layout
   bars: [], bar: 0,             // quickbars (see HOTBARS); S.hotbar is bars[0]
   hideUI: false,
+  sandbox: false,               // sandbox worlds: everything researched, crafting free and instant, any item on request
   roadCfg: { w: 2, l: 2, m: 'dashed', sw: false, edges: true, cross: true },   // how the road in hand gets laid
 };
 
@@ -90,10 +91,10 @@ export function notify(ev, ...a) { if (actor.local) bus.emit(ev, ...a); else bus
 export const world = {
   ents: new Map(),    // key -> entity (one per cell)
   frames: new Map(),  // key -> frame (hollow, can share a cell with an entity)
-  ores: new Map(),    // key -> { type, amount }
+  ores: new Map(),    // key -> { type, base, layer, amount } (see newDeposit)
   feats: new Map(),   // key -> { type: 'tree' | 'rock' } (surface only)
   ground: [],         // items lying on the ground: { type, x, z }
-  beltOrder: [], beltDirty: true,
+  lines: [], beltDirty: true,   // belt lines, downstream first (see belts.js)
   tiles: new Uint8Array(GRID * GRID),   // surface tile type per cell (index into TILES)
   flow: new Int8Array(GRID * GRID).fill(-1),   // flow direction of moving water (index into DIRS), -1 for still
   links: [],          // cables strung by hand: { kind: item id, a: [x, y, z], b: [x, y, z] }
@@ -152,6 +153,11 @@ export function rng(seed) {
 export function hash01(str) { let h = 2166136261; for (const c of String(str)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return ((h >>> 0) % 100000) / 100000; }
 
 export const isResearched = id => !id || S.research.done.has(id);
+// A sandbox world starts with every technology done and every layer open.
+export function unlockAll() {
+  for (const id of Object.keys(TECH)) S.research.done.add(id);
+  S.research.current = null; S.maxTier = TIERS.length - 1;
+}
 export const recipeUnlocked = r => isResearched(r.tech);
 export const itemName = it => ITEMS[it]?.name ?? it;
 
@@ -170,6 +176,11 @@ export function layerLockReason(y) {
   return 'locked';
 }
 
+// A deposit: `base` is the tile's generated richness, `layer` the deposit layer it is down to (see DEPOSIT) and
+// `amount` what is left in that layer (an endless layer keeps its base, untouched). Deposits never vanish; they only get deeper.
+export const endless = o => !DEPOSIT[o.layer]?.size;
+export const layerSize = (o, layer) => DEPOSIT[layer]?.size ? Math.round(o.base * DEPOSIT[layer].size) : o.base;
+export const newDeposit = (type, base, layer = 0) => { const o = { type, base, layer, amount: 0 }; o.amount = layerSize(o, layer); return o; };
 export function generateOres(seed = 20261013) {
   world.ores.clear();
   const R = rng(seed), C = GRID / 2;
@@ -180,7 +191,7 @@ export function generateOres(seed = 20261013) {
       const d = Math.hypot(x - cx, z - cz);
       if (d > rad || R() < d / rad * .55) continue;
       const far = 1 + Math.hypot(x - C, z - C) / 20;
-      world.ores.set(key(x, y, z), { type, amount: Math.round((250 + R() * 500) * far * rich * (1 - d / rad * .5)) });
+      world.ores.set(key(x, y, z), newDeposit(type, Math.round((250 + R() * 500) * far * rich * (1 - d / rad * .5))));
     }
   };
   // surface, near spawn

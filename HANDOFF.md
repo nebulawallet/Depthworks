@@ -20,8 +20,11 @@ glyphs, and something answers using only the mechanisms it has heard.
 | Core loop (mine → smelt → craft → automate → research) | Done, played through in code-driven tests |
 | Engineer, Factorio controls, reach, collision | Done |
 | Inventories | Real slots (80 for the player, 16/32 for chests), drag and drop, typed machine slots |
-| Logistics | Belts in 3 tiers (4 items per tile, compression, side-loading, curves), undergrounds, splitters, lifts |
-| Power | Coal generators, solar, small/medium poles, separate networks. Steam chain (water pump → boilers → steam engines, Factorio's 1:20:40, load-based), high voltage power lines (21×21), transformer stations, hand-strung power and transformer cables, brownouts, flashing plugs on unpowered machines |
+| Logistics | Two-lane belts in 3 tiers (4 items per lane per tile, side-loads onto the near lane, curves keep lanes), undergrounds, splitters with per-way filters, lifts. Simulated as lines (`belts.js`). Three-lane bus belts with filtered side channels and a bus underground. Belt lines tab in the logistics window: names, filters, speed augments, network diagram |
+| Augments | Speed / efficiency / productivity in 5 tiers (10/15/25/35/50%), depth (2 tiers) for drills. 2 slots by default, 3 on assembler II, refinery, big drill, 4 on the vehicle factory |
+| Deposits | Never run out: surface (4× the old amount), depth (10×, slower, 1 in 6 cycles gives two), endless bedrock. Burner drill reaches surface, electric drill depth, big drill bedrock |
+| Sandbox | Title screen: everything researched, crafting free and instant, an Everything tab handing out any item |
+| Power | Solar, small/medium poles, separate networks. Steam chain (water pump → boilers → steam engines, Factorio's 1:20:40, load-based), high voltage power lines (21×21), transformer stations, hand-strung power and transformer cables, brownouts, flashing plugs on unpowered machines |
 | Water | Ocean on the south/east edges, inland lakes, short rivers with a flow direction per tile (`world.flow`). No walking or building on water except pumps |
 | Fluids and oil | Pipes (auto T and cross pieces), underground pipes (10 tiles), pumps, valves (one way / overflow / top up), storage tanks, throughput that falls with pipe length, no mixing. Pumpjacks on crude wells, refineries and chemical plants with fluid ports, barreling stations, diesel generators. Fluids: crude, heavy fuel oil, diesel, gasoline, jet fuel (plus water, steam) |
 | Vehicles | Vehicle factory joins an engine (petrol, diesel, marine, turbine; each burns one fuel) to a frame (car, truck, tank, boat, locomotive, wagon): 12 vehicles, stats from power and mass. Fuel tanks, refuelling with barrels or at depots, driving with B and WASD, tanks flatten trees |
@@ -119,6 +122,12 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 
 ## Known rough edges
 
+- Belt lines rebuild from scratch on every belt change (fine at this map size; a big factory might want local rebuilds).
+  A guest gets items per tile in snapshots, so their lines come apart and rejoin every 150 ms.
+- Splitters are still this game's one-tile three-way splitter, not Factorio's two-wide one.
+- A bus channel only fills when the bus ahead is backed up, so its first items arrive after the bus fills.
+- Lane rules: inserters drop on the far lane, drills on the near lane, both on the right lane when facing along the belt.
+
 - In co-op, guests also simulate between host snapshots, so belts and machines can visibly "pop" when a
   correction lands (snapshots every 150 ms, a full one every 3 s).
 - The building hand (`S.sel`, a reference into the inventory) and the drag cursor (a pending move
@@ -142,7 +151,6 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 1. **Turn on GitHub Pages and test co-op with a friend on another network.** This is the biggest unknown.
 2. **Performance pass:** build a 1000-plus entity factory and profile it. Likely wins are instancing belts and inserters,
    spatial lookup for picking, and limiting snapshot scans to changed entities (dirty flags).
-3. **Two-lane belts.** This is the most visible Factorio difference left.
 4. **Blueprints / copy-paste.**
 5. **Enemies and turrets**, if the game should have pressure; it currently has none.
 6. **Save export/import** (download/upload JSON) so worlds survive browser resets and can be shared.

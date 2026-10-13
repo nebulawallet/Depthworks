@@ -51,6 +51,11 @@ export function iconCanvas(id) {
     case 'signal': px(7, 5, '#2c3038', 2, 11); px(5, 1, '#16181d', 6, 6); px(6, 2, '#ff4a3a', 4, 2); px(6, 4, '#3aff5a', 4, 2); break;
     case 'net': for (let y = 2; y < 14; y++) for (let x = 2; x < 14; x++) if ((x + y) % 3 === 0 || (x - y + 30) % 3 === 0) px(x, y, (x + y) % 2 ? 1 : .8); break;
     case 'fish': for (let y = 4; y < 12; y++) for (let x = 2; x < 12; x++) if (Math.hypot((x - 7) / 1.6, y - 8) < 3.2) px(x, y, y < 7 ? 1.25 : 1); px(11, 5, 1, 2, 6); px(13, 4, .8, 2, 8); px(4, 7, '#16181d'); break;
+    case 'aug': {   // a module: a framed core in its colour, one pip per tier
+      px(2, 2, '#2c3038', 12, 12); px(3, 3, 1, 10, 10); px(3, 3, 1.3, 10, 1); px(5, 4, '#16181d', 6, 6); px(6, 5, 1.45, 4, 4);
+      for (let i = 0; i < (it.tier || 1); i++) px(4 + i * 2, 12, '#f2f2f2', 1, 1);
+      break;
+    }
     case 'road': {
       const r = col >> 16 & 255;
       px(1, 3, 1, 14, 10);
@@ -103,12 +108,14 @@ function drawMachine(px, ent, col) {
       break;
     }
     case 'rail': for (let x = 1; x < 16; x += 3) px(x, 3, '#5e3b1a', 2, 10); px(0, 5, '#c3cad3', 16, 1); px(0, 10, '#c3cad3', 16, 1); break;
-    case 'belt': px(1, 3, '#2b2f36', 14, 10); for (let i = 0; i < 3; i++) { px(4 + i * 3, 5, 1, 2, 1); px(5 + i * 3, 6, 1, 2, 1); px(6 + i * 3, 7, 1, 2, 2); px(5 + i * 3, 9, 1, 2, 1); px(4 + i * 3, 10, 1, 2, 1); } px(1, 3, .7, 14, 1); px(1, 12, .7, 14, 1); break;
+    case 'belt': if (def.lanes === 3) { px(0, 2, '#2b2f36', 16, 12); for (const y of [2, 6, 10]) for (let i = 0; i < 3; i++) { px(3 + i * 4, y + 1, 1, 2, 1); px(4 + i * 4, y + 2, 1, 2, 1); px(3 + i * 4, y + 3, 1, 2, 1); } px(0, 5, '#5c6470', 16, 1); px(0, 9, '#5c6470', 16, 1); px(0, 2, .7, 16, 1); px(0, 13, .7, 16, 1); break; }
+      px(1, 3, '#2b2f36', 14, 10); for (let i = 0; i < 3; i++) { px(4 + i * 3, 5, 1, 2, 1); px(5 + i * 3, 6, 1, 2, 1); px(6 + i * 3, 7, 1, 2, 2); px(5 + i * 3, 9, 1, 2, 1); px(4 + i * 3, 10, 1, 2, 1); } px(1, 3, .7, 14, 1); px(1, 12, .7, 14, 1); break;
     case 'underground': px(1, 4, '#2b2f36', 7, 8); px(8, 2, 1, 7, 12); px(9, 4, '#111', 5, 8); px(2, 7, 1, 5, 2); px(5, 6, 1, 1, 4); break;
     case 'splitter': px(1, 6, '#2b2f36', 6, 4); px(6, 2, 1, 4, 12); px(10, 1, '#2b2f36', 5, 4); px(10, 11, '#2b2f36', 5, 4); px(10, 6, '#2b2f36', 5, 4); break;
     case 'lift': for (let i = 0; i < 6; i++) px(2 + i * 2, 12 - i * 2, 1, 3, 2); px(7, 1, '#ffffff', 2, 5); px(6, 2, '#ffffff', 4, 1); break;
     case 'inserter': px(4, 12, '#34373e', 8, 3); px(7, 6, 1, 2, 6); px(7, 5, 1, 6, 2); px(12, 4, '#34373e', 3, 4); px(6, 10, .7, 4, 2); break;
-    case 'drill': px(2, 4, 1, 12, 9); px(6, 13, '#d8b24a', 4, 2); px(7, 15, '#d8b24a', 2, 1); px(4, 1, '#8c8f96', 8, 3); px(2, 4, 1.3, 12, 1); break;
+    case 'drill': if (def.depth >= 2) { px(4, 0, '#8c8f96', 1, 6); px(11, 0, '#8c8f96', 1, 6); px(4, 0, '#e5ad2e', 8, 2); }
+      px(2, 4, 1, 12, 9); px(6, 13, '#d8b24a', 4, 2); px(7, 15, '#d8b24a', 2, 1); px(4, 1, '#8c8f96', 8, 3); px(2, 4, 1.3, 12, 1); break;
     case 'furnace': px(3, 3, 1, 10, 12); px(3, 3, 1.25, 10, 1); px(6, 9, '#ff7a2a', 4, 3); px(7, 10, '#ffd23f', 2, 2); px(10, 0, '#4a4440', 2, 3); break;
     case 'assembler': px(1, 4, 1, 14, 10); px(1, 4, 1.3, 14, 1); for (let a = 0; a < 8; a++) px(8 + Math.round(Math.cos(a * .785) * 3) - 1, 9 + Math.round(Math.sin(a * .785) * 3) - 1, '#c0c6cf', 2, 2); px(7, 8, '#222', 2, 2); break;
     case 'lab': px(2, 9, '#4b4f5a', 12, 6); for (let y = 2; y < 10; y++) for (let x = 3; x < 13; x++) if (Math.hypot(x - 7.5, y - 9) < 6) px(x, y, '#58c8d8'); px(5, 4, '#ffffff'); break;
@@ -121,7 +128,6 @@ function drawMachine(px, ent, col) {
     case 'pump': px(2, 13, '#3a8ad8', 12, 2); px(3, 6, '#2c3038', 1, 7); px(12, 6, '#2c3038', 1, 7); px(2, 5, '#5c6470', 12, 2); px(4, 2, 1, 6, 4); px(8, 3, 1, 6, 2); px(13, 2, '#939ca8', 2, 4); break;
     case 'boiler': px(2, 9, '#8f8373', 12, 6); px(6, 11, '#ff7a2a', 4, 2); for (let x = 1; x < 15; x++) px(x, 4, x % 5 ? 1 : .6, 1, 5); px(11, 0, '#645a4d', 2, 4); break;
     case 'engine': px(1, 12, '#2c3038', 14, 3); px(1, 5, 1, 9, 7); px(1, 5, 1.3, 9, 1); for (let x = 2; x < 10; x += 3) px(x, 6, .7, 1, 6); for (let y = 2; y < 15; y++) for (let x = 9; x < 16; x++) { const d = Math.hypot(x - 12, y - 8); if (d < 3.6 && d > 2.4) px(x, y, '#c3cad3'); } px(11, 7, '#2c3038', 2, 2); break;
-    case 'generator': px(1, 6, 1, 14, 8); for (let y = 2; y < 9; y++) for (let x = 3; x < 13; x++) if (Math.hypot(x - 7.5, (y - 5.5) * 1.6) < 5) px(x, y, '#8a6a4a'); px(7, 8, '#ffe14a', 2, 4); px(6, 10, '#ffe14a', 2, 1); break;
     case 'solar': for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) px(2 + x * 4, 3 + y * 4, 1.4, 3, 3); px(1, 14, '#888', 14, 1); break;
     case 'transmitter': for (let x = 2; x < 14; x++) { const y = 3 + Math.round(Math.pow((x - 7.5) / 6, 2) * 4); px(x, y, '#cfd6df', 1, 2); } px(7, 6, '#9aa1ad', 2, 7); px(4, 13, 1, 8, 2); px(7, 2, '#7ef6ff', 2, 2); break;
   }

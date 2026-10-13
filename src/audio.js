@@ -141,7 +141,7 @@ export function updateAudio(dt) {
     const before = Math.floor(stepPhase); stepPhase += dt * 10 / Math.PI;
     if (Math.floor(stepPhase) !== before) {
       const under = world.ents.get(Math.floor(p.x) + ',0,' + Math.floor(p.z));
-      sfx(under && under.items ? 'stepMetal' : 'step');
+      sfx(under?.belt ? 'stepMetal' : 'step');
     }
   } else stepPhase = .5;
 
@@ -161,11 +161,11 @@ export function updateAudio(dt) {
     if (d2 > 260) continue;
     const near = 1 / (1 + d2 / 30), active = S.T - e.lastActive < .6;
     switch (e.kind) {
-      case 'belt': case 'underground': case 'splitter': case 'lift': if (active && e.items.length) w.belt += near * .25; break;
+      case 'belt': case 'underground': case 'splitter': case 'lift': if (active && e.nItems) w.belt += near * .25; break;
       case 'drill': if (e.status === 'mining') w.drill += near * .6; break;
       case 'furnace': if (e.crafting && active) (ENTITIES[e.type].burner ? (w.fire += near * .6) : (w.machine += near * .5)); break;
       case 'assembler': if (e.crafting && active) w.machine += near * .6; break;
-      case 'generator': case 'fgen': w.engine += near * (e.load || 0) * 1.4; break;
+      case 'fgen': w.engine += near * (e.load || 0) * 1.4; break;
       case 'oilpump': if ((e.load || 0) > 0) w.drill += near * .35; break;
       case 'fpump': if ((e.load || 0) > 0) w.machine += near * .3; break;
       case 'lab': case 'transmitter': if (active) w.shimmer += near; break;

@@ -17,6 +17,9 @@
   canvas#view { position: fixed; display: block; image-rendering: pixelated; cursor: crosshair; will-change: transform; }
   .float { position: fixed; pointer-events: none; z-index: 15; color: #fff; font-size: 18px; white-space: nowrap; text-shadow: 1px 1px 0 #000, -1px 0 0 #000, 0 -1px 0 #000, 1px 0 0 #000; transform: translate(-50%, -100%); animation: floatUp 1s ease-out forwards; }
   @keyframes floatUp { 0% { opacity: 0; margin-top: 6px; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; margin-top: -34px; } }
+  /* what you dig: one popup that counts up while you keep digging (restarting it shows the new count) */
+  .float.gain { animation: gainUp 1.5s ease-out forwards; }
+  @keyframes gainUp { 0% { opacity: 1; margin-top: 0; } 8% { margin-top: -6px; } 65% { opacity: 1; margin-top: -16px; } 100% { opacity: 0; margin-top: -30px; } }
   .panel { position: fixed; background: var(--panel); border: 2px solid var(--line); box-shadow: 0 0 0 1px #000, 4px 4px 0 rgba(0,0,0,.35); padding: 8px 10px; }
   .dim { color: var(--dim); } .warn { color: var(--warn); } .okc { color: var(--ok); }
   .logo, h2, h3, .gh, .tn { font-family: 'Silkscreen', 'VT323', monospace; font-weight: normal; letter-spacing: 1px; }
@@ -159,6 +162,12 @@
   .facchip { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border: 1px solid var(--line2); background: var(--panel2); cursor: pointer; font-size: 17px; white-space: nowrap; }
   .facchip i, .flrow > i, .dot { display: inline-block; width: 10px; height: 10px; border: 1px solid #000; }
   .flrow { margin: 4px 0; } .flrow > i { margin-right: 6px; } .flrow .bar { margin: 2px 0 1px; }
+  /* belts: lanes, line links, bus channels; augment totals */
+  .lanes > div { display: flex; align-items: center; gap: 4px; min-height: 24px; } .lanes > div > .dim:first-child { width: 52px; }
+  .lanes .bar { display: inline-block; width: 70px; margin: 0 4px 0 0; } .lanes .icon { width: 22px; height: 22px; }
+  .lk { color: var(--gold); cursor: pointer; text-decoration: underline dotted; } .lk:hover { color: #fff; }
+  .row.chan { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; } .row.chan b { width: 40px; } .row.chan .icon { width: 22px; height: 22px; }
+  .augsum { margin: 2px 0 4px; }
   .txt, .num, select { font: inherit; background: var(--panel2); color: var(--ink); border: 2px solid var(--line2); padding: 0 6px; }
   .txt { width: 100%; } .num { width: 64px; } .txt:focus, .num:focus, select:focus { outline: none; border-color: var(--acc); }
   .rule { display: flex; align-items: center; gap: 6px; margin: 2px 0; } .rule button.in { color: #4aa3ff; } .rule button.out { color: #ffa53d; }
@@ -272,13 +281,15 @@
   </div>
   <h3 style="margin-top:10px">Getting started</h3>
   <p class="dim">You land with 8 iron plates, a burner drill and a stone furnace. Mine coal and stone by hand, put the drill on iron ore facing the furnace, and fuel both.
-    Craft from there (E). Electricity needs a steam generator plus small poles; machines only run inside a pole's blue supply area.</p>
+    Craft from there (E). Electricity comes from steam: a water pump on water, boilers burning fuel beside it, steam engines beside those, and small poles; machines only run inside a pole's blue supply area. Belts have two lanes (bus belts three); click any belt for its line and its network (also under L, Belt lines).</p>
   <h3 style="margin-top:10px">Reading the arrows</h3>
   <p class="dim">Hover or hold a building to see where things go. <b style="color:#4aa3ff">Blue</b>: where an inserter picks up, or where one can feed a machine.
     <b style="color:#ffa53d">Orange</b>: where things come out. <b style="color:#7be37a">Green</b>: something is feeding it. <b style="color:#ff4a4a">Red ✕</b>: that won't work.
     Belts never load furnaces or assemblers directly: put an inserter between them. Drills push straight into whatever is in front. <kbd>Alt</kbd> hides the small arrows.</p>
   <h3 style="margin-top:10px">Logistics</h3>
-  <p class="dim">Belts carry four items per tile and compress. Feeding a belt into the side of another merges onto it; a single side feed turns it into a curve.
+  <p class="dim">Belts have two lanes, four items per lane per tile. A belt fed into the side of another puts its items on the lane on that side; a single side feed turns it into a curve.
+    Inserters put items on the far lane, drills on the near one. Bus belts carry three lanes, take items only from behind, and any tile can send its left or right lane off to the side with a filter.
+    Drills, furnaces, assemblers, labs and pumpjacks take augments (speed, efficiency, productivity; depth for drills). Deposits never run out: they go deeper (surface, depth, bedrock), and a drill needs to reach the layer.
     Inserters only take what the machine in front of them needs. Drills push straight into whatever is in front of them, or drop ore on the ground. Electric machines need a pole nearby; drag a belt over another to change it.</p>
   <h3 style="margin-top:10px">Power</h3>
   <p class="dim">Put a water pump on water, boilers against it, and steam engines against the boilers: one pump feeds 20 boilers, one boiler feeds 2 engines.

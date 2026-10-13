@@ -352,6 +352,30 @@ export function makeMesh(e) {
     }
     case 'belt': {
       const tread = treadMat(e.type);
+      if (def.lanes === 3) {   // bus belt: wider, with lane dividers, side channels and a stop on the middle lane
+        const div = M(C.mid), out = M(0xffa53d);
+        if (!e.curve) {
+          st(box(.98, .07, 1), dark, 0, .06, 0);
+          st(new THREE.PlaneGeometry(.86, 1).rotateX(-Math.PI / 2), tread, 0, .1, 0);
+          for (const x of [-.145, .145]) st(box(.025, .02, 1), div, x, .108, 0);
+          for (const x of [-.47, .47]) { st(box(.06, .15, 1), col, x, .09, 0); st(box(.07, .03, 1), M(0xffffff & (def.color + 0x202020)), x, .175, 0); }
+        } else {
+          const L = e.curve === 'L', cx = L ? -.5 : .5;
+          st(new THREE.CylinderGeometry(.98, .98, .07, seg, 1, false, L ? 0 : Math.PI * 1.5, Math.PI / 2), dark, cx, .06, -.5);
+          st(new THREE.RingGeometry(.06, .94, seg, 1, L ? -Math.PI / 2 : Math.PI, Math.PI / 2).rotateX(-Math.PI / 2), tread, cx, .1, -.5);
+          for (const r of [.355, .645]) st(new THREE.TorusGeometry(r, .014, 3, seg, Math.PI / 2).rotateX(-Math.PI / 2).rotateY(L ? -Math.PI / 2 : Math.PI), div, cx, .108, -.5);
+          st(new THREE.TorusGeometry(.95, .045, 4, seg, Math.PI / 2).rotateX(-Math.PI / 2).rotateY(L ? -Math.PI / 2 : Math.PI), col, cx, .13, -.5);
+        }
+        for (const [f, s] of [[e.chL, -1], [e.chR, 1]]) {
+          if (!f) continue;
+          st(box(.06, .1, .5), out, s * .5, .14, 0);
+          st(new THREE.ConeGeometry(.09, .18, 4).rotateZ(-s * Math.PI / 2), out, s * .62, .14, 0);
+          const sp = new THREE.Sprite(iconSpriteMat(f === '*' ? 'bus_belt' : f)); sp.scale.set(.36, .36, 1); sp.position.set(s * .62, .62, 0);
+          sp.renderOrder = 10; sp.layers.set(UI_LAYER); g.add(sp);
+        }
+        if (e.midOff) st(box(.24, .1, .06), M(0xd84a3a), 0, .15, -.47);
+        break;
+      }
       if (!e.curve) {
         st(box(.9, .07, 1), dark, 0, .06, 0);
         st(new THREE.PlaneGeometry(.78, 1).rotateX(-Math.PI / 2), tread, 0, .1, 0);
@@ -373,7 +397,7 @@ export function makeMesh(e) {
     case 'underground': {
       const out = e.role === 'out', s = out ? -1 : 1;
       st(box(.9, .07, .5), dark, 0, .06, .25 * s);
-      st(new THREE.PlaneGeometry(.78, .5).rotateX(-Math.PI / 2), treadMat(e.type === 'underground' ? 'belt' : e.type === 'fast_underground' ? 'fast_belt' : 'express_belt'), 0, .1, .25 * s);
+      st(new THREE.PlaneGeometry(.78, .5).rotateX(-Math.PI / 2), treadMat({ underground: 'belt', fast_underground: 'fast_belt', bus_underground: 'bus_belt' }[e.type] ?? 'express_belt'), 0, .1, .25 * s);
       for (const x of [-.44, .44]) st(box(.08, .14, .5), col, x, .09, .25 * s);
       st(box(.94, .44, .52), col, 0, .22, -.25 * s);
       st(box(.98, .07, .56), M(0x7a6420), 0, .47, -.25 * s);
@@ -390,6 +414,11 @@ export function makeMesh(e) {
       st(new THREE.ConeGeometry(.08, .16, 4).rotateX(-Math.PI / 2), arrow, 0, .46, -.06);
       st(new THREE.ConeGeometry(.08, .16, 4).rotateZ(Math.PI / 2), arrow, -.28, .46, 0);
       st(new THREE.ConeGeometry(.08, .16, 4).rotateZ(-Math.PI / 2), arrow, .28, .46, 0);
+      (e.sf || []).forEach((f, k) => {   // a filtered way shows its item over its arrow
+        if (!f) return;
+        const sp = new THREE.Sprite(iconSpriteMat(f)); sp.scale.set(.3, .3, 1); sp.position.set([0, -.3, .3][k], .72, [-.3, 0, 0][k]);
+        sp.renderOrder = 10; sp.layers.set(UI_LAYER); g.add(sp);
+      });
       break;
     }
     case 'lift': {
@@ -440,9 +469,13 @@ export function makeMesh(e) {
       st(box(.9, .34, .9), col, 0, .17, 0);
       for (let i = -2; i <= 2; i++) st(box(.12, .08, .02), M(i % 2 ? C.yellow : C.hazard), i * .17, .26, -.455);
       st(box(.28, .14, .26), dark, 0, .2, -.47);
-      for (const [x, z] of [[-.34, -.34], [.34, -.34], [-.34, .34], [.34, .34]]) st(box(.06, .56, .06), steel, x, .62, z);
-      st(box(.74, .06, .06), steel, 0, .9, -.34); st(box(.74, .06, .06), steel, 0, .9, .34);
-      st(box(.06, .06, .74), steel, -.34, .9, 0); st(box(.06, .06, .74), steel, .34, .9, 0);
+      const tall = def.depth >= 2 ? 1.5 : .56;   // the big drill: a taller derrick over a longer bore
+      for (const [x, z] of [[-.34, -.34], [.34, -.34], [-.34, .34], [.34, .34]]) st(box(.06, tall, .06), steel, x, .34 + tall / 2, z);
+      for (const y of def.depth >= 2 ? [.9, 1.84] : [.9]) {
+        st(box(.74, .06, .06), steel, 0, y, -.34); st(box(.74, .06, .06), steel, 0, y, .34);
+        st(box(.06, .06, .74), steel, -.34, y, 0); st(box(.06, .06, .74), steel, .34, y, 0);
+      }
+      if (def.depth >= 2) { st(box(.3, .2, .3), M(C.yellow), 0, 1.97, 0); for (let i = 0; i < 4; i++) st(box(.03, .9, .03).rotateZ(i % 2 ? .6 : -.6).rotateY(i * Math.PI / 2), steel, -.34 * Math.sin(i * Math.PI / 2), 1.35, -.34 * Math.cos(i * Math.PI / 2)); }
       const head = grp(g, 0, .34, 0); P.head = head;
       dyn(head, cyl(.28, .3, .1, seg), M(C.light), 0, .05, 0);
       const n = res >= 12 ? 5 : 3;
@@ -560,20 +593,6 @@ export function makeMesh(e) {
         st(box(.64, .06, .06), M(C.dark), 0, 1.5, 0);
         for (const x of [-.27, .27]) st(cyl(.04, .05, .1, 6), M(0xd8e0ea), x, 1.58, 0);
       }
-      break;
-    }
-    case 'generator': {
-      st(box(.96, .2, .96), dark, 0, .1, 0);
-      st(cyl(.28, .28, .74, seg).rotateX(Math.PI / 2), M(C.brass), -.16, .48, 0);
-      for (const z of [-.3, 0, .3]) st(cyl(.3, .3, .04, seg).rotateX(Math.PI / 2), M(C.rust), -.16, .48, z);
-      st(cyl(.08, .1, .62, seg), M(C.stoneDark), -.16, .95, .26);
-      st(cyl(.11, .11, .05, seg), black, -.16, 1.27, .26);
-      st(box(.16, .3, .5), M(C.mid), .26, .35, 0);
-      const fly = grp(g, .38, .5, 0); P.fly = fly;
-      dyn(fly, cyl(.3, .3, .07, seg).rotateZ(Math.PI / 2), M(C.light));
-      dyn(fly, box(.08, .52, .07), dark);
-      P.glow = glowMat(0xffaa3a); dyn(g, box(.16, .1, .04), P.glow, -.16, .3, -.45);
-      P.smoke = [-.16, 1.32, .26];
       break;
     }
     case 'pump': {   // a deck on stilts over the water, intake pipe down, outlet pipe toward the shore (north)

@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE } from './data.js';
 import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf } from './state.js';
 import { makeMesh, disposeMesh, setGhost, setPreview, poseInserter, itemGeo, itemMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo } from './models.js';
-import { canPlace, visibleOnBelt, distTo, mineTargetAt, voltsOf } from './sim.js';
+import { canPlace, distTo, mineTargetAt, voltsOf } from './sim.js';
+import { visibleOnBelt, laneOffset, lineWarn, lanesOf } from './belts.js';
 import { roadAt, roadCells, signalRed, vehicleById, onWay, dockTiles, vstats } from './transport.js';
 import { isDown } from './input.js';
 
@@ -504,12 +505,14 @@ function instFor(type) {
   }
   return r;
 }
-export function beltItemPos(b, p, out) {
-  let lx = 0, lz = .5 - p, ly = 0;
+// Where an item p along tile b sits, `o` to the side of the centre line (its lane: negative is left).
+// On a curve the inner lane runs on a tighter arc.
+export function beltItemPos(b, p, out, o = 0) {
+  let lx = o, lz = .5 - p, ly = 0;
   if (b.curve) {
     const th = Math.PI / 2 * (1 - Math.min(1, p));
-    if (b.curve === 'L') { lx = -.5 + .5 * Math.cos(th); lz = -.5 + .5 * Math.sin(th); }
-    else { lx = .5 - .5 * Math.cos(th); lz = -.5 + .5 * Math.sin(th); }
+    if (b.curve === 'L') { const r = .5 + o; lx = -.5 + r * Math.cos(th); lz = -.5 + r * Math.sin(th); }
+    else { const r = .5 - o; lx = .5 - r * Math.cos(th); lz = -.5 + r * Math.sin(th); }
   } else if (b.kind === 'underground' && b.role === 'in') lz = .5 - Math.min(p, .5);
   else if (b.kind === 'underground') lz = .5 - (p - (b.len - 1));
   else if (b.kind === 'lift') ly = p * b.dy + .04;
@@ -517,18 +520,26 @@ export function beltItemPos(b, p, out) {
   out.set(b.x + .5 + lx * -fz - lz * fx, b.y + .11 + ly, b.z + .5 + lx * fx - lz * fz);
   return out;
 }
-const _p = new THREE.Vector3();
+const _p = new THREE.Vector3(), _q0 = new THREE.Quaternion(), _sc = new THREE.Vector3();
+// Items sit on lines (belts.js): walk each lane front to back, keeping track of which tile we are on.
 function updateItems() {
   for (const r of Object.values(instItems)) r.count = 0;
-  for (const b of world.beltOrder) {
-    if (isGhost(b) || !b.items.length) continue;
-    for (const it of b.items) {
-      if (!visibleOnBelt(b, it.p)) continue;
-      const r = instFor(it.type);
-      beltItemPos(b, it.p, _p);
-      _m4.makeTranslation(_p.x, _p.y, _p.z);
-      r.im.setMatrixAt(r.count++, _m4);
-    }
+  for (const ln of world.lines) {
+    if (!ln.packed) continue;
+    const segs = ln.segs, sc = ln.n === 3 ? .55 : .65;
+    _sc.set(sc, sc, sc);
+    ln.L.forEach((L, li) => {
+      const o = laneOffset(ln.n, li);
+      let j = segs.length - 1;
+      for (const it of L.items) {
+        while (j > 0 && it.x < segs[j].off) j--;
+        const b = segs[j], p = it.x - b.off;
+        if (isGhost(b) || !visibleOnBelt(b, p)) continue;
+        const r = instFor(it.type);
+        beltItemPos(b, p, _p, o);
+        r.im.setMatrixAt(r.count++, _m4.compose(_p, _q0, _sc));
+      }
+    });
   }
   if (!(S.mode === 'depth' && S.layer < 0)) for (const g of world.ground) {
     const r = instFor(g.type);
@@ -585,7 +596,7 @@ const boltMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(.62, .62), new 
 boltMesh.layers.set(UI_LAYER); boltMesh.renderOrder = 30; boltMesh.frustumCulled = false; boltMesh.count = 0; boltMesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(boltMesh);
 export const powerProblem = e => {
   const def = ENTITIES[e.type];
-  if (!def.power && e.kind !== 'engine' && e.kind !== 'generator' && e.kind !== 'solar' && e.kind !== 'fgen') return null;
+  if (!def.power && e.kind !== 'engine' && e.kind !== 'solar' && e.kind !== 'fgen') return null;
   if (!e.net) return 'none';
   if (def.power && e.net.capacity <= 0) return 'none';
   if (def.power && e.net.demand > e.net.capacity) return 'low';
@@ -692,7 +703,7 @@ function updateTags() {
     facColors.clear(); for (const f of world.factories) facColors.set(f.id, new THREE.Color(f.color));
     const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
     for (const e of world.ents.values()) {
-      if (n >= 4096 || e.ghost || e.items || ENTITIES[e.type].shared || UNTAGGED.has(e.kind) || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R) continue;
+      if (n >= 4096 || e.ghost || e.belt || ENTITIES[e.type].shared || UNTAGGED.has(e.kind) || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R) continue;
       _m.compose(V(e.x + .2, e.y + Math.min(.9, heightOf(e)) + .12, e.z + .2), camera.quaternion, V(1, 1, 1));
       tagMesh.setMatrixAt(n, _m); tagMesh.setColorAt(n++, facColors.get(e.fac ?? 1) || _c.setHex(0xffffff));
     }
@@ -752,7 +763,6 @@ function animate(dt) {
       case 'rail': if (P.lamp) P.lamp.emissive.setHex(signalRed(e) ? 0xff3a2a : 0x3aff5a); break;
       case 'tank': if (P.level) { const f = Math.min(1, (e.fa?.[0] || 0) / ENTITIES[e.type].cap); P.level.emissiveIntensity = .2 + f; } break;
       case 'lab': if (active) P.ring.rotation.y += dt * 2; P.glow.emissiveIntensity = active ? 1 + .5 * Math.sin(S.T * 4) : .2; break;
-      case 'generator': P.fly.rotation.x += dt * 10 * (e.load || 0); P.glow.emissiveIntensity = (e.load || 0) > 0 ? 1.3 : .05; smoking = (e.load || 0) > .05; dark = true; break;
       case 'transmitter': P.spin.rotation.y += dt * .5; P.glow.emissiveIntensity = .3 + e.prog * 3; break;
       case 'boiler': P.glow.emissiveIntensity = (e.load || 0) > 0 ? 1.4 + .5 * Math.sin(S.T * 21 + e.x) : .05; smoking = (e.load || 0) > .05; dark = true; break;
       case 'engine': P.fly.rotation.x += dt * 12 * (e.load || 0); P.glow.emissiveIntensity = (e.load || 0) > 0 ? .4 + e.load : .05; break;
@@ -760,7 +770,7 @@ function animate(dt) {
     }
     if (smoking && !e.ghost) {
       e.smokeT = (e.smokeT || 0) + dt;
-      if (e.smokeT > (e.kind === 'generator' || e.kind === 'boiler' || e.kind === 'fgen' ? .5 / Math.max(.2, e.load) : .4)) {
+      if (e.smokeT > (e.kind === 'boiler' || e.kind === 'fgen' ? .5 / Math.max(.2, e.load) : .4)) {
         e.smokeT = 0; _w.set(...P.smoke); e.mesh.localToWorld(_w); smoke(_w.x, _w.y, _w.z, dark);
       }
     }
@@ -907,12 +917,13 @@ function overlayInst(geo, n, depthTest, opacity) {
 const hintArrows = overlayInst(arrowGeo, 64, false, .9);     // what you are holding / hovering
 const hintCross = overlayInst(crossGeo, 8, false, .95);
 const altArrows = overlayInst(arrowGeo, 2048, true, .85);   // always-on markers on inserters and drills
+const warnMarks = overlayInst(crossGeo, 64, false, .95);    // a bus whose three lanes can't fit onto the belt it feeds
 const COL = { IN: 0x4aa3ff, OUT: 0xffa53d, OK: 0x7be37a, BAD: 0xff4a4a, CAN: 0x6cc4ff, FLOW: 0xf2e6b0 };
 let nH = 0, nX = 0;
 function arrow(tx, y, tz, d, color, s = 1) {
   if (nH >= 64) return;
   const pulse = 1 + Math.sin(S.T * 7) * .06;
-  const on = world.ents.get(key(tx, y, tz)), lift = on && !on.items ? Math.min(.8, heightOf(on)) : 0;   // sit on top of a machine so it reads as "into this"
+  const on = world.ents.get(key(tx, y, tz)), lift = on && !on.belt ? Math.min(.8, heightOf(on)) : 0;   // sit on top of a machine so it reads as "into this"
   _m.compose(V(tx + .5, y + .05 + lift, tz + .5), _q.setFromEuler(_e.set(0, -d * Math.PI / 2, 0)), V(s * pulse, 1, s * pulse));
   hintArrows.setMatrixAt(nH, _m); _c.setHex(color); hintArrows.setColorAt(nH++, _c);
 }
@@ -921,7 +932,7 @@ function cross(tx, y, tz) {
   _m.compose(V(tx + .5, y + .06, tz + .5), _q.identity(), V(1, 1, 1));
   hintCross.setMatrixAt(nX, _m); _c.setHex(COL.BAD); hintCross.setColorAt(nX++, _c);
 }
-const SINKS = new Set(['furnace', 'assembler', 'lab', 'chest', 'generator', 'transmitter', 'boiler']);
+const SINKS = new Set(['furnace', 'assembler', 'lab', 'chest', 'transmitter', 'boiler']);
 // Where a pipe-like thing would join: green arrows toward neighbours with a fluid connection on our side.
 function fluidHint2At(x, y, z) {
   for (let d = 0; d < 4; d++) {
@@ -929,7 +940,7 @@ function fluidHint2At(x, y, z) {
     if (n && (n.fb || ENTITIES[n.type].fluids || ENTITIES[n.type].ports)) arrow(x + DIRS[d][0], y, z + DIRS[d][1], d, COL.OK, .7);
   }
 }
-const beltish = e => !!(e && e.items);
+const beltish = e => !!(e && e.belt);
 // Draw the inputs and outputs of a machine of `type` at (x, y, z) facing `dir`. Returns a hint sentence.
 function ioHints(type, x, y, z, dir, dy) {
   const def = ENTITIES[type], kind = def.kind, [dx, dz] = DIRS[dir], at = (tx, ty, tz) => world.ents.get(key(tx, ty, tz));
@@ -947,11 +958,17 @@ function ioHints(type, x, y, z, dir, dy) {
     return t ? `Drill pushes ore into the ${ENTITIES[t.type].name.toLowerCase()} at the orange arrow` : 'Drill: ore comes out at the orange arrow. Put a belt, chest or furnace there (R rotates)';
   }
   if (kind === 'belt' || kind === 'underground' || kind === 'splitter' || kind === 'lift') {
-    const ny = kind === 'lift' ? y + dy : y, nx = x + dx, nz = z + dz, n = at(nx, ny, nz);
-    if (kind === 'underground') return `Underground belt: place the exit up to ${def.range - 1} tiles ahead, facing the same way`;
+    const ny = kind === 'lift' ? y + dy : y, nx = x + dx, nz = z + dz, n = at(nx, ny, nz), bus = (def.lanes ?? 2) === 3, real = at(x, y, z);
+    if (kind === 'underground') return `${def.name}: place the exit up to ${def.range - 1} tiles ahead, facing the same way`;
     if (n && !beltish(n) && n.kind !== 'inserter') { cross(nx, ny, nz); return `Belts can't load a ${ENTITIES[n.type].name.toLowerCase()} directly: put an inserter between them`; }
     arrow(nx, ny, nz, dir, COL.FLOW, .75);
     if (kind === 'splitter') { arrow(x + DIRS[(dir + 3) % 4][0], y, z + DIRS[(dir + 3) % 4][1], (dir + 3) % 4, COL.FLOW, .75); arrow(x + DIRS[(dir + 1) % 4][0], y, z + DIRS[(dir + 1) % 4][1], (dir + 1) % 4, COL.FLOW, .75); }
+    if (bus) {
+      const b = real?.type === type ? real : null;
+      for (const [on, d] of [[b?.chL, (dir + 3) % 4], [b?.chR, (dir + 1) % 4]]) if (on) arrow(x + DIRS[d][0], y, z + DIRS[d][1], d, COL.OUT, .75);
+      if (n && beltish(n) && lanesOf(n) === 2 && n.dir === dir) return 'Bus belt into a two-lane belt: its outer lanes go onto its two lanes. If all three carry items, the middle one waits';
+      return b ? 'Bus belt: click it to send its left or right lane off to the side (orange arrows), with a filter' : 'Bus belt: three lanes, fed only from the belt behind it. Click a placed tile to set up side channels';
+    }
     return '';
   }
   if (kind === 'pipe' || kind === 'tank') { fluidHint2(); return kind === 'pipe' ? 'Pipe: joins every pipe and fluid port next to it. Arrows show what it would join' : 'Storage tank: joins pipes on every side'; }
@@ -1001,7 +1018,6 @@ function ioHints(type, x, y, z, dir, dy) {
       else if (!n && !(y === 0 && world.feats.has(key(tx, 0, tz)))) { arrow(tx, y, tz, inward, COL.CAN, .75); free++; }
     }
     if (beltInto) return `Belts can't load machines directly: put an inserter between the belt and the ${def.name.toLowerCase()}`;
-    if (kind === 'generator') return feeding ? 'Generator is being fed' : 'Feed coal or wood with an inserter on a blue arrow, then put a pole next to it';
     if (kind === 'boiler') return 'Boiler: fuel it (inserter or by hand), give it a water pump on one side and steam engines on another';
     if (kind === 'chest') return 'Chest: inserters can load or unload it from any side';
     return feeding ? `${feeding} input${feeding > 1 ? 's' : ''} feeding it (green). Inserters taking out show orange` : `Feed it with an inserter on one of the blue arrows, pointing in`;
@@ -1021,12 +1037,21 @@ function updateAltArrows() {
     }
   }
   altArrows.count = n; altArrows.instanceMatrix.needsUpdate = true; if (altArrows.instanceColor) altArrows.instanceColor.needsUpdate = true;
+  // a pulsing red cross on the join where a bus's middle lane is held back
+  let w = 0;
+  for (const ln of world.lines) {
+    if (w >= 64 || ln.n !== 3 || !lineWarn(ln)) continue;
+    const b = ln.segs[ln.segs.length - 1], [dx, dz] = DIRS[b.dir], s = .7 + Math.sin(S.T * 8) * .12;
+    _m.compose(V(b.x + .5 + dx * .5, b.y + .3, b.z + .5 + dz * .5), _q.identity(), V(s, 1, s));
+    warnMarks.setMatrixAt(w, _m); _c.setHex(COL.BAD); warnMarks.setColorAt(w++, _c);
+  }
+  warnMarks.count = w; warnMarks.instanceMatrix.needsUpdate = true; if (warnMarks.instanceColor) warnMarks.instanceColor.needsUpdate = true;
 }
 
 let preview = null, previewKey = '';
-const electricKind = sel => !!sel && !!ENTITIES[sel] && (ENTITIES[sel].kind === 'pole' || !!ENTITIES[sel].power || ['generator', 'solar', 'engine', 'fgen'].includes(ENTITIES[sel].kind));
+const electricKind = sel => !!sel && !!ENTITIES[sel] && (ENTITIES[sel].kind === 'pole' || !!ENTITIES[sel].power || ['solar', 'engine', 'fgen'].includes(ENTITIES[sel].kind));
 const HEIGHTS = { inserter: .45, frame: 1, boiler: .95, pipe: .36, upipe: .25, valve: .55, fpump: .45, tank: 1.05, rail: .1, depot: .8, oilpump: .9 };
-const heightOf = e => e ? (e.items ? .22 : e.kind === 'pole' ? (ENTITIES[e.type]?.top ?? 1.26) + .09 : ENTITIES[e.type]?.model === 'refinery' ? 1.3 : HEIGHTS[e.kind] ?? .75) : .04;
+const heightOf = e => e ? (e.belt ? .22 : e.kind === 'pole' ? (ENTITIES[e.type]?.top ?? 1.26) + .09 : ENTITIES[e.type]?.model === 'refinery' ? 1.3 : HEIGHTS[e.kind] ?? .75) : .04;
 function updatePreview(hover) {
   nH = nX = 0; S.hint = '';
   updateHover(hover);

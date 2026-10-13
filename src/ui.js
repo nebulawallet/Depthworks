@@ -1,10 +1,11 @@
 // HUD and panels. Panels re-render on a timer, so actions use pointerdown delegation via data-act.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER, HOTBARS, VOLTAGES, TILES, FLUIDS, ROADS, FUELS, FRAMES, ENGINES, VEHICLES, recipeIcon, recipeName } from './data.js';
-import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt, factoryOf, FAC_COLORS, isResearched } from './state.js';
-import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, slotsOf, voltsOf, nets } from './sim.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER, HOTBARS, VOLTAGES, TILES, FLUIDS, ROADS, FUELS, FRAMES, ENGINES, VEHICLES, DEPOSIT, AUGMENTS, recipeIcon, recipeName } from './data.js';
+import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt, factoryOf, FAC_COLORS, isResearched, endless } from './state.js';
+import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, slotsOf, voltsOf, nets, machineStats, depositLayer } from './sim.js';
+import { segItems, lanesOf, laneName, lineName, lineItems, lineWarn, lineAugs } from './belts.js';
 import { vstats, unitOf, routeById, driverOf, roadAt, dockTiles, vehicleById } from './transport.js';
 import { fishTarget } from './fish.js';
-import { openLogistics, renderLogistics, drawLogistics } from './logistics.js';
+import { openLogistics, renderLogistics, drawLogistics, showBeltLine, lineEndHTML } from './logistics.js';
 import { iconHTML, iconURL, fmtN } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
 import { project } from './scene.js';
@@ -226,25 +227,29 @@ function invGridHTML() {
 
 // ---------------------------------------------------------------- inventory + crafting
 const TABS = ['Logistics', 'Production', 'Fluids', 'Transport', 'Intermediates', 'Science'];
+const SANDBOX_TAB = 'Everything';   // sandbox only: every item in the game, a stack a click
 S.craftTab = 'Logistics';
 function recipeTab(r) {
   const ent = ENTITIES[r.id], it = ITEMS[r.id];
   if (it?.road || it?.tool === 'signal' || it?.shape === 'engine' || ['chassis', 'wheel', 'hull', 'armor_plate', 'turret', 'fishing_net'].includes(r.id) || ['depot', 'rail'].includes(ent?.kind) || ent?.cats?.includes('vehicle')) return 'Transport';
   if (['pipe', 'upipe', 'fpump', 'valve', 'tank', 'oilpump', 'fgen'].includes(ent?.kind) || ent?.ports || it?.shape === 'barrel') return 'Fluids';
-  return it?.shape === 'pack' ? 'Science' : it?.tool ? 'Logistics' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'lift', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
+  return it?.shape === 'pack' ? 'Science' : it?.shape === 'aug' ? 'Production' : it?.tool ? 'Logistics' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'lift', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
 }
 function renderInventory() {
+  if (S.craftTab === SANDBOX_TAB && !S.sandbox) S.craftTab = TABS[0];
   const rs = RECIPES.filter(r => r.cat === 'craft' && recipeUnlocked(r) && recipeTab(r) === S.craftTab);
-  const tabs = TABS.map(t => `<div class="tab ${t === S.craftTab ? 'on' : ''}" data-act="tab:${t}">${t}</div>`).join('');
-  const recHtml = rs.map(r => {
-    const n = r.hand ? maxCraftable(r.id) : 0;
-    return `<div class="cell ${n ? '' : 'no'}" data-act="craft:${r.id}"${tipAttr(recipeTip(r) + (r.hand ? '<div class="dim">left: craft 1 · right: 5 · shift: all</div>' : ''))}>${iconHTML(r.id, n || '')}</div>`;
-  }).join('');
+  const tabs = [...TABS, ...(S.sandbox ? [SANDBOX_TAB] : [])].map(t => `<div class="tab ${t === S.craftTab ? 'on' : ''}" data-act="tab:${t}">${t}</div>`).join('');
+  const recHtml = S.craftTab === SANDBOX_TAB
+    ? Object.keys(ITEMS).map(it => `<div class="cell" data-act="give:${it}"${tipAttr(`<b>${itemName(it)}</b><div class="dim">left: a stack (${ITEMS[it].stack}) · right: one</div>`)}>${iconHTML(it)}</div>`).join('')
+    : rs.map(r => {
+      const hand = r.hand || S.sandbox, n = hand ? maxCraftable(r.id) : 0;
+      return `<div class="cell ${n ? '' : 'no'}" data-act="craft:${r.id}"${tipAttr(recipeTip(r) + (hand ? `<div class="dim">${S.sandbox ? 'sandbox: free and instant · ' : ''}left: craft 1 · right: 5 · shift: a stack</div>` : ''))}>${iconHTML(r.id, S.sandbox ? '' : n || '')}</div>`;
+    }).join('');
   setHTML($('invBody'), `
     <div class="cols2">
       <div><h3>Character <span class="dim">${inv.used()}/${PLAYER.inventory} slots</span></h3>${invGridHTML()}</div>
       <div><h3>Crafting</h3><div class="tabs">${tabs}</div><div class="grid">${recHtml}</div>
-        <div class="dim" style="margin-top:8px">Missing parts are crafted for you if you have what they need. Numbers show how many you could make.</div></div>
+        <div class="dim" style="margin-top:8px">${S.sandbox ? 'Sandbox: crafting costs nothing and takes no time, and every recipe is unlocked. The Everything tab hands out any item.' : 'Missing parts are crafted for you if you have what they need. Numbers show how many you could make.'}</div></div>
     </div>`);
 }
 const ORDER = Object.keys(ITEMS);
@@ -280,6 +285,63 @@ export function closeEntity() { panelEnt = S.openEnt = null; cursor = null; show
 export const entityOpen = () => panelEnt;
 bus.on('removed', e => { if (e === panelEnt) closeEntity(); });
 
+const fmtX = v => (+v.toFixed(2)).toString();
+const pct = v => Math.round(v * 100) + '%';
+// What a machine's augments add up to, next to its own numbers.
+function augHTML(e, base) {
+  if (!e.aug) return '';
+  const st = machineStats(e), b = st.bonus, parts = [];
+  if (b.speed) parts.push(`<span class="okc">speed +${pct(b.speed)}</span>`);
+  if (b.efficiency) parts.push(`<span class="okc">power and fuel −${pct(1 - st.power)}</span>`);
+  if (b.productivity) parts.push(`<span class="okc">output +${pct(b.productivity)}</span>${e.pbar ? ` <span class="dim">(next bonus ${pct(e.pbar)})</span>` : ''}`);
+  if (b.depth) parts.push(`<span class="okc">reaches ${DEPOSIT[st.depth].name.toLowerCase()}</span>`);
+  const def = ENTITIES[e.type], kw = def.power ? ` · ${Math.round(def.power * st.power)} kW` : '';
+  return `<div class="dim">${base}${st.speed !== 1 ? ` → ${e.kind === 'drill' || e.kind === 'oilpump' ? 'x' + fmtX(st.speed) : fmtX((def.speed ?? 1) * st.speed)}` : ''}${kw}${def.burner && st.power < 1 ? ` · burns ${pct(st.power)} of the fuel` : ''}</div>`
+    + `<div class="augsum">${parts.length ? parts.join(' · ') : `<span class="dim">${e.aug.length} augment slots: drag augments in (speed, efficiency, productivity${e.kind === 'drill' ? ', depth' : ''})</span>`}</div>`;
+}
+// A deposit: what it is, which layer it is down to, and how much is left there.
+function depositHTML(o) {
+  const L = depositLayer(o), next = DEPOSIT[o.layer + 1];
+  return `${iconHTML(o.type)} ${itemName(o.type)} · <b>${L.name}</b> <span class="dim">${endless(o) ? 'endless' : `${fmtN(Math.max(0, o.amount))} left${next ? `, then ${next.name.toLowerCase()}` : ''}`}</span>`;
+}
+// One line about a belt tile for hover info: its line and what it carries.
+function beltLine(e) {
+  const n = segItems(e).length, ln = e.line;
+  return `${ln ? esc(lineName(ln)) + ' · ' : ''}${n} item${n === 1 ? '' : 's'} here`;
+}
+let beltPick = null;   // which filter the item grid in a belt panel is choosing for
+function beltHTML(e) {
+  const ln = e.line, n = lanesOf(e), items = segItems(e), def = ENTITIES[e.type];
+  let h = `<div>${n === 3 ? 'Three' : 'Two'} lanes · ${fmtX(ln?.speed ?? e.speed)} tiles/s${ln && ln.speed > ln.base ? ` <span class="okc">(augmented from ${fmtX(ln.base)})</span>` : ''}</div>`;
+  h += `<div class="lanes">${Array.from({ length: n }, (_, i) => {
+    const on = items.filter(it => it[2] === i), kinds = [...new Set(on.map(it => it[0]))];
+    return `<div><span class="dim">${laneName(n, i)}</span> ${kinds.map(k => iconHTML(k, on.filter(it => it[0] === k).length)).join('') || '<span class="dim">empty</span>'}</div>`;
+  }).join('')}</div>`;
+  if (e.kind === 'underground') h += `<div class="dim">${e.role === 'in' ? (e.pair ? `entrance, linked ${e.len} tiles ahead` : `entrance: place an exit up to ${def.range - 1} tiles ahead`) : e.pair ? 'exit, linked' : 'exit with no entrance'}</div>`;
+  if (e.kind === 'lift') h += `<div class="dim">carries items ${e.dy > 0 ? 'up' : 'down'} to layer ${e.y + e.dy}</div>`;
+  const pickGrid = what => beltPick === what ? `<div class="grid small">${knownItems().map(it => `<div class="cell" data-act="bpickset:${it}"${tipAttr(itemName(it))}>${iconHTML(it)}</div>`).join('')}</div>` : '';
+  if (e.kind === 'splitter') {   // a filter per way: matching items go only that way, the rest round the unfiltered ways
+    h += `<h4>Filters</h4>` + ['front', 'left', 'right'].map((w, k) => { const f = e.sf?.[k]; return `<div class="row">${w}: ${f ? `${iconHTML(f)} ${itemName(f)} only <span class="x" data-act="sfilter:${k}:"${tipAttr('clear')}>✕</span>` : '<span class="dim">anything else</span>'} <button data-act="bpick:sf${k}">${beltPick === 'sf' + k ? 'cancel' : 'set'}</button></div>` + pickGrid('sf' + k); }).join('');
+  }
+  if (n === 3 && e.kind === 'belt') {   // bus channels: a side lane sent off to the side, after the bus ahead is served
+    const node = ln && ln.segs[ln.segs.length - 1] === e && ln.out?.kind === 'bus' ? ln.out : null;
+    h += `<h4>Channels</h4><div class="dim">A channel sends its side lane out to whatever this tile faces on that side: a belt, a machine, a depot. The bus ahead gets served first; only what it can't take goes out.</div>`;
+    for (const [side, key2, li] of [['left', 'chL', 0], ['right', 'chR', 2]]) {
+      const f = e[key2], ch = node?.ch[li], S2 = key2 === 'chL' ? 'L' : 'R';
+      h += `<div class="row chan"><b>${side}</b> ${!f ? '<span class="dim">off</span>' : f === '*' ? 'anything' : `${iconHTML(f)} ${itemName(f)}`}
+        <button data-act="chan:${S2}:" class="${!f ? 'on' : ''}">off</button><button data-act="chan:${S2}:*" class="${f === '*' ? 'on' : ''}">any</button><button data-act="bpick:${key2}" class="${f && f !== '*' ? 'on' : ''}">${beltPick === key2 ? 'cancel' : 'filter…'}</button>
+        ${f ? (ch?.t ? (S.T - (ch.T ?? -99) < 3 ? `<span class="okc">pulling ${iconHTML(ch.last)} · ${ch.n} so far</span>` : `<span class="dim">waiting${ch.n ? ` · ${ch.n} so far` : ''}</span>`) : '<span class="warn">nothing on that side takes items</span>') : ''}</div>` + pickGrid(key2);
+    }
+    h += `<div class="row"><b>middle</b> ${e.midOff ? '<span class="warn">stopped here</span>' : 'goes straight on'} <button data-act="midoff">${e.midOff ? 'let it through' : 'stop it here'}</button></div>`;
+  }
+  if (ln) {
+    h += `<h4>Line</h4><div>${esc(lineName(ln))} <span class="dim">${ln.segs.length} tile${ln.segs.length > 1 ? 's' : ''} · ${lineItems(ln)} items${lineAugs(ln).length ? ` · ${lineAugs(ln).map(a => iconHTML(a)).join('')}` : ''}${ln.cfg.filter.length ? ` · only ${ln.cfg.filter.map(f => iconHTML(f)).join('')}` : ''}</span></div>`;
+    h += `<div class="dim">${lineEndHTML(ln)}</div>`;
+    if (lineWarn(ln)) h += `<div class="warn">${lineWarn(ln)}</div>`;
+  }
+  h += `<div class="btns"><button data-act="rotate">rotate</button>${items.length ? '<button data-act="takebelt">pick up items</button>' : ''}${ln ? '<button data-act="beltnet">Network</button><button data-act="beltline">Line settings</button>' : ''}</div>`;
+  return h;
+}
 function statusLine(e) {
   const ok = isActive(e) && S.T - e.lastActive < 1;
   return `<div class="status ${ok ? 'ok' : 'idle'}">● ${e.status || (ok ? 'working' : 'idle')}</div>`;
@@ -332,6 +394,7 @@ function renderEntity() {
       if (def.ports) body += portsHTML(e);
       body += RECIPE[e.recipe] ? machineSlotsHTML(e, e.prog) : '<div class="dim" style="margin-top:6px">Pick a recipe to see its slots.</div>';
       if (def.ports && RECIPE[e.recipe]) body += `<h4>Fluids</h4>${fluidHTML(e)}`;
+      body += augHTML(e, `crafting speed ${fmtX(def.speed)}`);
       break;
     }
     case 'pipe': case 'tank': case 'upipe':
@@ -349,7 +412,8 @@ function renderEntity() {
     case 'oilpump': {
       const o = world.oil.get(e.x + ',' + e.z);
       body += `<h4>Well</h4>${o ? `${iconHTML('crude_oil')} yield ${o.yield.toFixed(1)}% · ${(def.rate * o.yield / 100).toFixed(1)} crude/s` : '<span class="warn">no oil here</span>'}`;
-      body += `<h4>Output (front)</h4>${fluidHTML(e)}<div class="dim">${def.power} kW · yield falls slowly as you pump, never under 20%</div><div class="btns"><button data-act="rotate">rotate</button></div>`;
+      body += `<h4>Output (front)</h4>${fluidHTML(e)}<div class="dim">yield falls slowly as you pump, never under 20%</div><div class="btns"><button data-act="rotate">rotate</button></div>`;
+      body += machineSlotsHTML(e) + augHTML(e, `${def.rate} crude/s at full yield`);
       break;
     }
     case 'fgen':
@@ -359,25 +423,24 @@ function renderEntity() {
     case 'rail':
       body += `<div class="dim">Track block ${e.block !== undefined ? e.block + 1 : '?'}. ${e.sig !== null && e.sig !== undefined ? `A signal here splits the track toward the ${DIR_NAMES[e.sig]}: one train at a time on each side.` : 'Rail signals split track into blocks so several trains can share it.'}</div>`;
       break;
-    case 'furnace': body += machineSlotsHTML(e, e.prog); break;
+    case 'furnace': body += machineSlotsHTML(e, e.prog) + augHTML(e, `smelting speed ${fmtX(def.speed)}`); break;
     case 'drill': {
-      const o = world.ores.get(key(e.x, e.y, e.z));
-      body += `<h4>Deposit</h4>${o ? `${iconHTML(o.type)} ${itemName(o.type)} · ${fmtN(o.amount)} left` : '<span class="dim">exhausted</span>'}`;
+      const o = world.ores.get(key(e.x, e.y, e.z)), st = machineStats(e), L = o && depositLayer(o);
+      body += `<h4>Deposit</h4>${o ? depositHTML(o) : '<span class="warn">nothing to mine here</span>'}`;
+      body += `<div class="${o && o.layer > st.depth ? 'warn' : 'dim'}">reaches down to ${DEPOSIT[st.depth].name.toLowerCase()}${o && o.layer > st.depth ? `: too shallow for this deposit. A depth augment ${o.layer - st.depth > 1 ? '2' : '1'} or a bigger drill reaches it` : ''}</div>`;
       body += `<h4>Mining</h4>${pbar(e.timer)}` + machineSlotsHTML(e);
-      body += `<div class="dim">${def.power ? def.power + ' kW' : 'burner'} · ${def.rate * 60}/min · pushes ore toward ${DIR_NAMES[e.dir]}</div>`;
+      const rate = def.rate * st.speed * (L?.speed ?? 1) * 60 * (1 + (L?.double ?? 0) + st.prod);
+      body += `<div class="dim">${rate.toFixed(1)}/min${L && L.speed < 1 ? ` (the ${L.name.toLowerCase()} layer is slower to dig${L.double ? `, but 1 in ${Math.round(1 / L.double)} cycles gives two` : ''})` : ''} · pushes ore toward ${DIR_NAMES[e.dir]}</div>`;
+      body += augHTML(e, `${(def.rate * 60).toFixed(0)}/min on the surface`);
       break;
     }
     case 'chest': body += `<div class="dim">${e.store.used()}/${def.cap} slots used</div>` + machineSlotsHTML(e); break;
     case 'lab': {
       const t = TECH[S.research.current];
       body += `<h4>Research</h4>${t ? `${t.name} · ${S.research.progress[t.id] || 0}/${t.count}${pbar(e.prog)}` : '<span class="dim">none: press T</span>'}`;
-      body += machineSlotsHTML(e);
+      body += machineSlotsHTML(e) + augHTML(e, `research speed ${fmtX(def.speed)}`);
       break;
     }
-    case 'generator':
-      body += machineSlotsHTML(e);
-      body += `<h4>Load</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.out)} / ${def.out} kW</div>`;
-      break;
     case 'solar': body += `<div>${def.out} kW, always on.</div>`; break;
     case 'pump': {
       const w = e.fnet?.water, boilers = w ? w.members.filter(m => m.kind === 'boiler').length : 0;
@@ -409,9 +472,9 @@ function renderEntity() {
         const short = n.demand > n.capacity && n.demand > 0;
         body += `<h4>Network ${n.id + 1} <span class="dim">${[...volts].map(v => VOLTAGES[v].name.toLowerCase()).join(' + ')}</span></h4>
           <div>${n.poles.length} poles · ${n.consumers} machines</div>
-          <div class="dim">making: ${n.gens.length} generators · ${n.engines.length} steam engines · ${n.solar} solar</div>
+          <div class="dim">making: ${n.engines.length} steam engines and generators · ${n.solar} solar</div>
           <h4>Usage</h4>${pbar(n.capacity ? n.produced / n.capacity : 0)}<div class="${short ? 'warn' : 'dim'}">${Math.round(n.produced)} / ${Math.round(n.capacity)} kW
-          ${!n.capacity ? '· no power: add generators or steam engines' : short ? `· brownout: wants ${Math.round(n.demand)} kW, machines run at ${Math.round(n.sat * 100)}%` : ''}</div>`;
+          ${!n.capacity ? '· no power: add steam engines, generators or solar' : short ? `· brownout: wants ${Math.round(n.demand)} kW, machines run at ${Math.round(n.sat * 100)}%` : ''}</div>`;
       }
       const cables = world.links.filter(l => [l.a, l.b].some(p => p[0] === e.x && p[1] === e.y && p[2] === e.z)).length;
       body += `<div class="dim">${VOLTAGES[voltsOf(def)[0]].name}${def.volts ? ` → ${def.volts.slice(1).map(v => VOLTAGES[v].name.toLowerCase()).join(', ')}` : ''} · supplies a ${def.supply * 2 + 1}×${def.supply * 2 + 1} area · wires reach ${def.wire} tiles${cables ? ` · ${cables} cable${cables > 1 ? 's' : ''}` : ''}</div>`;
@@ -429,12 +492,7 @@ function renderEntity() {
       if (e.held) body += `<h4>Holding</h4>${iconHTML(e.held)} ${itemName(e.held)}`;
       break;
     }
-    case 'belt': case 'splitter': case 'lift': case 'underground':
-      body += `<div>${e.items.length} item(s) on it · ${e.speed} tiles/s</div>`;
-      if (e.kind === 'underground') body += `<div class="dim">${e.role === 'in' ? (e.pair ? `entrance, linked ${e.len} tiles ahead` : 'entrance: place an exit up to 4 tiles ahead') : e.pair ? 'exit, linked' : 'exit with no entrance'}</div>`;
-      if (e.kind === 'lift') body += `<div class="dim">carries items ${e.dy > 0 ? 'up' : 'down'} to layer ${e.y + e.dy}</div>`;
-      body += `<div class="btns"><button data-act="rotate">rotate</button>${e.items.length ? '<button data-act="takebelt">pick up items</button>' : ''}</div>`;
-      break;
+    case 'belt': case 'splitter': case 'lift': case 'underground': body += beltHTML(e); break;
     case 'transmitter': {
       const sent = sentenceFor(e), ask = currentAsk();
       body += `<h4>Charge</h4>${pbar(e.prog)}` + machineSlotsHTML(e);
@@ -525,6 +583,9 @@ function act(a, ev) {
     case 'faccol': { const f = factoryOf(+arg); if (f) doAction({ a: 'factory', do: 'color', id: f.id, color: FAC_COLORS[(FAC_COLORS.indexOf(f.color) + 1) % FAC_COLORS.length] }); return; }
     case 'facdel': if (facDelArm !== +arg) { facDelArm = +arg; renderFactories(); setTimeout(() => { facDelArm = null; }, 3000); return; } facDelArm = null; doAction({ a: 'factory', do: 'remove', id: +arg }); return;
     case 'openlog': closeEntity(); openModal('logistics'); return;
+    case 'bpick': beltPick = beltPick === arg ? null : arg; renderEntity(); return;
+    case 'bpickset': if (e && beltPick) { const p = beltPick; beltPick = null; doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: p.startsWith('sf') ? 'sfilter' : 'chan', arg: p.startsWith('sf') ? p.slice(2) + ':' + arg : (p === 'chL' ? 'L:' : 'R:') + arg }); renderEntity(); } return;
+    case 'beltnet': case 'beltline': if (e?.line) { const at = [e.x, e.y, e.z]; closeEntity(); openModal('logistics'); showBeltLine(at, cmd === 'beltnet' ? 'net' : 'map'); } return;
     case 'rulepick': rulePick = !rulePick; renderEntity(); return;
     case 'hot': {
       const [b, i] = arg.split('.').map(Number), bar = S.bars[b];
@@ -534,9 +595,10 @@ function act(a, ev) {
     }
     case 'bar': S.bar = +arg; renderHotbar(); return;
     case 'tab': S.craftTab = arg; renderInventory(); return;
+    case 'give': doAction({ a: 'give', it: arg, n: ev.button === 2 ? 1 : ITEMS[arg].stack }); renderInventory(); return;
     case 'craft': {
       const r = RECIPE[arg];
-      if (!r.hand) { toast('this one can only be made in an assembler'); return; }
+      if (!r.hand && !S.sandbox) { toast('this one can only be made in an assembler'); return; }
       const n = ev.shiftKey ? maxCraftable(arg) : ev.button === 2 ? Math.min(5, maxCraftable(arg)) : 1;
       if (!n) { toast('missing ingredients for ' + itemName(arg)); return; }
       doAction({ a: 'craft', rid: arg, n }); renderInventory(); return;
@@ -638,7 +700,7 @@ const GOALS = [
   ['wood', 'Chop a few trees for wood', () => (S.stats.mined?.wood || 0) >= 8],
   ['expand', 'Craft more burner drills and furnaces (E) and run 4 drills', () => count(e => e.kind === 'drill' && isActive(e)) >= 4],
   ['copper', 'Smelt 20 copper plates', () => made('copper_plate') >= 20],
-  ['power', 'Craft a steam generator, fuel it and put a small pole next to it', () => any(e => e.kind === 'generator' && e.net && (e.fuel > 0 || e.burn > 0))],
+  ['power', 'Make power: a water pump on water, a fuelled boiler beside it, a steam engine beside that, and a small pole', () => any(e => e.kind === 'engine' && e.net && e.cap > 0)],
   ['electric', 'Run an electric drill on the network', () => any(e => e.type === 'drill' && e.status === 'mining')],
   ['lab', 'Craft automation packs, place a lab and choose research (T)', () => Object.keys(S.research.progress).length > 0],
   ['automation', 'Finish researching Automation', () => S.research.done.has('automation')],
@@ -668,7 +730,7 @@ function renderStatus() {
   const tr = TIERS[S.maxTier], nx = TIERS[S.maxTier + 1], P = powerSummary(), [lo, hi] = layerRange();
   const cur = TECH[S.research.current];
   setHTML($('status'), `
-    <div${tipAttr(`Buildable layers right now: ${lo} to ${hi}`)}><b class="logo">DEPTHWORKS</b><span class="badge ${S.mode === 'depth' ? 'depth' : ''}">${S.mode.toUpperCase()}</span><span class="badge">LAYER ${S.layer}</span></div>
+    <div${tipAttr(`Buildable layers right now: ${lo} to ${hi}`)}><b class="logo">DEPTHWORKS</b><span class="badge ${S.mode === 'depth' ? 'depth' : ''}">${S.mode.toUpperCase()}</span><span class="badge">LAYER ${S.layer}</span>${S.sandbox ? '<span class="badge depth">SANDBOX</span>' : ''}</div>
     <div class="row"${tipAttr('Active engineering volume: machines that did work in the last 8 seconds. Frames with a working machine inside count double. More volume raises precision.')}>Precision ${S.maxTier} <b>${tr.name}</b> <span class="dim">${S.activeVol.toFixed(1)}${nx ? ' / ' + nx.need : ''}</span></div>
     <div class="bar"><i style="width:${nx ? Math.min(100, S.activeVol / nx.need * 100) : 100}%"></i></div>
     <div class="row"${tipAttr('Electric networks are joined by pole wires. Machines slow down when a network is overloaded. Click a pole to see its network.')}>Power${P.count > 1 ? ` <span class="dim">(${P.count} networks)</span>` : ''} <span class="${P.sat < 1 && P.demand > 0 ? 'warn' : 'dim'}">${Math.round(P.produced)} / ${Math.round(P.capacity)} kW${P.demand > P.capacity && P.demand > 0 ? ` · ${Math.round(P.sat * 100)}%` : ''}</span></div>
@@ -683,11 +745,12 @@ export function describeCell(c) {
   const k = key(c.x, c.y, c.z), e = world.ents.get(k), f = world.frames.get(k), o = world.ores.get(k), out = [];
   const vh = c.veh && vehicleById(c.veh);
   if (vh) { const u = unitOf(vh); out.push(`<b>${itemName(vh.type)}</b> <span class="dim">${u ? esc(u.name) + ' · ' + esc(u.msg || u.state) : 'click to open · B to drive'}</span>`); }
-  if (e) out.push(`<b>${ENTITIES[e.type].name}</b> <span class="dim">${e.status || ''}</span>${world.factories.length > 1 && !ENTITIES[e.type].shared ? ' ' + facChip(e.fac) : ''}`);
+  if (e) out.push(`<b>${ENTITIES[e.type].name}</b> <span class="dim">${e.belt ? beltLine(e) : e.status || ''}</span>${world.factories.length > 1 && !ENTITIES[e.type].shared ? ' ' + facChip(e.fac) : ''}`);
+  if (e?.line && lineWarn(e.line) && e.line.segs[e.line.segs.length - 1] === e) out.push(`<span class="warn">${lineWarn(e.line)}</span>`);
   if (f) out.push('Hollow frame' + (e ? ' (machine inside)' : ''));
   const ft = c.y === 0 && world.feats.get(k);
   if (ft) out.push(`<b>${ft.type === 'tree' ? 'Tree' : 'Rock'}</b> <span class="dim">hold right-click to mine</span>`);
-  if (o) out.push(`${iconHTML(o.type)} ${itemName(o.type)} · ${fmtN(o.amount)}`);
+  if (o) out.push(depositHTML(o));
   const oil = c.y === 0 && world.oil.get(c.x + ',' + c.z);
   if (oil) out.push(`${iconHTML('crude_oil')} Crude oil · yield ${Math.round(oil.yield)}% <span class="dim">a pumpjack draws it</span>`);
   const rd = c.y === 0 && roadAt(c.x, c.z);
@@ -737,6 +800,20 @@ bus.on('float', (text, x, y, z) => {
   d.className = 'float'; d.textContent = text; d.style.left = sx + 'px'; d.style.top = sy + 'px';
   document.body.append(d); floats++;
   setTimeout(() => { d.remove(); floats--; }, 1000);
+});
+// What you dig gets one popup per kind of haul, which counts up while you keep digging: "+3 Iron ore (47)", the
+// number in brackets being how many you now have. It restarts on each dig instead of piling up new ones.
+const gains = new Map();
+bus.on('gain', (list, x, y, z) => {
+  const k = list.map(g => g[0]).join();
+  let g = gains.get(k);
+  if (!g) { g = { el: document.createElement('div'), got: {} }; g.el.className = 'float gain'; document.body.append(g.el); gains.set(k, g); }
+  for (const [it, n] of list) g.got[it] = (g.got[it] || 0) + n;
+  g.el.textContent = list.map(([it, , total]) => `+${g.got[it]} ${itemName(it)} (${fmtN(total)})`).join('   ');
+  const [sx, sy] = project(x, y, z);
+  g.el.style.left = sx + 'px'; g.el.style.top = sy + 'px';
+  g.el.style.animation = 'none'; void g.el.offsetWidth; g.el.style.animation = '';
+  clearTimeout(g.t); g.t = setTimeout(() => { g.el.remove(); gains.delete(k); }, 1500);
 });
 let spillT = 0;
 bus.on('spill', () => { if (S.T - spillT > 3) { spillT = S.T; toast('inventory full: items dropped at your feet (F picks them up)'); } });

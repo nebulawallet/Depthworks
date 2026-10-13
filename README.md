@@ -13,9 +13,16 @@ conversation with something that only understands machines.
   inventory (missing parts get crafted for you). Building has a reach limit.
 - **Real inventories:** 80 slots for you, typed slots for every machine (fuel, input, result, ingredients,
   science packs, storage). Drag stacks between them.
-- **Logistics:** belts in three speeds that compress, side-load and curve; underground belts, splitters,
-  and lifts that move items between layers. Inserters can pitch up or down a layer.
-- **Power:** coal generators, steam engines, diesel generators and solar panels on separate pole networks, with
+- **Logistics:** two-lane belts in three speeds that compress, side-load onto the near lane and curve; underground
+  belts, splitters with a filter per way, and lifts that move items between layers. Three-lane bus belts with filtered
+  side channels. Belts run as lines (see `src/belts.js`): each line can be named, filtered and sped up with augments
+  in the logistics window, which also draws a line's whole network. Inserters can pitch up or down a layer.
+- **Augments:** speed, efficiency and productivity augments in five tiers for drills, furnaces, assemblers, labs and
+  pumpjacks; depth augments let drills reach deeper deposit layers.
+- **Deposits that go deeper:** ore never runs out; each tile works down through surface, depth (richer, slower) and
+  an endless bedrock layer that only big drills or depth augments reach.
+- **Sandbox:** a world with everything researched, free and instant crafting, and any item on request.
+- **Power:** steam engines, diesel generators and solar panels on separate pole networks, with
   visible wires and supply areas, high voltage lines and transformers.
 - **Oil and fluids:** pipes that branch wherever they meet, underground pipes, pumps, valves and storage tanks, with
   less flow down long lines. Pumpjacks on crude oil feed refineries and chemical plants that make heavy fuel oil,
@@ -29,7 +36,7 @@ conversation with something that only understands machines.
 - **Factories:** found several separate factories in one world; belts, pipes and power never cross between them,
   so goods move from one to another only by truck, train or ship.
 - **Fish:** catch fish by hand or with a net on a boat. Overfished water recovers slowly.
-- **Research:** 31 technologies across four science packs, plus "precision" tiers earned by keeping machinery busy.
+- **Research:** 38 technologies across four science packs, plus "precision" tiers earned by keeping machinery busy.
 - **Depth:** seven buildable layers, from two rock layers below ground to frames stacked above it.
 - **The signal:** the endgame is a nine-step conversation answered by arranging working machines.
 - **Co-op:** free, peer to peer, with invite codes, nicknames and chat.
@@ -97,11 +104,12 @@ There's no build step; every push to `main` updates the site.
 |---|---|
 | `src/data.js` | Items, machines, recipes, research tree, precision tiers, the alien script |
 | `src/state.js` | Shared state, players and inventories, world generation, layer rules |
-| `src/sim.js` | Belts, inserters, machines, power, research, precision, crafting, the engineer, building, slots |
+| `src/sim.js` | Inserters, machines and their augments, power, research, precision, crafting, the engineer, building, slots |
+| `src/belts.js` | Belts as lines of lanes, the nodes where lines end (splitters, bus channels), line settings and networks |
 | `src/fluids.js` | Pipe and fluid networks, pumps, valves, the steam chain, fluid ports on machines |
 | `src/transport.js` | Roads, rails and signals, vehicles and driving, path finding, depots, routes and schedules |
 | `src/fish.js` | Fish, water bodies and their populations, fishing nets |
-| `src/logistics.js` | The logistics window: one route editor for rail, road and sea |
+| `src/logistics.js` | The logistics window: one route editor for rail, road and sea, plus belt lines and their network diagram |
 | `src/map.js` | Minimap and big map with its views, markers and the factory assign tool |
 | `src/net.js` | Co-op: invite codes, host-authoritative sync, chat (PeerJS / WebRTC) |
 | `src/save.js` | Save / load, and the entity format shared with co-op sync |

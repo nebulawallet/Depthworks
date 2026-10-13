@@ -132,22 +132,29 @@ export const ENTITIES = {
   belt:             { name: 'Belt', kind: 'belt', speed: 1.5, color: 0xc9a227, vol: .25, glyph: 'flow', desc: 'Moves items. Feed into its side to merge.' },
   fast_belt:        { name: 'Fast belt', kind: 'belt', speed: 3, color: 0xd8483a, vol: .35, glyph: 'flow', desc: 'Twice as fast.' },
   express_belt:     { name: 'Express belt', kind: 'belt', speed: 4.5, color: 0x3a9ad8, vol: .5, glyph: 'flow', desc: 'Three times as fast.' },
-  underground:      { name: 'Underground belt', kind: 'underground', speed: 3, color: 0xc9a227, range: 5, vol: .6, glyph: 'tunnel', desc: 'Place an entrance, then an exit up to 4 tiles ahead. Passes under anything between, roads too.' },
-  fast_underground: { name: 'Fast underground belt', kind: 'underground', speed: 4.5, color: 0xd8483a, range: 7, vol: .7, glyph: 'tunnel', desc: 'Entrance and exit up to 6 tiles apart.' },
-  express_underground: { name: 'Express underground belt', kind: 'underground', speed: 6, color: 0x3a9ad8, range: 9, vol: .8, glyph: 'tunnel', desc: 'Entrance and exit up to 8 tiles apart.' },
-  splitter:         { name: 'Splitter', kind: 'splitter', speed: 3, color: 0xc9a227, vol: .8, glyph: 'split', desc: 'Deals items in turn to the belts in front, left and right of it.' },
+  // Undergrounds run at their belt's speed, so a belt and its tunnels make one line (see belts.js).
+  underground:      { name: 'Underground belt', kind: 'underground', speed: 1.5, color: 0xc9a227, range: 5, vol: .6, glyph: 'tunnel', desc: 'Place an entrance, then an exit up to 4 tiles ahead. Passes under anything between, roads too.' },
+  fast_underground: { name: 'Fast underground belt', kind: 'underground', speed: 3, color: 0xd8483a, range: 7, vol: .7, glyph: 'tunnel', desc: 'Entrance and exit up to 6 tiles apart.' },
+  express_underground: { name: 'Express underground belt', kind: 'underground', speed: 4.5, color: 0x3a9ad8, range: 9, vol: .8, glyph: 'tunnel', desc: 'Entrance and exit up to 8 tiles apart.' },
+  // Bus belts carry three lanes and take items only from the belt behind them. Any tile can send its left or right
+  // lane off to the side through a filtered channel (see belts.js); the middle lane always goes straight.
+  bus_belt:         { name: 'Bus belt', kind: 'belt', lanes: 3, speed: 3, color: 0x8a5ad8, vol: .4, glyph: 'flow', desc: 'Three lanes, fed only from behind. Click a tile to send its left or right lane off to the side, with a filter. The middle lane goes straight.' },
+  bus_underground:  { name: 'Bus underground', kind: 'underground', lanes: 3, speed: 3, color: 0x8a5ad8, range: 7, vol: .7, glyph: 'tunnel', desc: 'Takes a bus belt under anything, up to 6 tiles.' },
+  splitter:         { name: 'Splitter', kind: 'splitter', speed: 3, color: 0xc9a227, vol: .8, glyph: 'split', desc: 'Deals items in turn to the belts in front, left and right of it. Each way can have a filter.' },
   lift:             { name: 'Lift', kind: 'lift', speed: 2, color: 0x58c8d8, vol: 1, glyph: 'rise', desc: 'Carries items one layer up or down. Press V to choose.' },
   burner_inserter:  { name: 'Burner inserter', kind: 'inserter', swing: .9, reach: 1, burner: true, color: 0x9a6a3a, vol: .4, glyph: 'swing', desc: 'Slow, needs no power. Burns fuel, and keeps fuel it carries when it runs dry.' },
   inserter:         { name: 'Inserter', kind: 'inserter', swing: .6, reach: 1, power: 13, color: 0xe0a92e, vol: .5, glyph: 'swing', desc: 'Moves items from behind it to in front of it.' },
   long_inserter:    { name: 'Long arm', kind: 'inserter', swing: .8, reach: 2, power: 20, color: 0xc8483a, vol: .75, glyph: 'swing', desc: 'Reaches two tiles.' },
   fast_inserter:    { name: 'Fast inserter', kind: 'inserter', swing: .25, reach: 1, power: 46, color: 0x3a8fd8, vol: .8, glyph: 'swing', desc: 'Swings more than twice as fast.' },
   filter_inserter:  { name: 'Filter inserter', kind: 'inserter', swing: .25, reach: 1, power: 53, color: 0xb04ad8, filter: true, vol: 1, glyph: 'swing', desc: 'Fast, and only moves the item you choose.' },
-  burner_drill:     { name: 'Burner drill', kind: 'drill', rate: .25, burner: true, fuelStacks: 1, color: 0x6a5a48, vol: .8, glyph: 'bore', desc: 'Mines without power. Burns coal or wood. Holds a full stack of fuel.' },
-  drill:            { name: 'Electric drill', kind: 'drill', rate: .5, power: 90, color: 0x5d6b43, vol: 1, glyph: 'bore', desc: 'Mines the deposit under it and pushes ore forward.' },
+  // `depth`: the deepest deposit layer a drill reaches (see DEPOSIT): 0 surface, 1 depth, 2 bedrock.
+  burner_drill:     { name: 'Burner drill', kind: 'drill', rate: .25, depth: 0, burner: true, fuelStacks: 1, color: 0x6a5a48, vol: .8, glyph: 'bore', desc: 'Mines surface deposits without power. Burns coal or wood. Holds a full stack of fuel.' },
+  drill:            { name: 'Electric drill', kind: 'drill', rate: .5, depth: 1, power: 90, color: 0x5d6b43, vol: 1, glyph: 'bore', desc: 'Mines the deposit under it, down to its depth layer, and pushes ore forward.' },
+  big_drill:        { name: 'Big drill', kind: 'drill', rate: .6, depth: 2, power: 240, augSlots: 3, color: 0x8a6a3a, vol: 2, glyph: 'bore', desc: 'Reaches all the way down to bedrock. Three augment slots.' },
   furnace:          { name: 'Stone furnace', kind: 'furnace', speed: 1, burner: true, color: 0x857a6d, vol: 1, glyph: 'heat', desc: 'Smelts. Burns coal.' },
   electric_furnace: { name: 'Electric furnace', kind: 'furnace', speed: 2, power: 180, color: 0x6a7480, vol: 1.5, glyph: 'heat', desc: 'Smelts twice as fast. No fuel needed.' },
   assembler:        { name: 'Assembler', kind: 'assembler', speed: .75, power: 75, color: 0x35567a, vol: 1.5, glyph: 'make', desc: 'Crafts the recipe you choose.' },
-  assembler2:       { name: 'Assembler II', kind: 'assembler', speed: 1.5, power: 150, color: 0x2f7a72, vol: 2, glyph: 'make', desc: 'Crafts twice as fast.' },
+  assembler2:       { name: 'Assembler II', kind: 'assembler', speed: 1.5, power: 150, augSlots: 3, color: 0x2f7a72, vol: 2, glyph: 'make', desc: 'Crafts twice as fast. Three augment slots.' },
   lab:              { name: 'Lab', kind: 'lab', speed: 1, power: 60, color: 0xd8dde4, vol: 1.5, glyph: 'think', desc: 'Uses science packs to research.' },
   wooden_chest:     { name: 'Wooden chest', kind: 'chest', cap: 16, color: 0x8a5a2c, vol: .3, glyph: 'keep', desc: '16 slots of storage.' },
   chest:            { name: 'Iron chest', kind: 'chest', cap: 32, color: 0x8b8f98, vol: .5, glyph: 'keep', desc: '32 slots of storage.' },
@@ -157,7 +164,6 @@ export const ENTITIES = {
   power_line:       { name: 'Power line', kind: 'pole', volt: 1, supply: 10, wire: 24, top: 2.9, color: 0x9aa8b8, vol: .3, glyph: 'spark', desc: 'High voltage. Powers everything in a 21x21 area and wires to other lines up to 24 tiles away.' },
   // volts[0] is the side that wires itself up; the other sides need a transformer cable
   transformer:      { name: 'Transformer station', kind: 'pole', volts: [0, 1], supply: 1, wire: 7.5, top: 1.2, color: 0x4a6a8a, vol: .5, glyph: 'spark', desc: 'Steps power between voltages. Wires to low voltage poles nearby; link it to a power line with a transformer cable.' },
-  generator:        { name: 'Steam generator', kind: 'generator', out: 900, color: 0x6b5a4a, vol: 1.5, glyph: 'spark', desc: 'Burns coal or wood. Put it next to a pole (900 kW).' },
   // Factorio's chain: one pump feeds 20 boilers, one boiler feeds 2 engines (rates in units per second).
   water_pump:       { name: 'Water pump', kind: 'pump', onWater: true, fluids: { water: 'out' }, rate: 1200, color: 0x3a7ab8, vol: .4, glyph: 'flow', desc: 'Place it on water. Pumps up to 1200 water/s into boilers next to it: enough for 20.' },
   boiler:           { name: 'Boiler', kind: 'boiler', burner: true, fuelStacks: 1, fluids: { water: 'in', steam: 'out' }, heat: 1.8, steam: 60, color: 0x8a5a3a, vol: 1, glyph: 'heat', desc: 'Burns fuel to turn 60 water/s into steam (1.8 MW). Boilers and engines pass water and steam to neighbours.' },
@@ -171,14 +177,14 @@ export const ENTITIES = {
   valve:            { name: 'Valve', kind: 'valve', cap: 100, color: 0xc84a3a, vol: .2, glyph: 'flow', desc: 'Lets fluid through one way only. Set it to pass only overflow (input side more than 80% full) or only to top up (output side under 50%).' },
   storage_tank:     { name: 'Storage tank', kind: 'tank', cap: 25000, color: 0x9aa4b0, vol: .5, glyph: 'keep', desc: 'Holds 25,000 units of one fluid. Connects on every side.' },
   oil_pump:         { name: 'Pumpjack', kind: 'oilpump', rate: 10, power: 90, cap: 100, ports: [{ side: 0, io: 'out', fluid: 'crude_oil' }], color: 0x6a5a8a, vol: 1, glyph: 'bore', desc: 'Place it on crude oil. Pumps 10 crude/s at 100% yield out of its front. Deposits never run dry, but slow down to 20%.' },
-  refinery:         { name: 'Oil refinery', kind: 'assembler', model: 'refinery', cats: ['refine'], speed: 1, power: 420, cap: 200, color: 0x8a5a4a, vol: 2.5, glyph: 'heat',
+  refinery:         { name: 'Oil refinery', kind: 'assembler', model: 'refinery', cats: ['refine'], speed: 1, power: 420, cap: 200, augSlots: 3, color: 0x8a5a4a, vol: 2.5, glyph: 'heat',
     ports: [{ side: 2, io: 'in' }, { side: 3, io: 'out' }, { side: 0, io: 'out' }, { side: 1, io: 'out' }], desc: 'Splits crude oil into fuels. Crude goes in the back; the products come out left, front and right.' },
   chem_plant:       { name: 'Chemical plant', kind: 'assembler', model: 'chem', cats: ['chem'], speed: 1, power: 210, cap: 100, color: 0x4a8a6a, vol: 2, glyph: 'make',
     ports: [{ side: 2, io: 'in' }, { side: 3, io: 'in' }, { side: 0, io: 'out' }], desc: 'Fluid chemistry. Fluids go in the back and left side and come out the front; items by inserter.' },
   barreler:         { name: 'Barreling station', kind: 'assembler', model: 'barreler', cats: ['barrel'], speed: 1, power: 50, cap: 100, color: 0x6a7a5a, vol: 1, glyph: 'keep',
     ports: [{ side: 2, io: 'in' }, { side: 2, io: 'out' }], desc: 'Fills empty barrels from a pipe at its back, or empties barrels into it. Pick fill or empty as its recipe.' },
   fuel_generator:   { name: 'Diesel generator', kind: 'fgen', fluids: { diesel: 'in' }, out: 1500, cap: 100, color: 0x7a6a4a, vol: 1.5, glyph: 'spark', desc: 'Burns diesel from a pipe for up to 1.5 MW. Only works as hard as the network needs. Put it in a pole\'s area.' },
-  vehicle_factory:  { name: 'Vehicle factory', kind: 'assembler', model: 'vfactory', cats: ['vehicle'], speed: 1, power: 300, color: 0x5a6a8a, vol: 3, glyph: 'make', desc: 'Builds vehicles. Pick a frame and an engine: together they decide speed and fuel.' },
+  vehicle_factory:  { name: 'Vehicle factory', kind: 'assembler', model: 'vfactory', cats: ['vehicle'], speed: 1, power: 300, augSlots: 4, color: 0x5a6a8a, vol: 3, glyph: 'make', desc: 'Builds vehicles. Pick a frame and an engine: together they decide speed and fuel.' },
   // Depots: storage for goods and fuel where vehicles dock. They sit next to the rail, road or water they serve.
   train_station:    { name: 'Train station', kind: 'depot', way: 'rail', cap: 40, fluidCap: 2000, color: 0xb84a3a, vol: 1, glyph: 'keep', desc: 'Put it beside a rail. Trains stop here, refuel from its tank, then load or unload by their schedule and its settings.' },
   truck_depot:      { name: 'Truck depot', kind: 'depot', way: 'road', cap: 32, fluidCap: 1000, color: 0x3a7ad8, vol: 1, glyph: 'keep', desc: 'Put it beside a road. Trucks park at the road tile next to it, refuel, and load or unload.' },
@@ -189,12 +195,45 @@ export const ENTITIES = {
 // (water) and back (steam), so one pipe can't touch both. `ports` machines connect only at the listed sides.
 ENTITIES.boiler.pipeSides = { water: [1, 3], steam: [2] };
 for (const id of ['water_pump', 'boiler', 'steam_engine']) ENTITIES[id].cap = 200;
+// Producers take augments: two slots unless the building sets `augSlots`.
+export const PRODUCER_KINDS = new Set(['drill', 'furnace', 'assembler', 'lab', 'oilpump']);
+for (const e of Object.values(ENTITIES)) if (PRODUCER_KINDS.has(e.kind)) e.augSlots ??= 2;
 for (const [id, e] of Object.entries(ENTITIES)) ITEMS[id] = { name: e.name, color: e.color, shape: 'machine', entity: id };
+
+// Augments slot into producers. Each type has a boost per tier, and the boosts of every augment in a building add up
+// (machineStats in sim.js turns them into the machine's numbers). speed: faster work. efficiency: less power and fuel,
+// never below `minPower` of the normal draw. productivity: extra output from the same inputs. depth: drills only;
+// tier n reaches n deposit layers deeper than the drill could (the deepest installed counts, since layers can't add
+// up past bedrock, and two tiers already take any drill there). `belts`: also fits a belt line's slots (belts.js).
+export const AUGMENTS = {
+  speed:        { name: 'Speed', color: 0x4a9ad8, tiers: [.10, .15, .25, .35, .50], belts: true },
+  efficiency:   { name: 'Efficiency', color: 0x6ac46a, tiers: [.10, .15, .25, .35, .50] },
+  productivity: { name: 'Productivity', color: 0xe08a3a, tiers: [.10, .15, .25, .35, .50] },
+  depth:        { name: 'Depth', color: 0xb07ad8, tiers: [1, 2], only: ['drill'] },
+};
+export const AUG_RULES = { minPower: .2, lineSlots: 2 };
+export const augId = (type, tier) => `${type}_aug_${tier}`;
+for (const [type, a] of Object.entries(AUGMENTS)) a.tiers.forEach((v, i) => {
+  ITEMS[augId(type, i + 1)] = { name: `${a.name} augment ${i + 1}`, color: a.color, shape: 'aug', aug: type, tier: i + 1,
+    desc: type === 'depth' ? `Drills only: reaches ${v} deposit layer${v > 1 ? 's' : ''} deeper.${v > 1 ? ' Takes any drill down to bedrock.' : ''}`
+      : `${type === 'efficiency' ? '−' : '+'}${Math.round(v * 100)}% ${type === 'speed' ? 'speed' : type === 'efficiency' ? 'power and fuel' : 'output'}. Goes into drills, furnaces, assemblers, labs and pumpjacks${a.belts ? ', or a belt line' : ''}.` };
+});
+
+// Ore deposits never run dry: when a layer is used up, the deposit drops to the next one down. `size` multiplies the
+// tile's generated richness (null: endless), `speed` scales how fast it is mined, and `double` is the chance that a
+// drill's cycle yields two items instead of one.
+export const DEPOSIT = [
+  { id: 'surface', name: 'Surface', size: 4, speed: 1, double: 0 },
+  { id: 'depth', name: 'Depth', size: 10, speed: .65, double: 1 / 6 },
+  { id: 'bedrock', name: 'Bedrock', size: null, speed: .45, double: 0 },
+];
+// Things that no longer exist, and the parts a save gets back for each one it still holds.
+export const RETIRED = { generator: { brick: 10, gear: 8, iron_plate: 5 } };
 
 // Stack sizes decide how many inventory / chest slots things take.
 const STACKS = { ore: 50, crystal: 50, wood: 100, plate: 100, brick: 100, lens: 100, gear: 100, cable: 200, chip: 200, coil: 100, pack: 200,
-  barrel: 10, engine: 10, vehicle: 1, part: 20, wheel: 50, hull: 10, signal: 50, net: 5, fish: 50, road: 100 };
-const MACHINE_STACKS = { belt: 100, fast_belt: 100, express_belt: 100, small_pole: 50, medium_pole: 50, lab: 10, generator: 10, transmitter: 5, frame: 50,
+  barrel: 10, engine: 10, vehicle: 1, part: 20, wheel: 50, hull: 10, signal: 50, net: 5, fish: 50, road: 100, aug: 50 };
+const MACHINE_STACKS = { belt: 100, fast_belt: 100, express_belt: 100, bus_belt: 100, small_pole: 50, medium_pole: 50, lab: 10, transmitter: 5, frame: 50, big_drill: 10,
   power_line: 20, transformer: 10, water_pump: 20, steam_engine: 10, pipe: 100, rail: 100, storage_tank: 10, refinery: 10, vehicle_factory: 5 };
 for (const [id, it] of Object.entries(ITEMS)) it.stack = it.shape === 'machine' ? (MACHINE_STACKS[id] ?? 50) : (STACKS[it.shape] ?? 50);
 
@@ -250,7 +289,6 @@ export const RECIPES = [
   { ...R('small_pole', { wood: 1, cable: 2 }, .5), out: { small_pole: 2 } },
   R('medium_pole', { steel: 2, copper_plate: 2, iron_plate: 2 }, .5, { tech: 'electric_distribution' }),
   R('frame', { iron_plate: 4, gear: 2 }, .5),
-  R('generator', { brick: 10, gear: 8, iron_plate: 5 }, 2),
   R('water_pump', { circuit: 2, gear: 1, iron_plate: 2 }, .5),
   R('boiler', { furnace: 1, iron_plate: 4 }, .5),
   R('steam_engine', { gear: 8, iron_plate: 15 }, .5),
@@ -262,6 +300,9 @@ export const RECIPES = [
   R('transmitter', { adv_circuit: 20, steel: 20, lens: 10, abyssal_alloy: 10 }, 10, { tech: 'signal_theory' }),
   { ...R('fast_underground', { underground: 2, gear: 8 }, 1, { tech: 'logistics2' }), out: { fast_underground: 2 } },
   { ...R('express_underground', { fast_underground: 2, steel: 4, circuit: 2 }, 1, { tech: 'logistics3' }), out: { express_underground: 2 } },
+  R('bus_belt', { fast_belt: 1, belt: 1, iron_plate: 2 }, .5, { tech: 'bus_belts' }),
+  { ...R('bus_underground', { bus_belt: 6, steel: 4 }, 1, { tech: 'bus_belts' }), out: { bus_underground: 2 } },
+  R('big_drill', { drill: 2, steel: 20, adv_circuit: 5, gear: 20 }, 4, { tech: 'deep_drilling' }),
   // fluids and oil
   R('pipe', { iron_plate: 1 }, .5, { tech: 'fluid_handling' }),
   { ...R('underground_pipe', { pipe: 10, iron_plate: 5 }, 1, { tech: 'fluid_handling' }), out: { underground_pipe: 2 } },
@@ -309,6 +350,13 @@ RECIPES.push(
   F('asphalt_road', 'chem', 'Asphalt', 'asphalt_road', 2, { fin: { heavy_oil: 10 }, in: { stone: 2 }, out: { asphalt_road: 4 }, tech: 'oil_processing' }),
   F('concrete_road', 'chem', 'Concrete', 'concrete_road', 3, { fin: { water: 50 }, in: { brick: 2, iron_ore: 1 }, out: { concrete_road: 5 }, tech: 'oil_processing' }),
 );
+// Augments: tier 1 from plain parts, every tier after from two of the tier below plus rarer parts.
+const AUG_FIRST = { speed: { circuit: 5, gear: 5, coil: 2 }, efficiency: { circuit: 5, cable: 10, steel: 2 }, productivity: { circuit: 5, steel: 3, brick: 5 } };
+const AUG_UP = [null, { adv_circuit: 3 }, { adv_circuit: 5, lens: 3 }, { adv_circuit: 5, abyssal_alloy: 4 }, { adv_circuit: 10, abyssal_alloy: 8, crystal: 8 }];
+for (const type of ['speed', 'efficiency', 'productivity']) for (let t = 1; t <= 5; t++)
+  RECIPES.push(R(augId(type, t), t === 1 ? AUG_FIRST[type] : { [augId(type, t - 1)]: 2, ...AUG_UP[t - 1] }, 5 * t, { tech: t === 1 ? 'augments' : 'augments_' + t }));
+RECIPES.push(R(augId('depth', 1), { steel: 10, gear: 10, circuit: 10, adv_circuit: 2 }, 10, { tech: 'deep_drilling' }),
+  R(augId('depth', 2), { [augId('depth', 1)]: 2, abyssal_alloy: 5, adv_circuit: 5 }, 20, { tech: 'augments_4' }));
 for (const [f, d] of Object.entries(FLUIDS)) if (d.barrel) RECIPES.push(
   F('fill_' + f, 'barrel', 'Fill ' + d.name.toLowerCase() + ' barrel', f + '_barrel', .5, { in: { barrel: 1 }, fin: { [f]: BARREL_SIZE }, out: { [f + '_barrel']: 1 }, tech: 'fluid_handling' }),
   F('empty_' + f, 'barrel', 'Empty ' + d.name.toLowerCase() + ' barrel', 'barrel', .5, { in: { [f + '_barrel']: 1 }, fout: { [f]: BARREL_SIZE }, out: { barrel: 1 }, tech: 'fluid_handling' }));
@@ -320,7 +368,7 @@ export const RECIPE = Object.fromEntries(RECIPES.map(r => [r.id, r]));
 export const recipeIcon = r => r.icon || r.id;
 export const recipeName = r => r.name || ITEMS[r.id]?.name || r.id;
 
-const r = 'red_pack', g = 'green_pack', b = 'blue_pack';
+const r = 'red_pack', g = 'green_pack', b = 'blue_pack', AUG3 = ['speed', 'efficiency', 'productivity'];
 const T = (id, name, packs, count, time, pre, unlocks, extra = {}) =>
   ({ id, name, cost: Object.fromEntries(packs.map(p => [p, 1])), count, time, pre, unlocks, ...extra });
 export const TECHS = [
@@ -355,6 +403,13 @@ export const TECHS = [
   T('shipping', 'Shipping', [r, g], 60, 15, ['vehicles'], ['port', 'hull', 'marine_engine', 'boat_marine', 'boat_diesel', 'fishing_net']),
   T('advanced_oil', 'Advanced oil processing', [r, g, b], 100, 15, ['oil_processing', 'precision_science'], ['advanced_refining', 'jet_blending', 'turbine_engine', 'truck_turbine', 'locomotive_turbine', 'boat_turbine']),
   T('tanks', 'Tanks', [r, g, b], 100, 20, ['vehicles', 'advanced_oil'], ['armor_plate', 'turret', 'tank_diesel', 'tank_turbine']),
+  T('bus_belts', 'Bus belts', [r, g], 60, 15, ['logistics2'], ['bus_belt', 'bus_underground']),
+  T('deep_drilling', 'Deep drilling', [r, g, b], 100, 20, ['advanced_electronics'], ['big_drill', augId('depth', 1)]),
+  T('augments', 'Augments', [r, g], 75, 15, ['steel', 'logistic_science'], AUG3.map(a => augId(a, 1))),
+  T('augments_2', 'Augments 2', [r, g, b], 100, 20, ['augments', 'advanced_electronics'], AUG3.map(a => augId(a, 2))),
+  T('augments_3', 'Augments 3', [r, g, b], 150, 20, ['augments_2', 'optics'], AUG3.map(a => augId(a, 3))),
+  T('augments_4', 'Augments 4', [r, g, b], 200, 25, ['augments_3', 'deep_excavation'], [...AUG3.map(a => augId(a, 4)), augId('depth', 2)]),
+  T('augments_5', 'Augments 5', [r, g, b, 'resonance_pack'], 150, 30, ['augments_4', 'signal_theory'], AUG3.map(a => augId(a, 5))),
 ];
 for (const [t, u] of [['logistics2', 'fast_underground'], ['logistics3', 'express_underground']]) TECHS.find(x => x.id === t).unlocks.push(u);
 export const TECH = Object.fromEntries(TECHS.map(t => [t.id, t]));
