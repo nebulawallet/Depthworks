@@ -8,7 +8,7 @@
 import { Peer } from 'peerjs';
 import { S, world, bus, key, newPlayer, asActor, notify, inv } from './state.js';
 import { ITEMS, TECH } from './data.js';
-import { place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove } from './sim.js';
+import { place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks } from './sim.js';
 import { serialize, entToJSON, entFromJSON, applyEntJSON } from './save.js';
 
 const PREFIX = 'depthworks-v1-';
@@ -56,6 +56,8 @@ function applyAction(op) {
     case 'move': moveItems(op.from, op.to, op.n); break;
     case 'shift': shiftMove(op.from, op.ent); break;
     case 'research': { const t = TECH[op.id]; if (t && !S.research.done.has(op.id) && techAvailable(t)) S.research.current = op.id; break; }
+    case 'link': { const msg = linkPoles(op.kind, op.from, op.to); if (msg) notify('toast', msg); break; }
+    case 'mark': editMarks(op); break;
   }
   return null;
 }
@@ -143,6 +145,8 @@ bus.on('feat', (x, z) => op({ o: 'feat', x, z }));
 bus.on('research', id => op({ o: 'research', id }));
 bus.on('pulse', e => op({ o: 'pulse', x: e.x, y: e.y, z: e.z }));
 bus.on('signal', kind => op({ o: 'signal', kind, sig: signalJSON() }));
+bus.on('links', () => op({ o: 'links', links: world.links }));
+bus.on('marks', () => op({ o: 'marks', marks: world.marks }));
 // Feedback meant for a friend (their toasts, floating text, pickup sounds) goes to their browser only.
 bus.on('remote', (p, ev, args) => { const c = net.conns.get(p.id); if (c) send(c.conn, { t: 'fx', ev, args }); });
 
@@ -239,6 +243,8 @@ function applyOp(o) {
     case 'feat': if (world.feats.delete(key(o.x, 0, o.z))) bus.emit('feat', o.x, o.z); break;
     case 'research': if (!S.research.done.has(o.id)) completeResearch(o.id); break;
     case 'pulse': bus.emit('pulse', { x: o.x, y: o.y, z: o.z }); break;
+    case 'links': world.links = o.links || []; world.powerDirty = true; break;
+    case 'marks': world.marks = o.marks; bus.emit('marks'); break;
     case 'signal': {
       const s = o.sig;
       Object.assign(S.signal, s, { taught: new Set(s.taught), seen: new Set(s.seen) });

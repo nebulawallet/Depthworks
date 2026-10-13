@@ -35,6 +35,10 @@ export function bakeAO(geo, floor = 0) {
 // Faceted look for rocks, ore and crowns.
 export const facet = geo => { const g = geo.index ? geo.toNonIndexed() : geo; g.computeVertexNormals(); return g; };
 
+// Render layer for interface overlays drawn in the world (cursor, arrows, grids, supply areas, icons).
+// Hide UI (H) simply stops rendering it, so anything put on it hides with the rest of the interface.
+export const UI_LAYER = 2;
+
 const ghostCache = new WeakMap(), previewCache = new WeakMap();
 function variant(cache, m, opacity) {
   if (!cache.has(m)) { const c = m.clone(); c.transparent = true; c.opacity = opacity; c.depthWrite = false; cache.set(m, c); }
@@ -47,11 +51,11 @@ export function setGhost(root, ghost) {
     if (!o.userData.base) o.userData.base = o.material;
     o.material = ghost ? variant(ghostCache, o.userData.base, .1) : o.userData.base;
     o.castShadow = !ghost && o.isMesh;
-    o.layers.set(ghost || o.isSprite ? 1 : 0);
+    o.layers.set(o.isSprite ? UI_LAYER : ghost ? 1 : 0);
   });
 }
 export function setPreview(root) {
-  root.traverse(o => { if (o.isMesh || o.isSprite) { o.material = variant(previewCache, o.material, .5); o.castShadow = false; o.receiveShadow = false; o.layers.set(1); } });
+  root.traverse(o => { if (o.isMesh || o.isSprite) { o.material = variant(previewCache, o.material, .5); o.castShadow = false; o.receiveShadow = false; o.layers.set(UI_LAYER); } });
 }
 
 // ---------------------------------------------------------------- belt tread textures
@@ -265,7 +269,7 @@ export function makeMesh(e) {
       for (let i = 0; i < Math.min(res, 12); i++) { const a = i / Math.min(res, 12) * Math.PI * 2; dyn(gear, box(.07, .06, .07), M(C.light), Math.cos(a) * .25, 0, Math.sin(a) * .25); }
       dyn(gear, cyl(.06, .06, .1, 6), dark);
       P.sprite = new THREE.Sprite(iconSpriteMat(e.recipe || 'gear')); P.sprite.scale.set(.5, .5, 1); P.sprite.position.set(0, 1.15, 0);
-      P.sprite.visible = !!e.recipe && S.altMode; P.sprite.renderOrder = 10; P.sprite.layers.set(1); g.add(P.sprite);
+      P.sprite.visible = !!e.recipe && S.altMode; P.sprite.renderOrder = 10; P.sprite.layers.set(UI_LAYER); g.add(P.sprite);
       break;
     }
     case 'lab': {
@@ -307,6 +311,27 @@ export function makeMesh(e) {
       break;
     }
     case 'pole': {
+      if (e.type === 'power_line') {   // lattice pylon with two insulator arms
+        const fm = M(def.color);
+        for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) st(box(.05, 2.7, .05).rotateX(z * .07).rotateZ(-x * .07), fm, x * .19, 1.35, z * .19);
+        for (const y of [.5, 1.1, 1.7, 2.3]) st(box(.42 - y * .1, .04, .42 - y * .1), fm, 0, y, 0);
+        for (let i = 0; i < 4; i++) st(box(.03, .7, .03).rotateZ(Math.PI / 4).rotateY(i * Math.PI / 2), fm, -.17 * Math.sin(i * Math.PI / 2), .8, -.17 * Math.cos(i * Math.PI / 2));
+        st(box(1.1, .07, .08), M(C.dark), 0, 2.6, 0); st(box(.7, .06, .07), M(C.dark), 0, 2.2, 0);
+        for (const x of [-.48, .48]) st(cyl(.045, .06, .3, 6), M(0x9fd0ff), x, 2.78, 0);
+        st(box(.5, .02, .5), M(0xc8483a), 0, .05, 0);
+        break;
+      }
+      if (e.type === 'transformer') {   // fat tank with cooling fins and three bushings
+        st(box(.9, .12, .9), dark, 0, .06, 0);
+        st(box(.62, .56, .62), col, 0, .4, 0);
+        for (const s of [-1, 1]) for (let i = -2; i <= 2; i++) { st(box(.08, .44, .03), M(C.mid), i * .11, .4, s * .33); st(box(.03, .44, .08), M(C.mid), s * .33, .4, i * .11); }
+        st(box(.66, .05, .66), M(C.steel), 0, .7, 0);
+        for (const x of [-.2, 0, .2]) { st(cyl(.04, .06, .34, 6), M(0x9fd0ff), x, .9, -.1); st(cyl(.06, .06, .03, 6), M(0x9fd0ff), x, 1.02, -.1); }
+        for (const x of [-.24, .24]) st(cyl(.035, .045, .2, 6), M(0xd8e0ea), x, 1.12, .18);
+        st(box(.04, .3, .04), M(C.dark), 0, .95, .18); st(box(.56, .04, .05), M(C.dark), 0, 1.05, .18);
+        for (let i = -1; i <= 1; i++) st(box(.1, .06, .02), M(i ? C.hazard : C.yellow), i * .12, .3, -.32);
+        break;
+      }
       if (e.type === 'small_pole') {
         st(cyl(.06, .08, 1.3, 6), M(C.wood), 0, .65, 0);
         st(box(.6, .07, .08), M(C.woodDark), 0, 1.18, 0);
@@ -331,6 +356,44 @@ export function makeMesh(e) {
       dyn(fly, box(.08, .52, .07), dark);
       P.glow = glowMat(0xffaa3a); dyn(g, box(.16, .1, .04), P.glow, -.16, .3, -.45);
       P.smoke = [-.16, 1.32, .26];
+      break;
+    }
+    case 'pump': {   // a deck on stilts over the water, intake pipe down, outlet pipe toward the shore (north)
+      for (const [x, z] of [[-.34, -.34], [.34, -.34], [-.34, .34], [.34, .34]]) st(box(.07, .5, .07), M(C.dark), x, -.05, z);
+      st(box(.86, .08, .86), M(C.mid), 0, .2, 0);
+      st(cyl(.11, .11, .55, seg), M(C.steel), .18, -.02, .18);
+      st(box(.4, .3, .34), col, -.08, .39, .1);
+      st(box(.44, .04, .38), M(C.steel), -.08, .56, .1);
+      st(cyl(.11, .11, .5, seg).rotateX(Math.PI / 2), col, 0, .33, -.26);
+      st(cyl(.14, .14, .06, seg).rotateX(Math.PI / 2), M(C.steel), 0, .33, -.5);
+      P.fly = grp(g, .2, .42, .1);
+      dyn(P.fly, cyl(.1, .1, .06, seg).rotateZ(Math.PI / 2), M(C.light));
+      dyn(P.fly, box(.07, .18, .04), dark);
+      break;
+    }
+    case 'boiler': {   // brick firebox with a glowing door, a steam drum across the top and a chimney
+      st(box(.9, .34, .76), M(C.stone), 0, .17, 0);
+      st(box(.94, .05, .8), M(C.stoneDark), 0, .36, 0);
+      st(cyl(.3, .3, .9, seg).rotateZ(Math.PI / 2), col, 0, .62, .04);
+      for (const x of [-.34, 0, .34]) st(cyl(.32, .32, .05, seg).rotateZ(Math.PI / 2), M(C.rust), x, .62, .04);
+      for (const x of [-.47, .47]) st(cyl(.12, .12, .06, seg).rotateZ(Math.PI / 2), M(C.steel), x, .62, .04);
+      st(cyl(.07, .09, .7, seg), M(C.stoneDark), .28, 1.05, .28);
+      st(cyl(.1, .1, .05, seg), black, .28, 1.4, .28);
+      st(box(.36, .22, .06), M(C.stoneDark), 0, .17, -.4);
+      P.glow = glowMat(0xff6a1a); dyn(g, box(.26, .12, .03), P.glow, 0, .15, -.44);
+      P.smoke = [.28, 1.45, .28];
+      break;
+    }
+    case 'engine': {   // a long cylinder on a bed, piston rod and a big flywheel on the side
+      st(box(.94, .16, .96), dark, 0, .08, 0);
+      st(cyl(.26, .26, .86, seg).rotateX(Math.PI / 2), col, -.12, .44, 0);
+      for (const z of [-.4, 0, .4]) st(cyl(.29, .29, .05, seg).rotateX(Math.PI / 2), M(C.steel), -.12, .44, z);
+      st(cyl(.06, .06, .3, seg), M(C.steel), -.12, .78, -.2); st(cyl(.06, .06, .3, seg), M(C.steel), -.12, .78, .2);
+      st(box(.08, .3, .5), M(C.mid), .26, .3, 0);
+      const fly = grp(g, .36, .46, 0); P.fly = fly;
+      dyn(fly, cyl(.34, .34, .07, seg).rotateZ(Math.PI / 2), M(C.light));
+      dyn(fly, box(.08, .6, .08), dark); dyn(fly, box(.08, .08, .6), dark);
+      P.glow = glowMat(0x7ef6ff); dyn(g, box(.04, .1, .16), P.glow, .31, .3, -.3);
       break;
     }
     case 'solar': {

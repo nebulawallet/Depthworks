@@ -1,11 +1,13 @@
 // HUD and panels. Panels re-render on a timer, so actions use pointerdown delegation via data-act.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER } from './data.js';
-import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange } from './state.js';
-import { maxCraftable, techAvailable, isActive, powerSummary, entSlots } from './sim.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER, HOTBARS, VOLTAGES, TILES } from './data.js';
+import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt } from './state.js';
+import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, voltsOf } from './sim.js';
 import { iconHTML, iconURL, fmtN } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
 import { project } from './scene.js';
 import { doAction, chat, netInfo } from './net.js';
+import { ACTIONS, keyName, keyNames, rebind, resetKeys } from './input.js';
+import { renderSide, openMapView } from './map.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -35,40 +37,88 @@ function recipeTip(r) {
 }
 
 // ---------------------------------------------------------------- modals
-const modals = ['inventory', 'research', 'help', 'title'];
-export function openModal(id) { for (const m of modals) $(m).style.display = m === id ? '' : 'none'; S.modal = id; renderModal(); }
-export function closeModals() { for (const m of modals) $(m).style.display = 'none'; S.modal = null; if (cursor) { cursor = null; showGhost(); } }
+const modals = ['inventory', 'research', 'help', 'title', 'map'];
+export function openModal(id) {
+  for (const m of modals) $(m).style.display = m === id ? '' : 'none';
+  S.modal = id;
+  if (id === 'map') openMapView();
+  if (id === 'help') renderKeys();
+  renderModal();
+}
+export function closeModals() { for (const m of modals) $(m).style.display = 'none'; S.modal = null; rebinding = null; if (cursor) { cursor = null; showGhost(); } }
 export function toggleModal(id) { S.modal === id ? closeModals() : openModal(id); }
 function renderModal() {
   if (S.modal === 'inventory') renderInventory();
   if (S.modal === 'research') renderResearch();
+  if (S.modal === 'map') renderSide(true);
 }
+bus.on('openmap', () => openModal('map'));
+bus.on('closemap', () => closeModals());
+
+// ---------------------------------------------------------------- hide UI
+// One switch for the whole interface: CSS hides every element on the page except the game view (so anything
+// added later hides too), and the renderer skips the interface layer. Nothing is closed, so it all comes back as it was.
+export function setHideUI(on) {
+  S.hideUI = on;
+  document.body.classList.toggle('hide-ui', on);
+}
+
+// ---------------------------------------------------------------- key bindings (in the help window)
+let rebinding = null;
+function renderKeys() {
+  setHTML($('keys'), ACTIONS.map(([id, label]) => `<div class="krow"><span>${label}</span><button data-key="${id}" class="${rebinding === id ? 'on' : ''}">${rebinding === id ? 'press a key…' : keyNames(id).join(' / ') || '—'}</button></div>`).join('')
+    + '<div class="btns"><button data-key="reset">Reset keys</button></div>');
+}
+$('keys').addEventListener('pointerdown', e => {
+  const b = e.target.closest?.('[data-key]'); if (!b) return;
+  e.preventDefault();
+  if (b.dataset.key === 'reset') { resetKeys(); rebinding = null; } else rebinding = rebinding === b.dataset.key ? null : b.dataset.key;
+  renderKeys(); renderHotbar();
+});
+// Capture the next key before the game sees it.
+addEventListener('keydown', e => {
+  if (!rebinding) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (e.code !== 'Escape' && !rebind(rebinding, e.code)) toast('number keys always pick quickbar slots');
+  rebinding = null; renderKeys(); renderHotbar();
+}, true);
 
 // ---------------------------------------------------------------- hand / hotbar
 export function selectItem(it) {
-  S.sel = it || null; renderHotbar();
+  S.sel = it || null; S.linkFrom = null; renderHotbar();
 }
+export function cycleBar() { S.bar = (S.bar + 1) % S.bars.length; renderHotbar(); }
 // Factorio-style: the first time you hold a new kind of building it takes the first free quickbar slot.
 function autoFillHotbar() {
   for (const [it, n] of inv.counts()) {
-    if (n <= 0 || !ENTITIES[it] || S.hotbarSeen.has(it)) continue;
+    if (n <= 0 || !(ENTITIES[it] || ITEMS[it]?.tool) || S.hotbarSeen.has(it)) continue;
     S.hotbarSeen.add(it);
     if (S.hotbar.includes(it)) continue;
     const free = S.hotbar.indexOf(null);
     if (free >= 0) S.hotbar[free] = it;
   }
 }
+// The active bar sits at the bottom at full size; the others stack above it, smaller and dimmer, next one closest.
 export function renderHotbar() {
+  if (!S.bars.length) return;
   autoFillHotbar();
-  const html = S.hotbar.map((it, i) => {
-    const n = it ? invGet(it) : 0;
-    const cls = 'slot' + (it && it === S.sel ? ' sel' : '') + (it && !n ? ' empty' : '');
-    const tipHtml = it ? `<b>${itemName(it)}</b><div class="dim">${ENTITIES[it]?.desc ?? ''}</div><div class="dim">right-click with an empty hand clears this slot</div>` : 'empty: right-click while holding something to put it here';
-    return `<div class="${cls}" data-act="hot:${i}"${tipAttr(tipHtml)}><span class="k">${(i + 1) % 10}</span>${it ? iconHTML(it, n || '') : ''}</div>`;
-  }).join('');
-  setHTML($('hotbar'), html);
-  const ent = S.sel && ENTITIES[S.sel];
-  const hand = S.sel ? `${iconHTML(S.sel, invGet(S.sel))} <b>${itemName(S.sel)}</b>` + (ent ? ` · facing ${DIR_NAMES[S.dir]}` : ' · Ctrl+click a machine to put it in · Z drops one')
+  const barHTML = (b, active) => {
+    const cells = S.bars[b].map((it, i) => {
+      const n = it ? invGet(it) : 0;
+      const cls = 'slot' + (it && it === S.sel ? ' sel' : '') + (it && !n ? ' empty' : '');
+      const tipHtml = it ? `<b>${itemName(it)}</b><div class="dim">${ENTITIES[it]?.desc ?? ITEMS[it]?.desc ?? ''}</div><div class="dim">right-click with an empty hand clears this slot</div>` : 'empty: right-click while holding something to put it here';
+      return `<div class="${cls}" data-act="hot:${b}.${i}"${tipAttr(tipHtml)}>${active ? `<span class="k">${(i + 1) % 10}</span>` : ''}${it ? iconHTML(it, n || '') : ''}</div>`;
+    }).join('');
+    const tip = active ? `${HOTBARS[b].name} bar · ${keyName('cycleBar')} switches bars` : `click, or press ${keyName('cycleBar')}, to use the ${HOTBARS[b].name.toLowerCase()} bar`;
+    return `<div class="hbar${active ? ' on' : ''}"><div class="bname" data-act="bar:${b}"${tipAttr(tip)}>${b + 1}<small>${HOTBARS[b].name}</small></div>${cells}</div>`;
+  };
+  const n = S.bars.length, others = [];
+  for (let k = n - 1; k >= 1; k--) others.push(barHTML((S.bar + k) % n, false));
+  setHTML($('hotbar'), others.join('') + barHTML(S.bar, true));
+  $('hand').style.bottom = $('hotbar').offsetHeight + 18 + 'px';
+  const ent = S.sel && ENTITIES[S.sel], tool = ITEMS[S.sel]?.tool === 'link';
+  const hand = S.sel ? `${iconHTML(S.sel, invGet(S.sel))} <b>${itemName(S.sel)}</b>` + (ent ? ` · facing ${DIR_NAMES[S.dir]}`
+    : tool ? (S.linkFrom ? ' · now click the other pole · Esc cancels' : ' · click a pole, then another, to string a cable') : ' · Ctrl+click a machine to put it in · Z drops one')
     + (ent?.kind === 'lift' ? ` · ${S.dy === -1 ? 'down' : 'up'}` : '')
     + (ent?.kind === 'inserter' && S.mode === 'depth' ? ` · ${['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]}` : '')
     : '';
@@ -149,7 +199,7 @@ const TABS = ['Logistics', 'Production', 'Intermediates', 'Science'];
 S.craftTab = 'Logistics';
 function recipeTab(r) {
   const ent = ENTITIES[r.id];
-  return ITEMS[r.id]?.shape === 'pack' ? 'Science' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'lift', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
+  return ITEMS[r.id]?.shape === 'pack' ? 'Science' : ITEMS[r.id]?.tool ? 'Logistics' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'lift', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
 }
 function renderInventory() {
   const rs = RECIPES.filter(r => r.cat === 'craft' && recipeUnlocked(r) && recipeTab(r) === S.craftTab);
@@ -190,11 +240,11 @@ function renderResearch() {
 // ---------------------------------------------------------------- machine window (machine slots + your inventory)
 let panelEnt = null;
 export function openEntity(e) {
-  panelEnt = e; cursor = null; showGhost();
+  panelEnt = S.openEnt = e; cursor = null; showGhost();
   $('entity').style.display = ''; $('epCanvasWrap').style.display = e.kind === 'transmitter' ? '' : 'none';
   renderEntity();
 }
-export function closeEntity() { panelEnt = null; cursor = null; showGhost(); $('entity').style.display = 'none'; }
+export function closeEntity() { panelEnt = S.openEnt = null; cursor = null; showGhost(); $('entity').style.display = 'none'; }
 export const entityOpen = () => panelEnt;
 bus.on('removed', e => { if (e === panelEnt) closeEntity(); });
 
@@ -249,11 +299,40 @@ function renderEntity() {
       body += `<h4>Load</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.out)} / ${def.out} kW</div>`;
       break;
     case 'solar': body += `<div>${def.out} kW, always on.</div>`; break;
+    case 'pump': {
+      const w = e.fnet?.water, boilers = w ? w.members.filter(m => m.kind === 'boiler').length : 0;
+      body += `<h4>Pumping</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.rate)} / ${def.rate} water/s · always full, delivers only what is drawn</div>`;
+      body += `<div>${boilers} boiler${boilers === 1 ? '' : 's'} connected${boilers > 20 ? ' <span class="warn">(one pump keeps 20 busy)</span>' : ''}</div>`;
+      break;
+    }
+    case 'boiler': {
+      body += machineSlotsHTML(e);
+      const engines = e.fnet?.steam ? e.fnet.steam.members.filter(m => m.kind === 'engine').length : 0;
+      body += `<h4>Steam</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.steam)} / ${def.steam} steam/s · ${def.heat} MW at full</div>`;
+      const short = e.water > 0 && e.water < 1 ? ` <span class="warn">${Math.round(e.water * 100)}%: too many boilers on the pump</span>` : '';
+      body += `<div>water: ${e.fnet?.water?.cap ? `<span class="okc">pump connected</span>${short}` : '<span class="warn">no pump touching it</span>'} · ${engines} engine${engines === 1 ? '' : 's'} on its steam</div>`;
+      break;
+    }
+    case 'engine': {
+      const s = e.fnet?.steam, n = e.net;
+      body += `<h4>Output</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.out)} / ${def.out} kW · ${Math.round((e.load || 0) * def.steam)} steam/s</div>`;
+      const boilers = s ? s.members.some(m => m.kind === 'boiler') : false;
+      body += `<div>steam: ${!boilers ? '<span class="warn">no boiler touching it</span>' : s.cap ? `<span class="okc">${Math.round((s.ratio || 0) * 100)}% available</span>` : '<span class="warn">boilers have no fuel or water</span>'} · ${n ? `network ${n.id + 1}` : '<span class="warn">not in a pole\'s area</span>'}</div>`;
+      break;
+    }
     case 'pole': {
       const n = e.net;
-      body += n ? `<h4>Network ${n.id + 1}</h4><div>${n.poles.length} poles · ${(n.gens || []).length} generators · ${n.solar || 0} solar</div>
-        <h4>Usage</h4>${pbar(n.capacity ? n.produced / n.capacity : 0)}<div class="dim">${Math.round(n.produced)} / ${Math.round(n.capacity)} kW${n.demand > n.capacity ? ` · <span class="warn">overloaded, machines at ${Math.round(n.sat * 100)}%</span>` : ''}</div>` : '';
-      body += `<div class="dim">supplies a ${def.supply * 2 + 1}×${def.supply * 2 + 1} area · wires reach ${def.wire} tiles</div>`;
+      if (n) {
+        const volts = new Set(n.poles.flatMap(p => voltsOf(ENTITIES[p.type])));
+        const short = n.demand > n.capacity && n.demand > 0;
+        body += `<h4>Network ${n.id + 1} <span class="dim">${[...volts].map(v => VOLTAGES[v].name.toLowerCase()).join(' + ')}</span></h4>
+          <div>${n.poles.length} poles · ${n.consumers} machines</div>
+          <div class="dim">making: ${n.gens.length} generators · ${n.engines.length} steam engines · ${n.solar} solar</div>
+          <h4>Usage</h4>${pbar(n.capacity ? n.produced / n.capacity : 0)}<div class="${short ? 'warn' : 'dim'}">${Math.round(n.produced)} / ${Math.round(n.capacity)} kW
+          ${!n.capacity ? '· no power: add generators or steam engines' : short ? `· brownout: wants ${Math.round(n.demand)} kW, machines run at ${Math.round(n.sat * 100)}%` : ''}</div>`;
+      }
+      const cables = world.links.filter(l => [l.a, l.b].some(p => p[0] === e.x && p[1] === e.y && p[2] === e.z)).length;
+      body += `<div class="dim">${VOLTAGES[voltsOf(def)[0]].name}${def.volts ? ` → ${def.volts.slice(1).map(v => VOLTAGES[v].name.toLowerCase()).join(', ')}` : ''} · supplies a ${def.supply * 2 + 1}×${def.supply * 2 + 1} area · wires reach ${def.wire} tiles${cables ? ` · ${cables} cable${cables > 1 ? 's' : ''}` : ''}</div>`;
       break;
     }
     case 'inserter': {
@@ -292,10 +371,12 @@ function act(a, ev) {
   const [cmd, arg] = a.split(':'), e = panelEnt;
   switch (cmd) {
     case 'hot': {
-      const i = +arg;
-      if (ev.button === 2) { S.hotbar[i] = S.sel || null; renderHotbar(); return; }
-      const it = S.hotbar[i]; selectItem(it && it === S.sel ? null : it); return;
+      const [b, i] = arg.split('.').map(Number), bar = S.bars[b];
+      if (!bar) return;
+      if (ev.button === 2) { bar[i] = S.sel || null; renderHotbar(); return; }
+      const it = bar[i]; selectItem(it && it === S.sel ? null : it); return;
     }
+    case 'bar': S.bar = +arg; renderHotbar(); return;
     case 'tab': S.craftTab = arg; renderInventory(); return;
     case 'craft': {
       const r = RECIPE[arg];
@@ -417,6 +498,8 @@ export function describeCell(c) {
   const ft = c.y === 0 && world.feats.get(k);
   if (ft) out.push(`<b>${ft.type === 'tree' ? 'Tree' : 'Rock'}</b> <span class="dim">hold right-click to mine</span>`);
   if (o) out.push(`${iconHTML(o.type)} ${itemName(o.type)} · ${fmtN(o.amount)}`);
+  const t = c.y === 0 && TILES[tileAt(c.x, c.z)];
+  if (t?.liquid) out.push(`<b>${t.name}</b> <span class="dim">${flowAt(c.x, c.z) >= 0 ? `flows ${DIR_NAMES[flowAt(c.x, c.z)]} · ` : ''}no walking or building, except water pumps</span>`);
   out.push(`<span class="dim">${c.x},${c.z} · layer ${c.y}</span>`);
   return out.join('<br>');
 }
@@ -442,6 +525,7 @@ export function updateUI(dt, hover) {
   if (panelEnt) renderEntity();
   if (S.modal === 'inventory') renderInventory();
   if (S.modal === 'research') renderResearch();
+  if (S.modal === 'map') renderSide(false);
   setHTML($('craftq'), S.player.craft.slice(0, 10).map((c, i) => `<div class="cell${c.top ? '' : ' sub'}" data-act="cancel:${i}"${tipAttr(c.top ? `<b>${itemName(c.rid)}</b><div class="dim">click to cancel</div>` : `<b>${itemName(c.rid)}</b><div class="dim">part for the next item</div>`)}>${iconHTML(c.rid, (c.times - c.done) * RECIPE[c.rid].out[c.rid])}<i class="pbar" style="width:${(i === 0 ? c.prog : 0) * 100}%"></i></div>`).join(''));
 }
 bus.on('research', id => { toast(`Research complete: ${TECH[id].name}`, 3500, 'good'); renderModal(); });

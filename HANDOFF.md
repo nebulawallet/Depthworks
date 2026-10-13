@@ -21,7 +21,10 @@ glyphs, and something answers using only the mechanisms it has heard.
 | Engineer, Factorio controls, reach, collision | Done |
 | Inventories | Real slots (80 for the player, 16/32 for chests), drag and drop, typed machine slots |
 | Logistics | Belts in 3 tiers (4 items per tile, compression, side-loading, curves), undergrounds, splitters, lifts |
-| Power | Coal generators, solar, small/medium poles, separate networks |
+| Power | Coal generators, solar, small/medium poles, separate networks. Steam chain (water pump → boilers → steam engines, Factorio's 1:20:40, load-based), high voltage power lines (21×21), transformer stations, hand-strung power and transformer cables, brownouts, flashing plugs on unpowered machines |
+| Water | Ocean on the south/east edges, inland lakes, short rivers with a flow direction per tile (`world.flow`, for boats later). No walking or building on water except pumps |
+| Map | Minimap, big map (M) with zoom/pan, markers, labelled areas, terrain/resources/production/power views |
+| Interface | Three quickbars cycled with X, Hide UI (H), rebindable keys in the help window (F1) |
 | Research | 21 techs, 4 science pack tiers, gated by precision for depth |
 | Depth | Layers −2..4, hollow frames, ghosting, lazily painted underground floors |
 | Alien conversation | 9 scripted exchanges plus ambient replies, glyph animations, clarity that grows |

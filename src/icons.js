@@ -62,7 +62,13 @@ function drawMachine(px, ent, col) {
     case 'lab': px(2, 9, '#4b4f5a', 12, 6); for (let y = 2; y < 10; y++) for (let x = 3; x < 13; x++) if (Math.hypot(x - 7.5, y - 9) < 6) px(x, y, '#58c8d8'); px(5, 4, '#ffffff'); break;
     case 'chest': px(2, 4, 1, 12, 10); px(2, 7, .7, 12, 1); px(7, 7, '#e8d48a', 2, 3); px(2, 4, 1.25, 12, 1); break;
     case 'frame': px(2, 2, 1, 12, 2); px(2, 2, 1, 2, 12); px(12, 2, 1, 2, 12); px(2, 12, .7, 12, 2); px(4, 4, .5, 1, 8); px(4, 4, .5, 8, 1); break;
-    case 'pole': px(7, 2, 1, 2, 13); px(3, 3, 1, 10, 2); px(3, 2, '#c8d0da', 2, 1); px(11, 2, '#c8d0da', 2, 1); px(6, 14, .6, 4, 1); break;
+    case 'pole':
+      if (ent === 'power_line') { for (let y = 3; y < 16; y++) { const w = 2 + Math.floor((y - 3) / 3); px(8 - w, y, 1, 1, 1); px(7 + w, y, 1, 1, 1); if (y % 3 === 0) px(8 - w, y, .7, w * 2, 1); } px(2, 3, '#2c3038', 12, 1); px(2, 4, '#9fd0ff', 1, 2); px(13, 4, '#9fd0ff', 1, 2); break; }
+      if (ent === 'transformer') { px(3, 6, 1, 10, 9); for (let x = 4; x < 13; x += 2) px(x, 7, .7, 1, 7); px(4, 2, '#9fd0ff', 2, 4); px(7, 1, '#9fd0ff', 2, 5); px(10, 2, '#9fd0ff', 2, 4); px(3, 14, '#2c3038', 10, 1); break; }
+      px(7, 2, 1, 2, 13); px(3, 3, 1, 10, 2); px(3, 2, '#c8d0da', 2, 1); px(11, 2, '#c8d0da', 2, 1); px(6, 14, .6, 4, 1); break;
+    case 'pump': px(2, 13, '#3a8ad8', 12, 2); px(3, 6, '#2c3038', 1, 7); px(12, 6, '#2c3038', 1, 7); px(2, 5, '#5c6470', 12, 2); px(4, 2, 1, 6, 4); px(8, 3, 1, 6, 2); px(13, 2, '#939ca8', 2, 4); break;
+    case 'boiler': px(2, 9, '#8f8373', 12, 6); px(6, 11, '#ff7a2a', 4, 2); for (let x = 1; x < 15; x++) px(x, 4, x % 5 ? 1 : .6, 1, 5); px(11, 0, '#645a4d', 2, 4); break;
+    case 'engine': px(1, 12, '#2c3038', 14, 3); px(1, 5, 1, 9, 7); px(1, 5, 1.3, 9, 1); for (let x = 2; x < 10; x += 3) px(x, 6, .7, 1, 6); for (let y = 2; y < 15; y++) for (let x = 9; x < 16; x++) { const d = Math.hypot(x - 12, y - 8); if (d < 3.6 && d > 2.4) px(x, y, '#c3cad3'); } px(11, 7, '#2c3038', 2, 2); break;
     case 'generator': px(1, 6, 1, 14, 8); for (let y = 2; y < 9; y++) for (let x = 3; x < 13; x++) if (Math.hypot(x - 7.5, (y - 5.5) * 1.6) < 5) px(x, y, '#8a6a4a'); px(7, 8, '#ffe14a', 2, 4); px(6, 10, '#ffe14a', 2, 1); break;
     case 'solar': for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) px(2 + x * 4, 3 + y * 4, 1.4, 3, 3); px(1, 14, '#888', 14, 1); break;
     case 'transmitter': for (let x = 2; x < 14; x++) { const y = 3 + Math.round(Math.pow((x - 7.5) / 6, 2) * 4); px(x, y, '#cfd6df', 1, 2); } px(7, 6, '#9aa1ad', 2, 7); px(4, 13, 1, 8, 2); px(7, 2, '#7ef6ff', 2, 2); break;

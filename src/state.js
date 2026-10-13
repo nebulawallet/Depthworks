@@ -1,5 +1,5 @@
 // Shared mutable game state.
-import { ITEMS, TECH, RECIPE, TIERS, PLAYER } from './data.js';
+import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE } from './data.js';
 
 export const GRID = 96;
 const K = GRID / 64;  // world layout was designed on a 64 grid
@@ -20,6 +20,9 @@ export const S = {
   signal: { started: false, stage: -1, pulses: 0, taught: new Set(), seen: new Set(), log: [] },
   altMode: true,
   net: { role: 'solo' },        // 'solo' | 'host' | 'client'
+  seed: 20261013,               // world seed for water; ores and trees use their own fixed layout
+  bars: [], bar: 0,             // quickbars (see HOTBARS); S.hotbar is bars[0]
+  hideUI: false,
 };
 
 // ---------------------------------------------------------------- players
@@ -89,7 +92,14 @@ export const world = {
   feats: new Map(),   // key -> { type: 'tree' | 'rock' } (surface only)
   ground: [],         // items lying on the ground: { type, x, z }
   beltOrder: [], beltDirty: true,
+  tiles: new Uint8Array(GRID * GRID),   // surface tile type per cell (index into TILES)
+  flow: new Int8Array(GRID * GRID).fill(-1),   // flow direction of moving water (index into DIRS), -1 for still
+  links: [],          // cables strung by hand: { kind: item id, a: [x, y, z], b: [x, y, z] }
+  marks: { markers: [], areas: [], next: 1 },   // map markers and labelled areas
 };
+export const tileAt = (x, z) => x < 0 || z < 0 || x >= GRID || z >= GRID ? 0 : world.tiles[z * GRID + x];
+export const isWater = (x, z) => !!TILES[tileAt(x, z)].liquid;
+export const flowAt = (x, z) => x < 0 || z < 0 || x >= GRID || z >= GRID ? -1 : world.flow[z * GRID + x];
 
 export const invGet = it => actor.inv.count(it);
 export function invAdd(it, n = 1) {
@@ -177,7 +187,7 @@ export function generateOres(seed = 20261013) {
 export function generateFeatures(seed = 77) {
   world.feats.clear();
   const R = rng(seed), sx = S.player.x, sz = S.player.z;
-  const ok = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID && !world.ores.has(key(x, 0, z)) && Math.hypot(x - sx, z - sz) > 6;
+  const ok = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID && !world.ores.has(key(x, 0, z)) && !isWater(x, z) && Math.hypot(x - sx, z - sz) > 6;
   for (let f = 0; f < 22; f++) {
     const cx = R() * GRID, cz = R() * GRID, rad = 3 + R() * 6;
     for (let i = 0; i < rad * rad * 1.4; i++) {
@@ -189,6 +199,163 @@ export function generateFeatures(seed = 77) {
   // always a small wood and a couple of rocks within a short walk of the landing site
   for (let i = 0; i < 18; i++) { const x = Math.floor(sx + 9 + (R() - .5) * 6), z = Math.floor(sz - 7 + (R() - .5) * 6); if (ok(x, z)) world.feats.set(key(x, 0, z), { type: 'tree', v: R() }); }
   for (const [x, z] of [[sx - 7, sz + 3], [sx - 6, sz + 6]]) if (ok(Math.floor(x), Math.floor(z))) world.feats.set(key(Math.floor(x), 0, Math.floor(z)), { type: 'rock', v: R() });
+}
+
+// ---------------------------------------------------------------- water
+export const SPAWN = { x: 48.5, z: 52.5 };
+export const WATER_GEN = 2;   // bump when generateWater changes: saves made by an older one get their water redone
+function hashN(x, z, s) { let h = Math.imul(x | 0, 374761393) + Math.imul(z | 0, 668265263) + Math.imul(s | 0, 1442695041); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
+function noise(x, z, s) {
+  const xi = Math.floor(x), zi = Math.floor(z), xf = x - xi, zf = z - zi, u = xf * xf * (3 - 2 * xf), v = zf * zf * (3 - 2 * zf);
+  const a = hashN(xi, zi, s), b = hashN(xi + 1, zi, s), c = hashN(xi, zi + 1, s), d = hashN(xi + 1, zi + 1, s);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+// Oceans along the south and east edges, inland lakes, and sometimes a river that comes in from the north or
+// west edge and drains into a lake. Water never covers ore or the landing site, and every surface ore stays
+// reachable on foot (rivers end in inland lakes, so they never cut the map in two).
+export function generateWater(seed = S.seed) {
+  const idx = (x, z) => z * GRID + x, inside = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID;
+  const blocked = new Uint8Array(GRID * GRID);
+  for (const k of world.ores.keys()) {
+    const [x, y, z] = k.split(',').map(Number); if (y !== 0) continue;
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) if (inside(x + dx, z + dz)) blocked[idx(x + dx, z + dz)] = 1;
+  }
+  for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) if (Math.hypot(x + .5 - SPAWN.x, z + .5 - SPAWN.z) < 10) blocked[idx(x, z)] = 1;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const s = seed + attempt * 7919, R = rng(s);
+    world.tiles.fill(TILE.ground); world.flow.fill(-1);
+    const wet = (x, z, t = TILE.water) => { if (inside(x, z) && !blocked[idx(x, z)]) { world.tiles[idx(x, z)] = t; return true; } return false; };
+    // ocean
+    for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
+      const coast = 2.5 + noise(x * .13, z * .13, s) * 6;
+      if (GRID - 1 - z < coast || (GRID - 1 - x < coast - 1 && z > GRID * .5)) wet(x, z);
+    }
+    // lakes, well inside the map so they never touch the ocean
+    const lakes = [];
+    for (let tries = 0; tries < 80 && lakes.length < 2 + (R() < .5 ? 1 : 0); tries++) {
+      const rad = 3.5 + R() * 3, cx = 14 + R() * (GRID - 32), cz = 12 + R() * (GRID - 34);
+      if (lakes.some(l => Math.hypot(l.x - cx, l.z - cz) < l.rad + rad + 8)) continue;
+      if (Math.hypot(cx - SPAWN.x, cz - SPAWN.z) - rad < 24) continue;   // keep the landing area open
+      let clear = true;
+      for (let x = Math.floor(cx - rad - 2); x <= cx + rad + 2 && clear; x++) for (let z = Math.floor(cz - rad - 2); z <= cz + rad + 2; z++) if (!inside(x, z) || blocked[idx(x, z)]) { clear = false; break; }
+      if (!clear) continue;
+      const lake = { x: cx, z: cz, rad, cells: [] };
+      for (let x = Math.floor(cx - rad - 1); x <= cx + rad + 1; x++) for (let z = Math.floor(cz - rad - 1); z <= cz + rad + 1; z++)
+        if (Math.hypot(x + .5 - cx, z + .5 - cz) / rad + (noise(x * .35, z * .35, s + 1) - .5) * .6 < 1 && wet(x, z)) lake.cells.push(idx(x, z));
+      if (lake.cells.length) lakes.push(lake);
+    }
+    // sometimes a short river out at the edge of the map; if several attempts fail the reachability check, try without one
+    if (lakes.length && attempt < 5 && R() < .6) carveRiver(lakes, s, R, blocked);
+    if (surfaceOreReachable()) return;
+  }
+  world.tiles.fill(TILE.ground); world.flow.fill(-1);   // give up on water rather than strand the player
+}
+// Rivers keep well clear of the landing site and ore, and take the shortest way in from the nearest north or
+// west edge to a lake, so they sit at the side of the map instead of across the middle of it. The path is a
+// cheapest wandering route (A* with noisy costs), one tile wide with stretches that widen to two.
+function carveRiver(lakes, s, R, ore) {
+  const idx = (x, z) => z * GRID + x;
+  const blocked = new Uint8Array(ore);
+  for (const k of world.ores.keys()) {
+    const [x, y, z] = k.split(',').map(Number); if (y !== 0) continue;
+    for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) if (x + dx >= 0 && z + dz >= 0 && x + dx < GRID && z + dz < GRID) blocked[idx(x + dx, z + dz)] = 1;
+  }
+  for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) if (Math.hypot(x + .5 - SPAWN.x, z + .5 - SPAWN.z) < 22) blocked[idx(x, z)] = 1;
+  const options = [];
+  for (const l of lakes) for (const [sx, sz] of [[l.x + (R() - .5) * 10, 0], [0, l.z + (R() - .5) * 10]]) {
+    const x = Math.max(4, Math.min(GRID - 5, Math.round(sx))), z = Math.max(4, Math.min(GRID - 5, Math.round(sz)));
+    const st = sz === 0 ? [x, 0] : [0, z];
+    if (!blocked[idx(...st)] && world.tiles[idx(...st)] === TILE.ground) options.push({ lake: l, start: idx(...st), d: Math.hypot(st[0] - l.x, st[1] - l.z) - l.rad });
+  }
+  options.sort((a, b) => a.d - b.d);
+  const pick = options[0];
+  if (!pick || pick.d > 34) return;   // only short rivers
+  const { lake, start } = pick, target = new Set(lake.cells);
+  const cost = new Float32Array(GRID * GRID).fill(Infinity), prev = new Int32Array(GRID * GRID).fill(-1), heap = [];
+  const push = (i, c) => { heap.push([c, i]); let j = heap.length - 1; while (j) { const p = (j - 1) >> 1; if (heap[p][0] <= heap[j][0]) break; [heap[p], heap[j]] = [heap[j], heap[p]]; j = p; } };
+  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let j = 0; for (;;) { const l = j * 2 + 1, r = l + 1; let m = j; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === j) break; [heap[m], heap[j]] = [heap[j], heap[m]]; j = m; } } return top; };
+  cost[start] = 0; push(start, 0);
+  let end = -1;
+  const closed = new Uint8Array(GRID * GRID);
+  while (heap.length) {
+    const i = pop()[1], c = cost[i];
+    if (closed[i]) continue;
+    closed[i] = 1;
+    if (target.has(i)) { end = i; break; }
+    const x = i % GRID, z = (i / GRID) | 0;
+    for (const [dx, dz] of DIRS) {
+      const nx = x + dx, nz = z + dz; if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
+      const j = idx(nx, nz);
+      if (blocked[j] || (world.tiles[j] !== TILE.ground && !target.has(j))) continue;
+      const step = 1 + noise(nx * .14, nz * .14, s + 3) * 4, h = Math.hypot(nx - lake.x, nz - lake.z) * .9;
+      if (c + step < cost[j]) { cost[j] = c + step; prev[j] = i; push(j, c + step + h); }
+    }
+  }
+  if (end < 0) return;
+  const path = []; for (let i = prev[end]; i >= 0; i = prev[i]) path.unshift(i);
+  path.push(end);
+  const order = new Float32Array(GRID * GRID).fill(-1), river = [];   // how far downstream each river tile is (+.5 on the main channel)
+  for (let k = 0; k < path.length - 1; k++) {
+    const i = path[k], j = path[k + 1], x = i % GRID, z = (i / GRID) | 0;
+    const d = DIRS.findIndex(([dx, dz]) => idx(x + dx, z + dz) === j);
+    const [rx, rz] = DIRS[(d + 1) % 4], wide = noise(x * .18, z * .18, s + 5) > .5;
+    for (const [cx, cz] of wide ? [[x, z], [x + rx, z + rz]] : [[x, z]]) {
+      if (cx < 0 || cz < 0 || cx >= GRID || cz >= GRID) continue;
+      const c = idx(cx, cz);
+      if (blocked[c] || world.tiles[c] === TILE.water) continue;
+      world.tiles[c] = TILE.river; world.flow[c] = d; order[c] = Math.max(order[c], k + (c === i ? .5 : 0)); river.push(c);
+    }
+  }
+  // The widened bank can point into dry land at bends: turn those tiles toward the neighbour furthest downstream.
+  for (const c of river) {
+    const x = c % GRID, z = (c / GRID) | 0, [fx, fz] = DIRS[world.flow[c]], nx = x + fx, nz = z + fz;
+    if (nx >= 0 && nz >= 0 && nx < GRID && nz < GRID && world.tiles[idx(nx, nz)] !== TILE.ground) continue;
+    let best = -1, bestOrder = order[c];
+    DIRS.forEach(([dx, dz], d) => {
+      const ax = x + dx, az = z + dz; if (ax < 0 || az < 0 || ax >= GRID || az >= GRID) return;
+      const a = idx(ax, az), o = world.tiles[a] === TILE.water ? Infinity : world.tiles[a] === TILE.river ? order[a] : -2;
+      if (o > bestOrder) { bestOrder = o; best = d; }
+    });
+    if (best >= 0) world.flow[c] = best;
+  }
+}
+// Can you walk from the landing site to every ore tile on the surface?
+function surfaceOreReachable() {
+  const seen = new Uint8Array(GRID * GRID), q = [Math.floor(SPAWN.z) * GRID + Math.floor(SPAWN.x)];
+  seen[q[0]] = 1;
+  while (q.length) {
+    const i = q.pop(), x = i % GRID, z = (i / GRID) | 0;
+    for (const [dx, dz] of DIRS) {
+      const nx = x + dx, nz = z + dz, j = nz * GRID + nx;
+      if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID || seen[j] || TILES[world.tiles[j]].liquid) continue;
+      seen[j] = 1; q.push(j);
+    }
+  }
+  for (const k of world.ores.keys()) { const [x, y, z] = k.split(',').map(Number); if (y === 0 && !seen[z * GRID + x]) return false; }
+  let land = 0, reached = 0;
+  for (let i = 0; i < GRID * GRID; i++) if (!TILES[world.tiles[i]].liquid) { land++; reached += seen[i]; }
+  return reached >= land * .97;
+}
+// Older saves had no water: dry out anything that was already built, mined or standing there.
+export function dryAround(x, z, r = 0) {
+  for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+    const tx = Math.floor(x) + dx, tz = Math.floor(z) + dz;
+    if (tx < 0 || tz < 0 || tx >= GRID || tz >= GRID) continue;
+    world.tiles[tz * GRID + tx] = TILE.ground; world.flow[tz * GRID + tx] = -1;
+  }
+}
+
+// ---------------------------------------------------------------- quickbars
+export function freshBars() {
+  S.bars = HOTBARS.map(b => { const a = Array(HOTBAR_SIZE).fill(null); (b.items || []).forEach((it, i) => { a[i] = it; }); return a; });
+  S.bar = 0; S.hotbar = S.bars[0]; S.hotbarSeen = new Set();
+}
+// Saves from before multiple bars carried one `hotbar`; it becomes the equipment bar.
+export function loadBars(bars, hotbar, bar = 0) {
+  freshBars();
+  if (Array.isArray(bars)) bars.forEach((b, i) => { if (S.bars[i] && Array.isArray(b)) b.slice(0, HOTBAR_SIZE).forEach((it, j) => { S.bars[i][j] = ITEMS[it] ? it : null; }); });
+  else if (Array.isArray(hotbar)) hotbar.slice(0, HOTBAR_SIZE).forEach((it, j) => { S.bars[0][j] = ITEMS[it] ? it : null; });
+  S.bar = bar >= 0 && bar < S.bars.length ? bar : 0; S.hotbar = S.bars[0];
 }
 
 // The Factorio start: a handful of plates, one burner drill, one furnace. Everything else you make.

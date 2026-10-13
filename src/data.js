@@ -30,7 +30,31 @@ export const ITEMS = {
   green_pack:     { name: 'Logistic pack', color: 0x4ad46a, shape: 'pack' },
   blue_pack:      { name: 'Precision pack', color: 0x4a7ae0, shape: 'pack' },
   resonance_pack: { name: 'Resonance pack', color: 0x7ef6ff, emissive: 0x1d8a99, shape: 'pack' },
+  // tools: hold one and click two poles to string a cable between them (see VOLTAGES)
+  power_cable:       { name: 'Power cable', color: 0xd88a4a, shape: 'cable', tool: 'link', reach: 32, desc: 'Click two poles of the same voltage to connect them, up to 32 tiles apart. Click a linked pair again to take it down.' },
+  transformer_cable: { name: 'Transformer cable', color: 0x6ab8ff, shape: 'cable', tool: 'link', reach: 32, transformer: true, desc: 'Connects a transformer station to a high voltage line, up to 32 tiles away.' },
 };
+
+// Ground tiles on the surface. `liquid` tiles can't be walked on or built on (except by things marked onWater).
+// `current` is how fast a flowing tile carries things, in tiles per second, along its stored flow direction.
+export const TILES = [
+  { id: 'ground', name: 'Ground', map: 0x5a4c38 },
+  { id: 'water', name: 'Water', liquid: true, map: 0x1f4a72, paint: [34, 74, 112] },
+  { id: 'river', name: 'River', liquid: true, current: 1.4, map: 0x2f6a9a, paint: [44, 96, 138] },
+];
+export const TILE = Object.fromEntries(TILES.map((t, i) => [t.id, i]));
+
+// Fluids move between neighbouring buildings that list them in `fluids` (in, out or both).
+export const FLUIDS = {
+  water: { name: 'Water', color: 0x3a8ad8 },
+  steam: { name: 'Steam', color: 0xd8dde4 },
+};
+
+// Voltage tiers. Poles of one tier wire to each other; transformer stations step between tiers.
+export const VOLTAGES = [
+  { name: 'Low voltage', wire: 0xb8683a },
+  { name: 'High voltage', wire: 0x6ab8ff },
+];
 
 // kind drives simulation + model. vol = engineering volume when active. glyph = what the aliens hear.
 export const ENTITIES = {
@@ -45,7 +69,7 @@ export const ENTITIES = {
   long_inserter:    { name: 'Long arm', kind: 'inserter', swing: .8, reach: 2, power: 20, color: 0xc8483a, vol: .75, glyph: 'swing', desc: 'Reaches two tiles.' },
   fast_inserter:    { name: 'Fast inserter', kind: 'inserter', swing: .25, reach: 1, power: 46, color: 0x3a8fd8, vol: .8, glyph: 'swing', desc: 'Swings more than twice as fast.' },
   filter_inserter:  { name: 'Filter inserter', kind: 'inserter', swing: .25, reach: 1, power: 53, color: 0xb04ad8, filter: true, vol: 1, glyph: 'swing', desc: 'Fast, and only moves the item you choose.' },
-  burner_drill:     { name: 'Burner drill', kind: 'drill', rate: .25, burner: true, color: 0x6a5a48, vol: .8, glyph: 'bore', desc: 'Mines without power. Burns coal or wood.' },
+  burner_drill:     { name: 'Burner drill', kind: 'drill', rate: .25, burner: true, fuelStacks: 1, color: 0x6a5a48, vol: .8, glyph: 'bore', desc: 'Mines without power. Burns coal or wood. Holds a full stack of fuel.' },
   drill:            { name: 'Electric drill', kind: 'drill', rate: .5, power: 90, color: 0x5d6b43, vol: 1, glyph: 'bore', desc: 'Mines the deposit under it and pushes ore forward.' },
   furnace:          { name: 'Stone furnace', kind: 'furnace', speed: 1, burner: true, color: 0x857a6d, vol: 1, glyph: 'heat', desc: 'Smelts. Burns coal.' },
   electric_furnace: { name: 'Electric furnace', kind: 'furnace', speed: 2, power: 180, color: 0x6a7480, vol: 1.5, glyph: 'heat', desc: 'Smelts twice as fast. No fuel needed.' },
@@ -55,9 +79,16 @@ export const ENTITIES = {
   wooden_chest:     { name: 'Wooden chest', kind: 'chest', cap: 16, color: 0x8a5a2c, vol: .3, glyph: 'keep', desc: '16 slots of storage.' },
   chest:            { name: 'Iron chest', kind: 'chest', cap: 32, color: 0x8b8f98, vol: .5, glyph: 'keep', desc: '32 slots of storage.' },
   frame:            { name: 'Hollow frame', kind: 'frame', color: 0x8f9aa6, vol: .75, glyph: 'hollow', desc: 'You can build inside it and on top of it.' },
-  small_pole:       { name: 'Small electric pole', kind: 'pole', supply: 2, wire: 7.5, color: 0x8a5a2c, vol: .1, glyph: 'spark', desc: 'Powers machines in a 5x5 area. Connects to poles up to 7.5 tiles away.' },
-  medium_pole:      { name: 'Medium electric pole', kind: 'pole', supply: 3, wire: 9, color: 0x8a929c, vol: .2, glyph: 'spark', desc: 'Powers a 7x7 area. Connects up to 9 tiles.' },
+  small_pole:       { name: 'Small electric pole', kind: 'pole', volt: 0, supply: 2, wire: 7.5, top: 1.26, color: 0x8a5a2c, vol: .1, glyph: 'spark', desc: 'Powers machines in a 5x5 area. Connects to poles up to 7.5 tiles away.' },
+  medium_pole:      { name: 'Medium electric pole', kind: 'pole', volt: 0, supply: 3, wire: 9, top: 1.58, color: 0x8a929c, vol: .2, glyph: 'spark', desc: 'Powers a 7x7 area. Connects up to 9 tiles.' },
+  power_line:       { name: 'Power line', kind: 'pole', volt: 1, supply: 10, wire: 24, top: 2.9, color: 0x9aa8b8, vol: .3, glyph: 'spark', desc: 'High voltage. Powers everything in a 21x21 area and wires to other lines up to 24 tiles away.' },
+  // volts[0] is the side that wires itself up; the other sides need a transformer cable
+  transformer:      { name: 'Transformer station', kind: 'pole', volts: [0, 1], supply: 1, wire: 7.5, top: 1.2, color: 0x4a6a8a, vol: .5, glyph: 'spark', desc: 'Steps power between voltages. Wires to low voltage poles nearby; link it to a power line with a transformer cable.' },
   generator:        { name: 'Steam generator', kind: 'generator', out: 900, color: 0x6b5a4a, vol: 1.5, glyph: 'spark', desc: 'Burns coal or wood. Put it next to a pole (900 kW).' },
+  // Factorio's chain: one pump feeds 20 boilers, one boiler feeds 2 engines (rates in units per second).
+  water_pump:       { name: 'Water pump', kind: 'pump', onWater: true, fluids: { water: 'out' }, rate: 1200, color: 0x3a7ab8, vol: .4, glyph: 'flow', desc: 'Place it on water. Pumps up to 1200 water/s into boilers next to it: enough for 20.' },
+  boiler:           { name: 'Boiler', kind: 'boiler', burner: true, fuelStacks: 1, fluids: { water: 'in', steam: 'out' }, heat: 1.8, steam: 60, color: 0x8a5a3a, vol: 1, glyph: 'heat', desc: 'Burns fuel to turn 60 water/s into steam (1.8 MW). Boilers and engines pass water and steam to neighbours.' },
+  steam_engine:     { name: 'Steam engine', kind: 'engine', fluids: { steam: 'in' }, out: 900, steam: 30, color: 0x7a8a6a, vol: 1.5, glyph: 'spark', desc: 'Turns 30 steam/s into up to 900 kW. Only works as hard as the network needs. Put it in a pole\'s area.' },
   solar:            { name: 'Solar panel', kind: 'solar', out: 60, color: 0x2a4a7a, vol: 1, glyph: 'shine', desc: '60 kW from starlight, forever.' },
   transmitter:      { name: 'Transmitter', kind: 'transmitter', power: 500, color: 0x4b4f5a, vol: 3, glyph: 'pulse', desc: 'Sends what it hears around it. Burns resonance packs.' },
 };
@@ -65,7 +96,8 @@ for (const [id, e] of Object.entries(ENTITIES)) ITEMS[id] = { name: e.name, colo
 
 // Stack sizes decide how many inventory / chest slots things take.
 const STACKS = { ore: 50, crystal: 50, wood: 100, plate: 100, brick: 100, lens: 100, gear: 100, cable: 200, chip: 200, coil: 100, pack: 200 };
-const MACHINE_STACKS = { belt: 100, fast_belt: 100, express_belt: 100, small_pole: 50, medium_pole: 50, lab: 10, generator: 10, transmitter: 5, frame: 50 };
+const MACHINE_STACKS = { belt: 100, fast_belt: 100, express_belt: 100, small_pole: 50, medium_pole: 50, lab: 10, generator: 10, transmitter: 5, frame: 50,
+  power_line: 20, transformer: 10, water_pump: 20, steam_engine: 10 };
 for (const [id, it] of Object.entries(ITEMS)) it.stack = it.shape === 'machine' ? (MACHINE_STACKS[id] ?? 50) : (STACKS[it.shape] ?? 50);
 
 // Things standing on the surface that you can mine by hand.
@@ -121,6 +153,13 @@ export const RECIPES = [
   R('medium_pole', { steel: 2, copper_plate: 2, iron_plate: 2 }, .5, { tech: 'electric_distribution' }),
   R('frame', { iron_plate: 4, gear: 2 }, .5),
   R('generator', { brick: 10, gear: 8, iron_plate: 5 }, 2),
+  R('water_pump', { circuit: 2, gear: 1, iron_plate: 2 }, .5),
+  R('boiler', { furnace: 1, iron_plate: 4 }, .5),
+  R('steam_engine', { gear: 8, iron_plate: 15 }, .5),
+  R('power_cable', { cable: 4, iron_plate: 1 }, .5),
+  R('power_line', { steel: 6, circuit: 4, copper_plate: 6 }, 1, { tech: 'high_voltage' }),
+  R('transformer', { steel: 10, coil: 6, circuit: 6 }, 2, { tech: 'high_voltage' }),
+  R('transformer_cable', { power_cable: 2, steel: 1 }, .5, { tech: 'high_voltage' }),
   R('solar', { steel: 5, circuit: 15, copper_plate: 5 }, 10, { tech: 'solar' }),
   R('transmitter', { adv_circuit: 20, steel: 20, lens: 10, abyssal_alloy: 10 }, 10, { tech: 'signal_theory' }),
 ];
@@ -139,6 +178,7 @@ export const TECHS = [
   T('lifts', 'Lifts', [r, g], 40, 15, ['logistics', 'logistic_science'], ['lift']),
   T('logistics2', 'Logistics 2', [r, g], 50, 15, ['logistics', 'logistic_science'], ['fast_belt']),
   T('electric_distribution', 'Electric distribution', [r, g], 40, 10, ['steel', 'logistic_science'], ['medium_pole']),
+  T('high_voltage', 'High voltage', [r, g], 60, 15, ['electric_distribution'], ['power_line', 'transformer', 'transformer_cable']),
   T('solar', 'Solar energy', [r, g], 60, 10, ['steel', 'logistic_science'], ['solar']),
   T('electric_smelting', 'Electric smelting', [r, g], 60, 15, ['steel', 'logistic_science'], ['electric_furnace']),
   T('filter_inserter', 'Filter inserter', [r, g], 60, 15, ['fast_inserter', 'logistic_science'], ['filter_inserter']),
@@ -156,6 +196,12 @@ export const TECH = Object.fromEntries(TECHS.map(t => [t.id, t]));
 
 // The quickbar starts empty and fills itself as you first get each kind of building (see ui.js).
 export const HOTBAR_SIZE = 10;
+// Quickbars, cycled with X. `auto` fills itself with new buildings; `items` is what a fresh bar starts with.
+export const HOTBARS = [
+  { name: 'Equipment', auto: true },
+  { name: 'Resources', items: ['coal', 'wood', 'iron_ore', 'copper_ore', 'stone', 'iron_plate', 'copper_plate', 'gear', 'circuit', 'steel'] },
+  { name: 'Custom' },
+];
 export const OLD_HOTBARS = [['belt', 'burner_inserter', 'inserter', 'burner_drill', 'drill', 'furnace', 'wooden_chest', 'small_pole', 'assembler', 'frame']];
 
 // The aliens only speak in mechanisms they have heard from you.

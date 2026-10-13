@@ -1,12 +1,14 @@
-import { ENTITIES, HOTBAR_SIZE, OLD_HOTBARS, TIERS, PLAYER } from './data.js';
-import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, startingInventory, layerRange, layerLockReason, itemName } from './state.js';
+import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER } from './data.js';
+import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, generateWater, startingInventory, layerRange, layerLockReason, itemName, freshBars } from './state.js';
 import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo } from './sim.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
-import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor } from './ui.js';
+import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI } from './ui.js';
 import { save, load, loadData, hasSave, wipeSave } from './save.js';
 import { doAction, host, join, netTick, leave, rememberFriends, cleanName } from './net.js';
 import './signal.js';
 import { updateAudio, sfx, getVolume, setVolume } from './audio.js';
+import { is } from './input.js';
+import { updateMap, resetMap } from './map.js';
 
 const $ = id => document.getElementById(id);
 let started = false, hover = null, building = false, rmb = false, lastPaint = null, lastPlacedCell = null;
@@ -21,7 +23,7 @@ $('nick').addEventListener('input', () => { try { localStorage.setItem(NICK_KEY,
 function enterWorld(fresh) {
   Object.assign(S.cam, { x: S.player.x, z: S.player.z, yaw: 0, yawT: 0, pitch: .82, pitchT: .82, ppu: 20, ppuT: 20 });
   S.mode = 'flat'; S.layer = 0;
-  buildTerrain(); remeshAll(); applyGhostAll(); initUI(); resize();
+  buildTerrain(); remeshAll(); applyGhostAll(); resetMap(); initUI(); resize();
   started = S.started = true; document.body.classList.add('ingame'); closeModals();
   bus.emit('players');
   if (fresh) openModal('help');
@@ -31,12 +33,14 @@ function begin(fresh) {
   S.player.name = nick();
   if (fresh) {
     Object.assign(S.player, { x: 48.5, z: 52.5, face: 0 });
+    S.seed = Math.floor(Math.random() * 1e9);   // every new world gets its own coastline, lakes and maybe a river
+    generateWater(S.seed);
     startingInventory(); generateFeatures();
-    S.hotbar = Array(HOTBAR_SIZE).fill(null); S.hotbarSeen = new Set();
+    freshBars();
   } else {
     if (!load()) { toast('save could not be read, starting fresh'); return begin(true); }
     // saves from before the quickbar filled itself carried a fixed list of things you might not own
-    if (!S.hotbar?.length || OLD_HOTBARS.some(h => h.join() === S.hotbar.join())) { S.hotbar = Array(HOTBAR_SIZE).fill(null); S.hotbarSeen = new Set(); }
+    if (OLD_HOTBARS.some(h => h.join() === S.bars[0].join())) { S.bars[0].fill(null); S.hotbarSeen = new Set(); }
   }
   enterWorld(fresh);
 }
@@ -45,7 +49,7 @@ function beginGuest(data, you) {
   loadData(data, true);
   Object.assign(S.player, { x: you.x, z: you.z, face: 0 });
   inv.loadAny(you.inv);
-  S.hotbar = Array(HOTBAR_SIZE).fill(null); S.hotbarSeen = new Set();
+  freshBars();
   enterWorld(false);
   toast(`Joined as ${S.player.name}. Enter to chat.`, 3500, 'good');
 }
@@ -137,42 +141,51 @@ addEventListener('keydown', e => {
   if (!started || e.target.tagName === 'INPUT') return;
   keys.add(e.code);
   const c = e.code;
-  if (c === 'Tab') { e.preventDefault(); toggleMode(); return; }
-  if (c === 'Escape') { if (cancelCursor()) return; if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else selectItem(null); return; }
-  if (c === 'Enter' || c === 'NumpadEnter') { e.preventDefault(); keys.clear(); openChat(); return; }
-  if (c === 'KeyF') S.player.pickup = true;
+  if (is('depthMode', c)) { e.preventDefault(); toggleMode(); return; }
+  if (c === 'Escape') {
+    if (cancelCursor()) return;
+    if (S.linkFrom) { S.linkFrom = null; renderHotbar(); return; }
+    if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else selectItem(null);
+    return;
+  }
+  if (is('chat', c)) { e.preventDefault(); keys.clear(); openChat(); return; }
+  if (is('pickup', c)) S.player.pickup = true;
   const drop = () => hover && doAction({ a: 'drop', x: hover.x, y: hover.y, z: hover.z, sel: S.sel });
-  if (e.repeat) { if (c === 'KeyZ') drop(); return; }
-  if (c.startsWith('Digit')) { const i = (+c.slice(5) + 9) % 10; const it = S.hotbar[i]; selectItem(it && it !== S.sel ? it : null); return; }
-  if (c === 'KeyE' || c === 'KeyI') { if (entityOpen()) { closeEntity(); sfx('close'); return; } sfx(S.modal === 'inventory' ? 'close' : 'open'); return toggleModal('inventory'); }
-  if (c === 'KeyT') { sfx(S.modal === 'research' ? 'close' : 'open'); return toggleModal('research'); }
-  if (c === 'KeyH' || c === 'F1') return toggleModal('help');
-  if (c === 'KeyG') return $('signal').classList.toggle('collapsed');
-  if (c === 'KeyQ') return pipette();
-  if (c === 'KeyZ') { drop(); renderHotbar(); return; }
-  if (c === 'AltLeft' || c === 'AltRight') { e.preventDefault(); S.altMode = !S.altMode; return; }
-  if (c === 'KeyR') {
+  if (e.repeat) { if (is('drop', c)) drop(); return; }
+  if (c.startsWith('Digit')) { const i = (+c.slice(5) + 9) % 10; const it = S.bars[S.bar][i]; selectItem(it && it !== S.sel ? it : null); return; }
+  if (is('inventory', c)) { if (entityOpen()) { closeEntity(); sfx('close'); return; } sfx(S.modal === 'inventory' ? 'close' : 'open'); return toggleModal('inventory'); }
+  if (is('research', c)) { sfx(S.modal === 'research' ? 'close' : 'open'); return toggleModal('research'); }
+  if (is('map', c)) { sfx(S.modal === 'map' ? 'close' : 'open'); return toggleModal('map'); }
+  if (is('help', c)) { e.preventDefault(); return toggleModal('help'); }
+  if (is('hideUI', c)) return setHideUI(!S.hideUI);
+  if (is('cycleBar', c)) return cycleBar();
+  if (is('signal', c)) return $('signal').classList.toggle('collapsed');
+  if (is('pipette', c)) return pipette();
+  if (is('drop', c)) { drop(); renderHotbar(); return; }
+  if (is('altMode', c)) { e.preventDefault(); S.altMode = !S.altMode; return; }
+  if (is('rotate', c)) {
     const ent = hover && world.ents.get(key(hover.x, hover.y, hover.z));
     if (!S.sel && ent) doAction({ a: 'rotate', x: ent.x, y: ent.y, z: ent.z, by: e.shiftKey ? -1 : 1 });
     else S.dir = (S.dir + (e.shiftKey ? 3 : 1)) % 4;
     renderHotbar(); return;
   }
-  if (c === 'KeyV') {
+  if (is('pitch', c)) {
     const kind = S.sel && ENTITIES[S.sel]?.kind;
     if (kind === 'lift') { S.dy = S.dy === -1 ? 1 : -1; toast('lift goes ' + (S.dy > 0 ? 'up' : 'down')); }
     else if (S.mode !== 'depth') toast('inserter pitch is a depth control: press Tab');
     else { S.dy = S.dy === 0 ? 1 : S.dy === 1 ? -1 : 0; toast('inserter pitch: ' + ['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]); }
     renderHotbar(); return;
   }
-  if (c === 'PageUp' || c === 'PageDown' || c === 'BracketLeft' || c === 'BracketRight') {
+  const layerKey = ['layerUp', 'layerDown', 'orbitLeft', 'orbitRight'].find(a => is(a, c));
+  if (layerKey) {
     if (S.mode !== 'depth') { toast('that is a depth control: press Tab'); return; }
-    if (c === 'PageUp') setLayer(S.layer + 1);
-    if (c === 'PageDown') setLayer(S.layer - 1);
-    if (c === 'BracketLeft') S.cam.yawT -= Math.PI / 2;
-    if (c === 'BracketRight') S.cam.yawT += Math.PI / 2;
+    if (layerKey === 'layerUp') setLayer(S.layer + 1);
+    if (layerKey === 'layerDown') setLayer(S.layer - 1);
+    if (layerKey === 'orbitLeft') S.cam.yawT -= Math.PI / 2;
+    if (layerKey === 'orbitRight') S.cam.yawT += Math.PI / 2;
   }
 });
-addEventListener('keyup', e => { keys.delete(e.code); if (e.code === 'KeyF') S.player.pickup = false; });
+addEventListener('keyup', e => { keys.delete(e.code); if (is('pickup', e.code)) S.player.pickup = false; });
 addEventListener('blur', () => { keys.clear(); S.player.pickup = false; rmb = false; building = false; });
 
 // Q: copy the hovered building into the hand, or empty the hand.
@@ -202,6 +215,7 @@ view.addEventListener('pointerdown', e => {
   if (e.button === 2) { rmb = true; return; }    // hold right-click to mine
   if (e.button !== 0 || !hover) return;
   const ent = world.ents.get(key(hover.x, hover.y, hover.z));
+  if (ITEMS[S.sel]?.tool === 'link') { linkClick(ent); return; }
   if (e.ctrlKey && ent) {                                         // Ctrl+click fast transfer
     if (distTo(hover.x, hover.z) > PLAYER.reach) { toast('out of reach'); return; }
     doAction({ a: 'fast', x: ent.x, y: ent.y, z: ent.z, sel: S.sel });
@@ -215,6 +229,16 @@ view.addEventListener('wheel', e => {
   if (e.shiftKey && S.mode === 'depth') { setLayer(S.layer + (e.deltaY < 0 ? 1 : -1)); return; }
   zoomStep(e.deltaY > 0 ? -1 : 1);
 }, { passive: true });
+
+// With a cable in hand: click one pole, then another. Clicking a linked pair again takes the cable down.
+function linkClick(ent) {
+  if (ent?.kind !== 'pole') { toast('cables go between poles: click a pole'); sfx('error'); return; }
+  if (distTo(ent.x, ent.z) > PLAYER.reach) { toast('out of reach'); sfx('error'); return; }
+  const at = [ent.x, ent.y, ent.z], from = S.linkFrom;
+  S.linkFrom = from ? null : at;
+  if (from && from.join() !== at.join()) { doAction({ a: 'link', kind: S.sel, from, to: at }); sfx('place'); }
+  renderHotbar();
+}
 
 function paintAt(c, first) {
   const k = key(c.x, c.y, c.z), ent = world.ents.get(k), def = S.sel && ENTITIES[S.sel];
@@ -270,6 +294,7 @@ function frame() {
       netTick(dt);
       if (building && hover && (!lastPaint || key(hover.x, hover.y, hover.z) !== key(lastPaint.x, lastPaint.y, lastPaint.z))) paintAt(hover, false);
       updateUI(dt, hover);
+      updateMap(dt);
     } else if (!started) S.cam.yawT += dt * .06;
     updateAudio(dt);
     render(dt, started ? hover : null);

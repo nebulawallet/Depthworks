@@ -1,6 +1,6 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER } from './data.js';
-import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify } from './state.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS } from './data.js';
+import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater } from './state.js';
 const isClient = () => S.net.role === 'client';
 
 export const SPACING = .25;
@@ -40,8 +40,11 @@ export function smeltRecipe(it) {
 export function canAccept(e, it, manual = false) {
   if (!e || !it) return false;
   const def = ENTITIES[e.type];
-  if (usesFuel(e) && ITEMS[it]?.fuel && e.kind !== 'chest')
-    return (e.fuel === 0 || e.fuelType === it) && e.fuel < (manual ? ITEMS[it].stack : 5);
+  if (usesFuel(e) && ITEMS[it]?.fuel && e.kind !== 'chest') {
+    // fuelStacks: the fuel slot holds whole stacks of whatever fuel is in it, from inserters too
+    const cap = def.fuelStacks ? stackOf(it) * def.fuelStacks : manual ? stackOf(it) : 5;
+    return (e.fuel === 0 || e.fuelType === it) && e.fuel < cap;
+  }
   switch (e.kind) {
     case 'chest': return e.store.room(it) > 0;
     case 'furnace': {
@@ -91,7 +94,7 @@ function give(t, it) {
 // Burner energy: pull fuel when needed, return 1 while burning, 0 when out.
 function burner(e, want, mw, dt) {
   if (!want) return 0;
-  if (e.burn <= 0 && e.fuel > 0) { e.burn += ITEMS[e.fuelType].fuel; if (--e.fuel === 0) e.fuelType = null; }
+  if (e.burn <= 0 && e.fuel > 0) { e.burn += ITEMS[e.fuelType].fuel; bump('used', e.fuelType); if (--e.fuel === 0) e.fuelType = null; }
   if (e.burn <= 0) return 0;
   e.burn -= mw * dt; return 1;
 }
@@ -184,55 +187,150 @@ function beltTick(b, dt) {
 }
 
 // ---------------------------------------------------------------- power networks
-// Poles join into networks by wire reach; machines inside a pole's supply area join that network.
+// Poles join into networks by wire reach, by overlapping supply areas, and by cables strung by hand, but only
+// within one voltage (VOLTAGES). Machines inside a pole's supply area join that network.
 export const nets = [];
+export const voltsOf = def => def.volts || [def.volt ?? 0];
+export const autoVolt = def => voltsOf(def)[0];   // the voltage a pole wires itself up on
+const producerKind = e => e.kind === 'generator' || e.kind === 'solar' || e.kind === 'engine';
 export function rebuildPower() {
   const poles = [...world.ents.values()].filter(e => e.kind === 'pole');
   const parent = new Map(poles.map(p => [p, p]));
   const find = p => { while (parent.get(p) !== p) { parent.set(p, parent.get(parent.get(p))); p = parent.get(p); } return p; };
+  const join = (a, b) => parent.set(find(a), find(b));
   const wires = [], seen = new Set();
   for (const a of poles) {
-    const near = poles.filter(b => b !== a).map(b => [b, Math.hypot(a.x - b.x, a.z - b.z, a.y - b.y)])
-      .filter(([b, d]) => d <= Math.min(ENTITIES[a.type].wire, ENTITIES[b.type].wire)).sort((p, q) => p[1] - q[1]).slice(0, 5);
+    const da = ENTITIES[a.type], va = autoVolt(da);
+    const same = poles.filter(b => b !== a && autoVolt(ENTITIES[b.type]) === va);
+    const near = same.map(b => [b, Math.hypot(a.x - b.x, a.z - b.z, a.y - b.y)])
+      .filter(([b, d]) => d <= Math.min(da.wire, ENTITIES[b.type].wire)).sort((p, q) => p[1] - q[1]).slice(0, 5);
     for (const [b] of near) {
       const id = a.id < b.id ? a.id + '-' + b.id : b.id + '-' + a.id;
-      parent.set(find(a), find(b));
-      if (!seen.has(id)) { seen.add(id); wires.push([a, b]); }
+      join(a, b);
+      if (!seen.has(id)) { seen.add(id); wires.push([a, b, va]); }
     }
+    for (const b of same) {   // overlapping coverage is one network even without a wire
+      const s = da.supply + ENTITIES[b.type].supply;
+      if (Math.abs(a.x - b.x) <= s && Math.abs(a.z - b.z) <= s && Math.abs(a.y - b.y) <= 1) join(a, b);
+    }
+  }
+  const cables = [];
+  for (const l of world.links) {
+    const a = world.ents.get(key(...l.a)), b = world.ents.get(key(...l.b));
+    if (a?.kind !== 'pole' || b?.kind !== 'pole') continue;
+    join(a, b); cables.push([a, b, l.kind]);
   }
   const byRoot = new Map();
   nets.length = 0;
   for (const p of poles) {
     const r = find(p);
-    if (!byRoot.has(r)) { const n = { id: nets.length, poles: [], demand: 0, nextDemand: 0, capacity: 0, sat: 0, produced: 0 }; byRoot.set(r, n); nets.push(n); }
+    if (!byRoot.has(r)) { const n = { id: nets.length, poles: [], demand: 0, nextDemand: 0, capacity: 0, sat: 0, produced: 0, gens: [], engines: [], solar: 0, consumers: 0 }; byRoot.set(r, n); nets.push(n); }
     p.net = byRoot.get(r); p.net.poles.push(p);
   }
   for (const e of world.ents.values()) {
     if (e.kind === 'pole') continue;
     e.net = null;
-    if (!(isElectric(e) || e.kind === 'generator' || e.kind === 'solar')) continue;
+    if (!(isElectric(e) || producerKind(e))) continue;
     for (const p of poles) {
       const s = ENTITIES[p.type].supply;
       if (Math.abs(e.x - p.x) <= s && Math.abs(e.z - p.z) <= s && Math.abs(e.y - p.y) <= 1) { e.net = p.net; break; }
     }
+    if (e.net && isElectric(e)) e.net.consumers++;
   }
-  world.wires = wires; world.powerDirty = false;
+  rebuildFluids();
+  world.wires = wires; world.cables = cables; world.powerDirty = false;
   bus.emit('power');
+}
+
+// ---------------------------------------------------------------- fluids
+// Buildings that list a fluid in `fluids` pass it to neighbours on the same layer that list it too. Each
+// connected group shares one pool: there is no volume, only how much the group can supply and wants.
+export const fluidNets = [];
+function rebuildFluids() {
+  fluidNets.length = 0;
+  for (const e of world.ents.values()) if (ENTITIES[e.type].fluids) e.fnet = {};
+  for (const fluid of Object.keys(FLUIDS)) {
+    const seen = new Set();
+    for (const e of world.ents.values()) {
+      if (!ENTITIES[e.type].fluids?.[fluid] || seen.has(e)) continue;
+      const f = { fluid, members: [], cap: 0, want: 0, used: 0, ratio: 0 }, q = [e];
+      seen.add(e);
+      while (q.length) {
+        const c = q.pop(); f.members.push(c); c.fnet[fluid] = f;
+        for (const [dx, dz] of DIRS) {
+          const n = world.ents.get(key(c.x + dx, c.y, c.z + dz));
+          if (n && !seen.has(n) && ENTITIES[n.type].fluids?.[fluid]) { seen.add(n); q.push(n); }
+        }
+      }
+      fluidNets.push(f);
+    }
+  }
+}
+const fuelled = e => e.burn > 0 || e.fuel > 0;
+// What the steam chain could deliver this tick, before anything is drawn: pumps cap water, fuelled boilers
+// turn the water they get into steam, and engines can run as hard as the steam allows.
+function steamSupply() {
+  for (const f of fluidNets) { f.cap = 0; f.want = 0; f.used = 0; }
+  for (const f of fluidNets) if (f.fluid === 'water') for (const e of f.members) {
+    const def = ENTITIES[e.type];
+    if (e.kind === 'pump') f.cap += def.rate;
+    else if (e.kind === 'boiler' && fuelled(e)) f.want += def.steam;
+  }
+  for (const f of fluidNets) if (f.fluid === 'steam') {
+    for (const e of f.members) {
+      const def = ENTITIES[e.type];
+      if (e.kind === 'boiler') { const w = e.fnet.water; e.water = fuelled(e) && w && w.want ? Math.min(1, w.cap / w.want) : 0; f.cap += def.steam * e.water; }
+      else if (e.kind === 'engine' && e.net) f.want += def.steam;
+    }
+    f.ratio = f.want ? Math.min(1, f.cap / f.want) : 0;
+  }
+}
+// Boilers make only the steam engines drew, and pumps only the water boilers drew (Factorio's load model).
+function steamTick(dt) {
+  for (const f of fluidNets) if (f.fluid === 'steam') {
+    const boilers = f.members.filter(e => e.kind === 'boiler');
+    const k = f.cap ? Math.min(1, f.used / f.cap) : 0;
+    for (const b of boilers) {
+      const def = ENTITIES[b.type], steam = def.steam * (b.water || 0) * k;
+      b.load = steam / def.steam;
+      burner(b, steam > 0, def.heat * b.load, dt);
+      if (b.fnet.water) b.fnet.water.used += steam;
+      if (!fuelled(b)) b.status = 'out of fuel';
+      else if (!b.water) b.status = b.fnet.water?.cap ? 'not enough water' : 'no water: put a water pump next to it';
+      else if (steam > 0) { b.status = 'making steam'; b.lastActive = S.T; }
+      else b.status = 'idle (no engine needs steam)';
+    }
+  }
+  for (const f of fluidNets) if (f.fluid === 'water') for (const p of f.members) {
+    if (p.kind !== 'pump') continue;
+    p.load = f.cap ? f.used / f.cap : 0;
+    if (p.load > 0) { p.status = 'pumping'; p.lastActive = S.T; } else p.status = f.members.some(e => e.kind === 'boiler') ? 'full (nothing drawing water)' : 'full: put a boiler next to it';
+  }
 }
 function powerTick(dt) {
   for (const n of nets) {
     const used = Math.min(n.nextDemand, n.capacity);
-    let fromGen = Math.max(0, used - n.solar * ENTITIES.solar.out);
-    const live = n.gens.filter(g => g.burn > 0 || g.fuel > 0);
+    const fromGen = Math.max(0, used - n.solar * ENTITIES.solar.out);
+    const live = n.gens.filter(fuelled);
+    // every producer runs at the same fraction of what it could give
+    const could = live.length * ENTITIES.generator.out + n.engines.reduce((s, e) => s + e.cap, 0), k = could ? Math.min(1, fromGen / could) : 0;
     for (const g of live) {
-      const share = fromGen / live.length;
+      const share = ENTITIES.generator.out * k;
       burner(g, share > 0, share / 1000, dt);
       g.load = share / ENTITIES.generator.out;
       if (share > 0) { g.lastActive = S.T; g.status = 'generating'; } else g.status = 'idle (no demand)';
     }
     for (const g of n.gens) if (!live.includes(g)) { g.load = 0; g.status = 'out of fuel'; }
+    for (const e of n.engines) {
+      const def = ENTITIES[e.type], share = e.cap * k;
+      e.load = share / def.out;
+      e.fnet.steam.used += e.load * def.steam;
+      if (share > 0) { e.lastActive = S.T; e.status = 'generating'; } else e.status = e.cap ? 'idle (no demand)' : 'no steam';
+    }
     n.demand = n.nextDemand; n.produced = used; n.nextDemand = 0;
   }
+  for (const e of world.ents.values()) if (e.kind === 'engine' && !e.net) { e.load = 0; e.status = 'not connected: put it in a pole\'s area'; }
+  steamTick(dt);
 }
 
 // ---------------------------------------------------------------- machines
@@ -242,7 +340,7 @@ function craftTick(e, dt, speed, energy) {
   if (!e.crafting) {
     for (const [k, n] of Object.entries(r.out)) if ((e.out[k] || 0) + n > Math.max(20, n * 4)) { e.status = 'output full'; return false; }
     for (const [k, n] of Object.entries(r.in)) if ((e.inp[k] || 0) < n) { e.status = 'waiting for ingredients'; return false; }
-    for (const [k, n] of Object.entries(r.in)) { e.inp[k] -= n; if (!e.inp[k]) delete e.inp[k]; }
+    for (const [k, n] of Object.entries(r.in)) { e.inp[k] -= n; if (!e.inp[k]) delete e.inp[k]; bump('used', k, n); }
     e.crafting = true; e.prog = 0;
   }
   if (energy <= 0) { e.status = 'no power'; return true; }
@@ -309,7 +407,7 @@ function tickEntity(e, dt) {
         e.unit = null; e.prog = 0;
         if ((S.research.progress[tech.id] || 0) >= tech.count) break;
         if (!Object.keys(tech.cost).every(p => (e.inp[p] || 0) >= 1)) { e.status = 'missing science packs'; break; }
-        for (const p in tech.cost) { if (--e.inp[p] === 0) delete e.inp[p]; }
+        for (const p in tech.cost) { if (--e.inp[p] === 0) delete e.inp[p]; bump('used', p); }
         e.unit = tech.id;
       }
       demand(def.power);
@@ -329,8 +427,13 @@ function tickEntity(e, dt) {
       const moving = !!e.held || e.t > 0;
       let energy;
       if (def.burner) {
-        // leech: a burner inserter that runs dry keeps the fuel it is carrying
-        if (e.burn <= 0 && !e.fuel && e.held && ITEMS[e.held]?.fuel) { e.burn += ITEMS[e.held].fuel; e.held = null; }
+        // burner inserters fuel themselves: fuel in the hand goes into their own empty fuel slot, and a dry
+        // one reaches for fuel behind it before anything else
+        if (e.held && ITEMS[e.held]?.fuel && !e.fuel) { e.fuel = 1; e.fuelType = e.held; e.held = null; e.lastActive = S.T; }
+        else if (!e.held && e.burn <= 0 && !e.fuel && src && src.kind !== 'inserter') {
+          const it = take(src, f => !!ITEMS[f]?.fuel);
+          if (it) { e.fuel = 1; e.fuelType = it; e.lastActive = S.T; }
+        }
         energy = burner(e, moving, .1, dt) || (!moving && (e.burn > 0 || e.fuel > 0) ? 1 : 0);
       } else { if (moving) demand(def.power); energy = sat; }
       const spd = dt / e.swing * energy;
@@ -355,6 +458,7 @@ function tickEntity(e, dt) {
       if (!e.charging) {
         if ((e.inp.resonance_pack || 0) < 1) { e.status = 'needs resonance packs'; break; }
         if (--e.inp.resonance_pack === 0) delete e.inp.resonance_pack;
+        bump('used', 'resonance_pack');
         e.charging = true; e.prog = 0;
       }
       demand(def.power);
@@ -426,7 +530,7 @@ export function queueCraft(rid, times = 1) {
   const plan = planCraft(rid, times);
   if (!plan) return false;
   const inv = actor.inv, before = inv.counts();
-  for (const k of new Set([...before.keys(), ...plan.sim.keys()])) { const d = (plan.sim.get(k) || 0) - (before.get(k) || 0); if (d < 0) inv.remove(k, -d); else if (d > 0) inv.add(k, d); }
+  for (const k of new Set([...before.keys(), ...plan.sim.keys()])) { const d = (plan.sim.get(k) || 0) - (before.get(k) || 0); if (d < 0) { inv.remove(k, -d); bump('used', k, -d); } else if (d > 0) inv.add(k, d); }
   actor.craft.push(...plan.queue); if (actor.local) bus.emit('inv'); return true;
 }
 export function cancelCraft(i) {
@@ -454,7 +558,7 @@ export const playerCell = () => ({ x: Math.floor(actor.x), z: Math.floor(actor.z
 export const distTo = (x, z) => Math.hypot(x + .5 - actor.x, z + .5 - actor.z);
 // Solid shapes on the surface: machines are squares, trees and rocks are circles. Belts and hollow frames are walkable.
 function solidShape(cx, cz) {
-  if (cx < 0 || cz < 0 || cx >= GRID || cz >= GRID) return { sq: .5 };
+  if (cx < 0 || cz < 0 || cx >= GRID || cz >= GRID || isWater(cx, cz)) return { sq: .5 };   // no swimming
   const f = world.feats.get(key(cx, 0, cz));
   if (f) return { r: f.type === 'tree' ? .22 : .42 };
   const e = world.ents.get(key(cx, 0, cz));
@@ -554,6 +658,7 @@ export function dropAt(c, it) {
   if (distTo(c.x, c.z) > PLAYER.reach) { notify('toast', 'out of reach'); return false; }
   const b = world.ents.get(key(c.x, c.y, c.z));
   if (isBeltLike(b)) { if (!dropOnBelt(b, it)) return false; }
+  else if (c.y === 0 && isWater(c.x, c.z)) { notify('toast', 'it would sink'); return false; }
   else if (c.y === 0) world.ground.push({ type: it, x: c.x + .3 + Math.random() * .4, z: c.z + .3 + Math.random() * .4 });
   else return false;
   invAdd(it, -1); return true;
@@ -579,13 +684,15 @@ export function simulate(dt, input = { mx: 0, mz: 0 }) {
   S.T += dt;
   if (world.beltDirty) rebuildBelts();
   if (world.powerDirty !== false) rebuildPower();
-  for (const n of nets) { n.gens = []; n.solar = 0; }
+  for (const n of nets) { n.gens = []; n.engines = []; n.solar = 0; }
+  steamSupply();
   for (const e of world.ents.values()) {
     if (!e.net) continue;
     if (e.kind === 'generator') e.net.gens.push(e); else if (e.kind === 'solar') e.net.solar++;
+    else if (e.kind === 'engine') { e.cap = ENTITIES[e.type].out * (e.fnet?.steam?.ratio || 0); e.net.engines.push(e); }
   }
   for (const n of nets) {
-    n.capacity = n.solar * ENTITIES.solar.out + n.gens.filter(g => g.burn > 0 || g.fuel > 0).length * ENTITIES.generator.out;
+    n.capacity = n.solar * ENTITIES.solar.out + n.gens.filter(fuelled).length * ENTITIES.generator.out + n.engines.reduce((s, e) => s + e.cap, 0);
     n.sat = n.demand > 0 ? Math.min(1, n.capacity / n.demand) : (n.capacity > 0 ? 1 : 0);
   }
   for (const b of world.beltOrder) beltTick(b, dt);
@@ -619,6 +726,8 @@ export function canPlace(type, x, y, z, dir = S.dir, dy = S.dy, opts = {}) {
   if (y > 0 && !world.frames.has(key(x, y - 1, z))) return 'nothing to stand on: put a hollow frame below';
   const k = key(x, y, z), def = ENTITIES[type];
   if (y === 0 && world.feats.has(k)) return `a ${FEATURES[world.feats.get(k).type].name.toLowerCase()} is in the way: hold right-click to mine it`;
+  const wet = y === 0 && isWater(x, z);
+  if (def.onWater ? !wet : wet) return def.onWater ? `the ${def.name.toLowerCase()} goes on water` : 'you can\'t build on water';
   if (type === 'frame') return world.frames.has(k) ? 'occupied' : y >= LAYER_MAX ? 'too high' : null;
   const ex = world.ents.get(k);
   if (ex) {
@@ -678,6 +787,7 @@ export function removeAt(x, y, z) {
   if (e) {
     world.ents.delete(k);
     refundContents(e); invGive(e.type);
+    if (e.kind === 'pole') dropLinksAt(x, y, z, true);
     if (e.pair) { e.pair.pair = null; }
     if (e.items) world.beltDirty = true;
     world.powerDirty = true;
@@ -690,6 +800,53 @@ export function removeAt(x, y, z) {
   }
   return null;
 }
+// ---------------------------------------------------------------- cables between poles
+const samePos = (p, x, y, z) => p[0] === x && p[1] === y && p[2] === z;
+export function dropLinksAt(x, y, z, refund) {
+  const keep = world.links.filter(l => !samePos(l.a, x, y, z) && !samePos(l.b, x, y, z));
+  if (keep.length === world.links.length) return;
+  if (refund) for (const l of world.links) if (!keep.includes(l)) invGive(l.kind);
+  world.links = keep; world.powerDirty = true; bus.emit('links');
+}
+// String a cable (an item with tool: 'link') from pole a to pole b, or take down the one already there.
+// Power cables join poles of one voltage; transformer cables join a transformer station to its other voltage.
+export function linkPoles(kind, a, b) {
+  const tool = ITEMS[kind];
+  if (tool?.tool !== 'link') return 'that is not a cable';
+  const A = world.ents.get(key(...a)), B = world.ents.get(key(...b));
+  if (A?.kind !== 'pole' || B?.kind !== 'pole' || A === B) return 'cables go between two poles';
+  const i = world.links.findIndex(l => (samePos(l.a, ...a) && samePos(l.b, ...b)) || (samePos(l.a, ...b) && samePos(l.b, ...a)));
+  if (i >= 0) { const [l] = world.links.splice(i, 1); invGive(l.kind); world.powerDirty = true; bus.emit('links'); return 'cable taken down'; }
+  if (distTo(B.x, B.z) > PLAYER.reach + 1) return 'out of reach';
+  if (Math.hypot(A.x - B.x, A.z - B.z, A.y - B.y) > tool.reach) return `too far: a ${tool.name.toLowerCase()} reaches ${tool.reach} tiles`;
+  const da = ENTITIES[A.type], db = ENTITIES[B.type];
+  if (tool.transformer) {
+    const [t, o] = da.volts?.length > 1 ? [da, db] : db.volts?.length > 1 ? [db, da] : [];
+    if (!t || !t.volts.slice(1).some(v => voltsOf(o).includes(v))) return 'transformer cables go from a transformer station to a line of its other voltage';
+  } else if (autoVolt(da) !== autoVolt(db)) return 'different voltages: link them through a transformer station';
+  if (!invGet(kind)) return `no ${tool.name.toLowerCase()} in inventory`;
+  invAdd(kind, -1);
+  world.links.push({ kind, a: [A.x, A.y, A.z], b: [B.x, B.y, B.z] });
+  world.powerDirty = true; bus.emit('links');
+  return null;
+}
+
+// ---------------------------------------------------------------- map markers and areas (shared by everyone)
+const markName = s => String(s ?? '').replace(/[<>]/g, '').trim().slice(0, 32);
+const markColor = c => /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#ffd23f';
+const cell = v => Math.max(0, Math.min(GRID - 1, Math.floor(+v || 0)));
+export function editMarks(op) {
+  const M = world.marks, find = id => M.markers.find(m => m.id === id) || M.areas.find(a => a.id === id);
+  if (op.do === 'add' && op.kind === 'marker') M.markers.push({ id: M.next++, x: cell(op.x), z: cell(op.z), name: markName(op.name) || 'Marker', color: markColor(op.color) });
+  else if (op.do === 'add' && op.kind === 'area') {
+    const [x0, x1] = [cell(op.x0), cell(op.x1)].sort((a, b) => a - b), [z0, z1] = [cell(op.z0), cell(op.z1)].sort((a, b) => a - b);
+    M.areas.push({ id: M.next++, x0, z0, x1, z1, name: markName(op.name) || 'Area', color: markColor(op.color) });
+  } else if (op.do === 'edit') { const m = find(op.id); if (m) { if (op.name !== undefined) m.name = markName(op.name) || m.name; if (op.color) m.color = markColor(op.color); } }
+  else if (op.do === 'remove') { M.markers = M.markers.filter(m => m.id !== op.id); M.areas = M.areas.filter(a => a.id !== op.id); }
+  else return;
+  bus.emit('marks');
+}
+
 export function rotateEntity(e, by = 1) {
   if (!e || e.kind === 'frame') return;
   e.dir = (e.dir + by + 4) % 4;
@@ -757,7 +914,7 @@ export function entSlots(e) {
 function entSlotAccept(e, id, it) {
   if (!it) return 0;
   const st = stackOf(it);
-  if (id === 'fuel') return ITEMS[it]?.fuel && (!e.fuel || e.fuelType === it) ? st - e.fuel : 0;
+  if (id === 'fuel') return ITEMS[it]?.fuel && (!e.fuel || e.fuelType === it) ? Math.max(0, st * (ENTITIES[e.type].fuelStacks || 1) - e.fuel) : 0;
   if (id === 'src') {
     const r = smeltRecipe(it), cur = firstKey(e.inp);
     if (!r || (cur && cur !== it) || (e.crafting && e.recipe !== r.id)) return 0;

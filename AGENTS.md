@@ -18,25 +18,30 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
   frames stall.
 - **Co-op test:** open two tabs. In tab A set a nickname, then Host co-op → New world, and read `depthworks.S.net.code`.
   In tab B use Join co-op with that code, then drive actions with `depthworks.doAction(...)` and compare `world` on both tabs.
-- Clear test data afterwards: the keys are `depthworks.save.v3`, `depthworks.nick` and `depthworks.volume` in localStorage.
+- Clear test data afterwards: the keys are `depthworks.save.v3`, `depthworks.nick`, `depthworks.volume` and `depthworks.keys` in localStorage.
 
 ## Architecture
 
 | File | Role |
 |---|---|
-| `src/data.js` | Pure data: items (stack sizes), entities, recipes, techs, tiers, the alien script |
-| `src/state.js` | Shared mutable state `S`, `world` maps, `Inventory` class, players, `actor`, the event `bus`, world generation |
-| `src/sim.js` | All game rules: belts, machines, power networks, research, precision, crafting, the engineer, building, slots |
+| `src/data.js` | Pure data: items (stack sizes), entities, recipes, techs, tiers, tiles, fluids, voltages, quickbars, the alien script |
+| `src/state.js` | Shared mutable state `S`, `world` maps and tile grids, `Inventory` class, players, `actor`, the event `bus`, world generation (ores, trees, water, rivers), quickbars |
+| `src/sim.js` | All game rules: belts, machines, power networks and voltages, cables, fluids and the steam chain, research, precision, crafting, the engineer, building, slots, map marks |
 | `src/net.js` | Co-op: `doAction`, hosting/joining, op broadcast, snapshots, chat |
 | `src/save.js` | Save/load and the entity JSON format (shared with net sync) |
 | `src/scene.js` | Rendering: camera, post pass, terrain, clutter, particles, entity meshes, picking, arrows, preview |
 | `src/models.js` | Procedural models, toon materials, ghost/preview variants, engineer, inserter IK |
-| `src/ui.js` | HUD and panels (HTML), drag and drop, chat, name tags, goals |
+| `src/ui.js` | HUD and panels (HTML), quickbars, hide UI, key binding screen, drag and drop, chat, name tags, goals |
+| `src/map.js` | Minimap and big map: chunk-cached drawing, view modes (terrain, resources, production, power), markers and areas |
+| `src/input.js` | Key bindings: actions, defaults, rebinding (saved in localStorage) |
 | `src/main.js` | Boot, title/lobby, input, game loop |
 | `src/audio.js`, `src/signal.js`, `src/icons.js` | Sound, the alien conversation, pixel icons |
 
 Modules talk through direct imports plus `bus` events (`placed`, `removed`, `remesh`, `ore`, `feat`, `research`,
-`tier`, `pulse`, `signal`, `inv`, `players`, `chat`, …).
+`tier`, `pulse`, `signal`, `inv`, `players`, `chat`, `power`, `links`, `marks`, `openmap`, …).
+
+Keys go through `input.js`: check `is('action', e.code)` (or `isDown` for held keys), never a hard-coded code,
+so players can rebind them. Add new actions to `ACTIONS`.
 
 ## Rules that keep things working
 
@@ -56,15 +61,23 @@ Modules talk through direct imports plus `bus` events (`placed`, `removed`, `rem
 5. **Inventories are slots.** Use `Inventory` methods (`count`, `add`, `remove`, `room`, `slotPut`, `slotTake`,
    `toList`, `loadAny`), not Map APIs. Machine slots come from `entSlots(e)`, and moving between any two
    slots is `moveItems(from, to, n)` / `shiftMove(from, entPos)`.
-6. **Render layers:** layer 0 is the outlined, shadowed, raycastable world. Layer 1 is overlays: ghosts,
-   previews, arrows, wires, sprites, brackets and supply areas, with no outlines and no picking. Put any new
-   overlay on layer 1.
+6. **Render layers:** layer 0 is the outlined, shadowed, raycastable world. Layer 1 is world overlays with no
+   outlines and no picking: ghosts, wires, water surfaces, pulse rings. Layer 2 (`UI_LAYER` in `models.js`) is
+   interface drawn in the world: cursor brackets, build preview, arrows, grids, supply areas, power plugs, alt-mode
+   icons. Hide UI (H) stops rendering layer 2 and hides every page element except the game view, so new HTML and
+   new layer-2 overlays hide with it automatically. Put interface overlays on `UI_LAYER`.
 7. **Materials:** use `M(color, opts)` (cached toon material). Animated emissive parts need their own material
    instance (see `glowMat`). Static parts go through `st()` in `makeMesh` so they get merged and baked with AO.
 8. **Coordinates:** cells are `(x, y, z)`, where `y` is the layer (−2..4) and the ground is layer 0. `DIRS[0]` is
    north (−z), and directions go clockwise. Models are built facing north and rotated by `-dir * π/2`.
 9. **Pixel camera:** zoom is whole low-res pixels per tile (`ZOOMS` in `scene.js`). Don't introduce
    continuous camera zoom or yaw outside the existing tweens, or the image starts shimmering.
+10. **Water is a tile grid,** not entities: `world.tiles` (index into `TILES`) and `world.flow` (a `DIRS` index, or −1)
+    on the surface. Use `isWater`, `tileAt` and `flowAt`. Liquid tiles block walking and building except for things
+    marked `onWater`. If you change `generateWater`, bump `WATER_GEN` so older saves get their water redone.
+11. **Power** is rebuilt from scratch whenever `world.powerDirty` is set: poles of one voltage join by wire reach,
+    overlapping supply areas and hand-strung `world.links`; fluids join neighbouring buildings that list them in
+    `fluids`. Engines, boilers and pumps only work as hard as what draws on them.
 
 ## Style
 

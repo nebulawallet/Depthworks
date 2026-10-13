@@ -2,10 +2,11 @@
 // sub-pixel offset is applied by sliding the canvas, so motion stays smooth without shimmering), then a
 // post pass draws pixel outlines from depth and normal edges and upscales with hard pixels.
 import * as THREE from 'three';
-import { ENTITIES, ITEMS } from './data.js';
-import { S, world, bus, key, DIRS, GRID, rng } from './state.js';
-import { makeMesh, disposeMesh, setGhost, setPreview, poseInserter, itemGeo, itemMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M } from './models.js';
-import { canPlace, visibleOnBelt, distTo, mineTargetAt } from './sim.js';
+import { ENTITIES, ITEMS, TILES, VOLTAGES } from './data.js';
+import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater } from './state.js';
+import { makeMesh, disposeMesh, setGhost, setPreview, poseInserter, itemGeo, itemMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER } from './models.js';
+import { canPlace, visibleOnBelt, distTo, mineTargetAt, voltsOf } from './sim.js';
+import { isDown } from './input.js';
 
 export const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(1);
@@ -105,6 +106,38 @@ function oreGrid(y) {
   if (!L.ore) { L.ore = new Int16Array(GRID * GRID).fill(-1); for (const [k, o] of world.ores) { const [x, yy, z] = k.split(',').map(Number); if (yy === y) L.ore[z * GRID + x] = ORE_IDS.indexOf(o.type); } }
   return L.ore;
 }
+// How far each water tile is from land (0 on land), for darker deep water.
+function depthGrid() {
+  const L = layers[0];
+  if (L.depth) return L.depth;
+  const d = L.depth = new Float32Array(GRID * GRID), q = [];
+  for (let i = 0; i < GRID * GRID; i++) { if (TILES[world.tiles[i]].liquid) d[i] = Infinity; else q.push(i); }
+  for (let h = 0; h < q.length; h++) {
+    const i = q[h], x = i % GRID, z = (i / GRID) | 0;
+    for (const [dx, dz] of DIRS) { const nx = x + dx, nz = z + dz, j = nz * GRID + nx; if (nx >= 0 && nz >= 0 && nx < GRID && nz < GRID && d[j] > d[i] + 1) { d[j] = d[i] + 1; q.push(j); } }
+  }
+  return d;
+}
+const SAND = [126, 110, 78];
+// Water and shore for one surface pixel, blended across tile centres like ore so coasts come out organic.
+// Returns null for dry ground well away from water.
+function waterPixel(wx, wz, c) {
+  const fx = wx - .5, fz = wz - .5, x0 = Math.floor(fx), z0 = Math.floor(fz), tx = fx - x0, tz = fz - z0, dg = depthGrid();
+  let field = 0, depth = 0, best = 0, bw = 0;
+  for (const [cx, cz, w] of [[x0, z0, (1 - tx) * (1 - tz)], [x0 + 1, z0, tx * (1 - tz)], [x0, z0 + 1, (1 - tx) * tz], [x0 + 1, z0 + 1, tx * tz]]) {
+    const t = tileAt(cx, cz);
+    if (!TILES[t].liquid) continue;
+    field += w; depth += w * Math.min(4, dg[cz * GRID + cx]);
+    if (w > bw) { bw = w; best = t; }
+  }
+  if (!field) return null;
+  field += (vnoise(wx * 3.7, wz * 3.7) - .5) * .3;
+  if (field < .32) return null;
+  if (field < .5) { const k = (field - .32) / .18; return c.map((v, i) => v * (1 - k) + SAND[i] * k); }   // wet sand
+  const p = TILES[best].paint, dk = 1 - Math.min(3, depth / Math.max(.01, field)) * .1, ripple = (vnoise(wx * 2.3, wz * 5.1) - .5) * 14;
+  const foam = field < .56 && !TILES[best].current ? 18 : 0;   // a light rim on still shores only
+  return p.map(v => v * dk + ripple + foam);
+}
 function paintTile(y, x, z) {
   const L = layers[y], g = L.ctx, pal = PALETTES[y], og = oreGrid(y);
   const at = (tx, tz) => tx < 0 || tz < 0 || tx >= GRID || tz >= GRID ? -1 : og[tz * GRID + tx];
@@ -126,6 +159,7 @@ function paintTile(y, x, z) {
       c = c.map((v, k) => v * .82 + oc[k] * .05);
       if (grain < .16) c = oc.map(v => v * (.6 + grain * 2.4));
     }
+    if (y === 0) { const w = waterPixel(wx, wz, c); if (w) c = w; }
     c = c.map(v => Math.round(v / 4) * 4);
     const i = (py * TP + px) * 4; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
   }
@@ -183,7 +217,7 @@ function buildClutter() {
   // ground cover: tufts and pebbles on empty surface tiles
   const tufts = [], pebbles = [];
   for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
-    const k = key(x, 0, z); if (world.ores.has(k) || world.feats.has(k)) continue;
+    const k = key(x, 0, z); if (world.ores.has(k) || world.feats.has(k) || isWater(x, z)) continue;
     const h = hash2(x * 3 + 1, z * 5 + 2);
     if (h < .2) tufts.push([k, x, z, h]); else if (h > .93) pebbles.push([k, x, z, h]);
   }
@@ -230,8 +264,52 @@ function buildClutter() {
 let featMeshes = [];
 const featIndex = new Map();
 
+// ---------------------------------------------------------------- water surface
+// Painted water lives in the terrain texture; on top, a thin animated sheet: slow glints on still water and
+// streaks that run along each river tile's flow direction (quads are built facing north and rotated, like models).
+function streakTexture(still) {
+  const c = document.createElement('canvas'); c.width = c.height = 16;
+  const g = c.getContext('2d'), R = rng(still ? 5 : 9);
+  if (still) for (let i = 0; i < 4; i++) { g.fillStyle = 'rgba(200,228,255,.45)'; g.fillRect(Math.floor(R() * 15), Math.floor(R() * 16), 2, 1); }
+  else for (const [x, y, len] of [[5, 2, 4], [10, 9, 3]]) {   // two soft ripples, brighter at the head
+    for (let k = 0; k < len; k++) { g.fillStyle = `rgba(190,224,255,${.18 + .3 * (1 - k / len)})`; g.fillRect(x, y + k, 1, 1); }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.magFilter = tex.minFilter = THREE.NearestFilter; tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const waterTex = { still: streakTexture(true), flow: streakTexture(false) };
+const waterMeshes = [];
+function buildWater() {
+  waterMeshes.forEach(m => { scene.remove(m); m.dispose(); }); waterMeshes.length = 0;
+  const still = [], flowing = [];
+  for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
+    const t = TILES[world.tiles[z * GRID + x]];
+    if (t.liquid) (world.flow[z * GRID + x] >= 0 ? flowing : still).push([x, z, world.flow[z * GRID + x]]);
+  }
+  const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  // ripples only on some tiles, each a narrow strip nudged sideways and mirrored, so the current reads
+  // without a pattern repeating tile after tile
+  const sparse = flowing.filter(([x, z]) => hash2(x * 7 + 3, z * 5 + 1) < .5);
+  for (const [list, tex, op, w] of [[still, waterTex.still, .3, 1], [sparse, waterTex.flow, .8, .55]]) {
+    if (!list.length) continue;
+    const im = new THREE.InstancedMesh(quad, new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide }), list.length);
+    list.forEach(([x, z, d], i) => {
+      const a = -Math.max(0, d) * Math.PI / 2, side = w < 1 ? (hash2(x, z * 3) - .5) * .4 : 0;
+      im.setMatrixAt(i, _m.compose(V(x + .5 + Math.cos(a) * side, .012, z + .5 - Math.sin(a) * side), _q.setFromEuler(_e.set(0, a, 0)), V((hash2(x, z) < .5 ? -1 : 1) * w, 1, 1)));
+    });
+    im.layers.set(1); im.frustumCulled = false; scene.add(im); waterMeshes.push(im);
+  }
+}
+const RIVER_SPEED = TILES.find(t => t.current)?.current ?? 1;
+function animateWater(dt) {
+  waterTex.flow.offset.y -= RIVER_SPEED * dt;   // texture v runs north on an unrotated quad
+  waterTex.still.offset.x += .08 * dt; waterTex.still.offset.y = Math.sin(S.T * .4) * .15;
+}
+
 export function buildTerrain() {
   for (const o of [slab, ...Object.values(underPlanes)]) if (o) scene.remove(o);
+  buildWater();
   topMat = new THREE.MeshToonMaterial({ map: makeLayer(0), gradientMap: toonRamp });
   slab = new THREE.Mesh(new THREE.BoxGeometry(GRID, 2, GRID), [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]);
   slab.position.set(GRID / 2, -1, GRID / 2); slab.receiveShadow = true; scene.add(slab);
@@ -258,7 +336,7 @@ bus.on('feat', (x, z) => {
 
 const layerGrid = new THREE.GridHelper(GRID, GRID, 0x7ef6ff, 0x7ef6ff);
 layerGrid.material.transparent = true; layerGrid.material.opacity = .06; layerGrid.material.depthWrite = false;
-layerGrid.position.set(GRID / 2, .01, GRID / 2); layerGrid.visible = false; layerGrid.layers.set(1); scene.add(layerGrid);
+layerGrid.position.set(GRID / 2, .01, GRID / 2); layerGrid.visible = false; layerGrid.layers.set(UI_LAYER); scene.add(layerGrid);
 
 // ---------------------------------------------------------------- particles (smoke, dust, chips)
 const PMAX = 900, parts = [];
@@ -324,6 +402,7 @@ export function applyGhostAll() {
   const see1 = depth && S.layer < -1;
   see(underPlanes[-1].material, see1, .15); underPlanes[-1].layers.set(see1 ? 1 : 0);
   for (const im of clutterMeshes) im.visible = !depth || im.userData.y <= S.layer;
+  for (const im of waterMeshes) im.visible = !see0;
   layerGrid.visible = depth; layerGrid.position.y = S.layer + .012;
 }
 
@@ -377,26 +456,85 @@ function updateItems() {
 }
 
 // ---------------------------------------------------------------- power wires + supply areas
-const wireMat = new THREE.LineBasicMaterial({ color: 0xb8683a });
-let wireLines = null, supplyMesh = null;
-const poleTop = p => (p.type === 'small_pole' ? 1.26 : 1.58) + p.y;
+// Auto wires take their voltage's colour; cables strung by hand take the cable item's colour.
+const wireMats = new Map(), wireMat = color => wireMats.get(color) || wireMats.set(color, new THREE.LineBasicMaterial({ color })).get(color);
+const wireLines = [];
+let supplyMesh = null;
+const poleTop = p => (ENTITIES[p.type].top ?? 1.26) + p.y;
+const SUPPLY_COLORS = [0x4aa3ff, 0xa8d8ff];
 bus.on('power', () => {
-  if (wireLines) { scene.remove(wireLines); wireLines.geometry.dispose(); }
-  const pts = [];
-  for (const [a, b] of world.wires || []) {
+  wireLines.forEach(l => { scene.remove(l); l.geometry.dispose(); }); wireLines.length = 0;
+  const byColor = new Map();
+  const span = (a, b, color, offs) => {
+    const pts = byColor.get(color) || byColor.set(color, []).get(color);
     const ax = a.x + .5, az = a.z + .5, bx = b.x + .5, bz = b.z + .5, ay = poleTop(a), by = poleTop(b);
     const N = 8, sag = Math.hypot(ax - bx, az - bz) * .06;
-    for (const off of [-.24, .24]) for (let i = 0; i < N; i++) for (const t of [i / N, (i + 1) / N])
+    for (const off of offs) for (let i = 0; i < N; i++) for (const t of [i / N, (i + 1) / N])
       pts.push(ax + off + (bx - ax) * t, ay + (by - ay) * t - Math.sin(t * Math.PI) * sag, az + (bz - az) * t);
+  };
+  for (const [a, b, v] of world.wires || []) span(a, b, VOLTAGES[v]?.wire ?? 0xb8683a, v > 0 ? [-.46, 0, .46] : [-.24, .24]);
+  for (const [a, b, kind] of world.cables || []) span(a, b, ITEMS[kind]?.color ?? 0xd88a4a, [0]);
+  for (const [color, pts] of byColor) {
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const l = new THREE.LineSegments(geo, wireMat(color)); l.layers.set(1); scene.add(l); wireLines.push(l);
   }
-  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  wireLines = new THREE.LineSegments(geo, wireMat); wireLines.layers.set(1); scene.add(wireLines);
   if (supplyMesh) { scene.remove(supplyMesh); supplyMesh.dispose(); }
   const poles = [...world.ents.values()].filter(e => e.kind === 'pole');
-  supplyMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x4aa3ff, transparent: true, opacity: .13, depthWrite: false }), Math.max(1, poles.length));
-  poles.forEach((p, i) => { const s = ENTITIES[p.type].supply * 2 + 1; supplyMesh.setMatrixAt(i, new THREE.Matrix4().compose(V(p.x + .5, p.y + .03, p.z + .5), new THREE.Quaternion(), V(s, 1, s))); });
-  supplyMesh.count = poles.length; supplyMesh.visible = false; supplyMesh.layers.set(1); scene.add(supplyMesh);
+  supplyMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .13, depthWrite: false }), Math.max(1, poles.length));
+  poles.forEach((p, i) => {
+    const s = ENTITIES[p.type].supply * 2 + 1;
+    supplyMesh.setMatrixAt(i, new THREE.Matrix4().compose(V(p.x + .5, p.y + .03, p.z + .5), new THREE.Quaternion(), V(s, 1, s)));
+    supplyMesh.setColorAt(i, _c.setHex(SUPPLY_COLORS[voltsOf(ENTITIES[p.type])[0]] ?? SUPPLY_COLORS[0]));
+  });
+  supplyMesh.count = poles.length; supplyMesh.visible = false; supplyMesh.layers.set(UI_LAYER); supplyMesh.frustumCulled = false; scene.add(supplyMesh);
 });
+
+// ---------------------------------------------------------------- unpowered machines
+// Factorio's flashing plug: red when a machine has no power at all, yellow when its network is short.
+const boltTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 16; const g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(3, 1, 10, 14);
+  g.fillStyle = '#fff';
+  for (const [x, y, w] of [[8, 2, 3], [7, 3, 3], [6, 4, 3], [5, 5, 3], [4, 6, 6], [6, 7, 4], [7, 8, 3], [6, 9, 3], [6, 10, 2], [5, 11, 2], [5, 12, 1]]) g.fillRect(x, y, w, 1);
+  const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const boltMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(.62, .62), new THREE.MeshBasicMaterial({ map: boltTex, transparent: true, depthTest: false, depthWrite: false }), 512);
+boltMesh.layers.set(UI_LAYER); boltMesh.renderOrder = 30; boltMesh.frustumCulled = false; boltMesh.count = 0; boltMesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(boltMesh);
+export const powerProblem = e => {
+  const def = ENTITIES[e.type];
+  if (!def.power && e.kind !== 'engine' && e.kind !== 'generator' && e.kind !== 'solar') return null;
+  if (!e.net) return 'none';
+  if (def.power && e.net.capacity <= 0) return 'none';
+  if (def.power && e.net.demand > e.net.capacity) return 'low';
+  return null;
+};
+function updateBolts() {
+  let n = 0;
+  if (S.started) {
+    const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
+    for (const e of world.ents.values()) {
+      if (n >= 512 || e.ghost || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R) continue;
+      const p = powerProblem(e); if (!p) continue;
+      _m.compose(V(e.x + .5, e.y + heightOf(e) + .35, e.z + .5), camera.quaternion, V(1, 1, 1));
+      boltMesh.setMatrixAt(n, _m); boltMesh.setColorAt(n++, _c.setHex(p === 'none' ? 0xff4a3a : 0xffc83a));
+    }
+  }
+  boltMesh.count = n; boltMesh.material.opacity = .55 + .45 * Math.abs(Math.sin(S.T * 3));
+  boltMesh.instanceMatrix.needsUpdate = true; if (boltMesh.instanceColor) boltMesh.instanceColor.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------- cable being strung
+const linkLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(0, 0, 0), V(0, 0, 0)]), new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }));
+linkLine.layers.set(UI_LAYER); linkLine.renderOrder = 22; linkLine.frustumCulled = false; scene.add(linkLine);
+function updateLinkLine(hover) {
+  const from = S.linkFrom && world.ents.get(key(...S.linkFrom));
+  linkLine.visible = !!(from && hover);
+  if (!linkLine.visible) return;
+  const p = linkLine.geometry.attributes.position, to = world.ents.get(key(hover.x, hover.y, hover.z));
+  p.setXYZ(0, from.x + .5, poleTop(from), from.z + .5);
+  p.setXYZ(1, hover.x + .5, to?.kind === 'pole' ? poleTop(to) : hover.y + .1, hover.z + .5); p.needsUpdate = true;
+  linkLine.material.color.setHex(ITEMS[S.sel]?.color ?? 0xffffff);
+}
 
 // ---------------------------------------------------------------- the engineers
 export let playerMesh = makePlayer(S.player.color);
@@ -429,7 +567,7 @@ const _w = new THREE.Vector3();
 const ORE_CHIP = { ore: null, tree: 0x6b4a2a, rock: 0x8f8576, ent: 0x9aa1ad, frame: 0x9aa1ad };
 let chipT = 0;
 function animate(dt) {
-  animateTreads(dt);
+  animateTreads(dt); animateWater(dt);
   for (const e of world.ents.values()) {
     const P = e.parts; if (!P) continue;
     const active = S.T - e.lastActive < .4;
@@ -456,10 +594,13 @@ function animate(dt) {
       case 'lab': if (active) P.ring.rotation.y += dt * 2; P.glow.emissiveIntensity = active ? 1 + .5 * Math.sin(S.T * 4) : .2; break;
       case 'generator': P.fly.rotation.x += dt * 10 * (e.load || 0); P.glow.emissiveIntensity = (e.load || 0) > 0 ? 1.3 : .05; smoking = (e.load || 0) > .05; dark = true; break;
       case 'transmitter': P.spin.rotation.y += dt * .5; P.glow.emissiveIntensity = .3 + e.prog * 3; break;
+      case 'boiler': P.glow.emissiveIntensity = (e.load || 0) > 0 ? 1.4 + .5 * Math.sin(S.T * 21 + e.x) : .05; smoking = (e.load || 0) > .05; dark = true; break;
+      case 'engine': P.fly.rotation.x += dt * 12 * (e.load || 0); P.glow.emissiveIntensity = (e.load || 0) > 0 ? .4 + e.load : .05; break;
+      case 'pump': P.fly.rotation.x += dt * 9 * (e.load || 0); break;
     }
     if (smoking && !e.ghost) {
       e.smokeT = (e.smokeT || 0) + dt;
-      if (e.smokeT > (e.kind === 'generator' ? .5 / Math.max(.2, e.load) : .4)) {
+      if (e.smokeT > (e.kind === 'generator' || e.kind === 'boiler' ? .5 / Math.max(.2, e.load) : .4)) {
         e.smokeT = 0; _w.set(...P.smoke); e.mesh.localToWorld(_w); smoke(_w.x, _w.y, _w.z, dark);
       }
     }
@@ -492,10 +633,10 @@ function animate(dt) {
 export const keys = new Set();
 export function moveInput() {
   let fx = 0, fz = 0;
-  if (keys.has('KeyW') || keys.has('ArrowUp')) fz++;
-  if (keys.has('KeyS') || keys.has('ArrowDown')) fz--;
-  if (keys.has('KeyD') || keys.has('ArrowRight')) fx++;
-  if (keys.has('KeyA') || keys.has('ArrowLeft')) fx--;
+  if (isDown('up', keys)) fz++;
+  if (isDown('down', keys)) fz--;
+  if (isDown('right', keys)) fx++;
+  if (isDown('left', keys)) fx--;
   if (!fx && !fz) return { mx: 0, mz: 0 };
   const sy = Math.sin(S.cam.yaw), cy = Math.cos(S.cam.yaw), mx = -sy * fz + cy * fx, mz = -cy * fz - sy * fx, l = Math.hypot(mx, mz);
   return { mx: mx / l, mz: mz / l };
@@ -578,7 +719,7 @@ function bracketGeo() {
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); return g;
 }
 const marker = new THREE.LineSegments(bracketGeo(), new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }));
-marker.renderOrder = 20; marker.layers.set(1); scene.add(marker);
+marker.renderOrder = 20; marker.layers.set(UI_LAYER); scene.add(marker);
 // ---------------------------------------------------------------- input / output arrows
 // Flat arrows on the ground, pointing north before rotation (same convention as machine models).
 const arrowGeo = (() => {
@@ -597,7 +738,7 @@ function mergeTwo(a, b) {
 }
 function overlayInst(geo, n, depthTest, opacity) {
   const im = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ transparent: true, opacity, depthTest, depthWrite: false }), n);
-  im.layers.set(1); im.renderOrder = depthTest ? 5 : 25; im.frustumCulled = false; im.count = 0;
+  im.layers.set(UI_LAYER); im.renderOrder = depthTest ? 5 : 25; im.frustumCulled = false; im.count = 0;
   im.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(im); return im;
 }
 const hintArrows = overlayInst(arrowGeo, 64, false, .9);     // what you are holding / hovering
@@ -617,7 +758,7 @@ function cross(tx, y, tz) {
   _m.compose(V(tx + .5, y + .06, tz + .5), _q.identity(), V(1, 1, 1));
   hintCross.setMatrixAt(nX, _m); _c.setHex(COL.BAD); hintCross.setColorAt(nX++, _c);
 }
-const SINKS = new Set(['furnace', 'assembler', 'lab', 'chest', 'generator', 'transmitter']);
+const SINKS = new Set(['furnace', 'assembler', 'lab', 'chest', 'generator', 'transmitter', 'boiler']);
 const beltish = e => !!(e && e.items);
 // Draw the inputs and outputs of a machine of `type` at (x, y, z) facing `dir`. Returns a hint sentence.
 function ioHints(type, x, y, z, dir, dy) {
@@ -642,7 +783,22 @@ function ioHints(type, x, y, z, dir, dy) {
     if (kind === 'splitter') { arrow(x + DIRS[(dir + 3) % 4][0], y, z + DIRS[(dir + 3) % 4][1], (dir + 3) % 4, COL.FLOW, .75); arrow(x + DIRS[(dir + 1) % 4][0], y, z + DIRS[(dir + 1) % 4][1], (dir + 1) % 4, COL.FLOW, .75); }
     return '';
   }
+  // fluids pass between side-by-side buildings: point at the neighbours that would join up
+  const fluidHint = () => {
+    for (let d = 0; d < 4; d++) {
+      const [ox, oz] = DIRS[d], n = at(x + ox, y, z + oz), nf = n && ENTITIES[n.type].fluids;
+      if (nf && Object.keys(def.fluids).some(f => nf[f])) arrow(x + ox, y, z + oz, d, COL.OK, .8);
+    }
+  };
+  if (kind === 'pump') {
+    fluidHint();
+    return y === 0 && !isWater(x, z) ? 'Water pumps go on water, next to the shore' : 'Water pump: boilers touching it get water (one pump is enough for 20)';
+  }
+  if (kind === 'engine') { fluidHint(); return 'Steam engine: put it against a boiler or another engine, inside a pole\'s supply area'; }
+  if (kind === 'pole' && def.volts) return 'Transformer: wires itself to low voltage poles. Hold a transformer cable and click it, then a power line';
+  if (kind === 'pole' && voltsOf(def)[0] > 0) return 'Power line: high voltage, wires to other lines. Step it down with a transformer station';
   if (SINKS.has(kind)) {
+    if (kind === 'boiler') fluidHint();
     let feeding = 0, free = 0, beltInto = false;
     for (let d = 0; d < 4; d++) {
       const [ox, oz] = DIRS[d], tx = x + ox, tz = z + oz, n = at(tx, y, tz), inward = (d + 2) % 4;
@@ -656,6 +812,7 @@ function ioHints(type, x, y, z, dir, dy) {
     }
     if (beltInto) return `Belts can't load machines directly: put an inserter between the belt and the ${def.name.toLowerCase()}`;
     if (kind === 'generator') return feeding ? 'Generator is being fed' : 'Feed coal or wood with an inserter on a blue arrow, then put a pole next to it';
+    if (kind === 'boiler') return 'Boiler: fuel it (inserter or by hand), give it a water pump on one side and steam engines on another';
     if (kind === 'chest') return 'Chest: inserters can load or unload it from any side';
     return feeding ? `${feeding} input${feeding > 1 ? 's' : ''} feeding it (green). Inserters taking out show orange` : `Feed it with an inserter on one of the blue arrows, pointing in`;
   }
@@ -677,14 +834,15 @@ function updateAltArrows() {
 }
 
 let preview = null, previewKey = '';
-const electricKind = sel => !!sel && (ENTITIES[sel].kind === 'pole' || !!ENTITIES[sel].power || ['generator', 'solar'].includes(ENTITIES[sel].kind));
-const heightOf = e => e ? (e.items ? .22 : e.kind === 'inserter' ? .45 : e.kind === 'pole' ? 1.35 : e.kind === 'frame' ? 1 : .75) : .04;
+const electricKind = sel => !!sel && (ENTITIES[sel].kind === 'pole' || !!ENTITIES[sel].power || ['generator', 'solar', 'engine'].includes(ENTITIES[sel].kind));
+const heightOf = e => e ? (e.items ? .22 : e.kind === 'inserter' ? .45 : e.kind === 'pole' ? (ENTITIES[e.type]?.top ?? 1.26) + .09 : e.kind === 'frame' ? 1 : e.kind === 'boiler' ? .95 : .75) : .04;
 function updatePreview(hover) {
   nH = nX = 0; S.hint = '';
   updateHover(hover);
   hintArrows.count = nH; hintCross.count = nX;
   for (const im of [hintArrows, hintCross]) { im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }
   updateAltArrows();
+  updateBolts();
 }
 function updateHover(hover) {
   const sel = S.sel && ENTITIES[S.sel] ? S.sel : null;
@@ -704,7 +862,10 @@ function updateHover(hover) {
   }
   marker.visible = !!hover;
   if (preview) preview.visible = !!hover;
-  if (supplyMesh) supplyMesh.visible = electricKind(sel) || (!!hover && world.ents.get(key(hover.x, hover.y, hover.z))?.kind === 'pole');
+  // powered areas show while placing anything electric, holding a cable, or pointing at / inspecting a pole
+  if (supplyMesh) supplyMesh.visible = electricKind(sel) || ITEMS[S.sel]?.tool === 'link' || S.openEnt?.kind === 'pole'
+    || (!!hover && world.ents.get(key(hover.x, hover.y, hover.z))?.kind === 'pole');
+  updateLinkLine(hover);
   if (!hover) return;
   const { x, y, z } = hover, real = world.ents.get(key(x, y, z)), ent = real || (y === 0 && world.feats.get(key(x, 0, z)) ? { kind: 'feat' } : null);
   const pulse = 1 + Math.sin(S.T * 6) * .025;
@@ -730,15 +891,15 @@ export function render(dt, hover) {
   updatePreview(hover);
   animate(dt);
   updateItems();
-  // colour + depth
-  camera.layers.set(0); camera.layers.enable(1);
+  // colour + depth (the interface layer is left out while the UI is hidden)
+  camera.layers.set(0); camera.layers.enable(1); if (!S.hideUI) camera.layers.enable(UI_LAYER);
   renderer.setRenderTarget(rtColor); renderer.render(scene, camera);
   // normals for crease highlights (world layer only, no shadows recomputed)
   const bg = scene.background; scene.background = null; scene.overrideMaterial = normalMat;
   camera.layers.set(0); renderer.shadowMap.autoUpdate = false;
   renderer.setRenderTarget(rtNormal); renderer.setClearColor(0x8080ff, 1); renderer.clear(); renderer.render(scene, camera);
   renderer.shadowMap.autoUpdate = true; scene.overrideMaterial = null; scene.background = bg; renderer.setClearColor(0x000000, 1);
-  camera.layers.enable(1);
+  camera.layers.enable(1); camera.layers.enable(UI_LAYER);
   // outline + upscale
   renderer.setRenderTarget(null); renderer.render(postScene, postCam);
 }
