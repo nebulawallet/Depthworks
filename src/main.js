@@ -185,6 +185,9 @@ function pipette() {
 
 // ---------------------------------------------------------------- mouse
 const view = renderer.domElement;
+// Browsers can take the GPU away from a background tab. Three.js recovers, but say so if the view goes still.
+view.addEventListener('webglcontextlost', () => { console.warn('WebGL context lost'); toast('The graphics were reset. They should come back in a moment.', 5000); });
+view.addEventListener('webglcontextrestored', () => console.warn('WebGL context restored'));
 const setMouse = e => { setMouseFromEvent(e); S.mouseClient = { x: e.clientX, y: e.clientY }; };
 // With a building in hand you aim at the floor tile; with an empty hand you aim at whatever is drawn under the cursor.
 const pick = () => S.sel && ENTITIES[S.sel] ? pickCell() : pickTarget();
@@ -245,22 +248,34 @@ function paintAt(c, first) {
 // ---------------------------------------------------------------- loop
 let last = performance.now();
 let lastFrame = 0;
+// An error inside the loop used to stop requestAnimationFrame for good: the picture froze while the HTML
+// panels kept working. Now the loop always continues, and the error is shown so it can be reported.
+let lastErrT = -1e9;
+function reportError(err) {
+  console.error(err);
+  const n = performance.now();
+  if (n - lastErrT < 5000) return;
+  lastErrT = n;
+  try { toast(`Error: ${err?.message || err}. Details are in the console (F12).`, 6000); } catch { /* UI not ready */ }
+}
 function frame() {
-  const n = performance.now(), dt = Math.min(.05, (n - last) / 1000); last = n; lastFrame = n;
-  if (started && S.modal !== 'title') {
-    hover = pick();
-    S.player.mineCell = rmb && !S.modal ? hover : null;
-    const typing = document.activeElement?.tagName === 'INPUT';
-    simulate(dt, S.modal || typing ? { mx: 0, mz: 0 } : moveInput());
-    netTick(dt);
-    if (building && hover && (!lastPaint || key(hover.x, hover.y, hover.z) !== key(lastPaint.x, lastPaint.y, lastPaint.z))) paintAt(hover, false);
-    updateUI(dt, hover);
-  } else if (!started) S.cam.yawT += dt * .06;
-  updateAudio(dt);
-  render(dt, started ? hover : null);
-  renderNametags();
-  drawSignalCanvases();
   requestAnimationFrame(frame);
+  const n = performance.now(), dt = Math.min(.05, (n - last) / 1000); last = n; lastFrame = n;
+  try {
+    if (started && S.modal !== 'title') {
+      hover = pick();
+      S.player.mineCell = rmb && !S.modal ? hover : null;
+      const typing = document.activeElement?.tagName === 'INPUT';
+      simulate(dt, S.modal || typing ? { mx: 0, mz: 0 } : moveInput());
+      netTick(dt);
+      if (building && hover && (!lastPaint || key(hover.x, hover.y, hover.z) !== key(lastPaint.x, lastPaint.y, lastPaint.z))) paintAt(hover, false);
+      updateUI(dt, hover);
+    } else if (!started) S.cam.yawT += dt * .06;
+    updateAudio(dt);
+    render(dt, started ? hover : null);
+    renderNametags();
+    drawSignalCanvases();
+  } catch (err) { reportError(err); }
 }
 // Browsers stop animation frames in background or covered tabs. A worker's timer keeps ticking, so a host
 // who alt-tabs keeps the world running (and friends stay in sync) instead of freezing everyone.
@@ -270,8 +285,11 @@ try {
   beat.onmessage = () => {
     const n = performance.now(), dt = Math.min(.25, (n - lastBeat) / 1000); lastBeat = n;
     if (n - lastFrame < 200 || !started || S.net.role === 'solo') return;   // animation frames are running: nothing to do
-    for (let left = dt; left > 1e-4; left -= .05) simulate(Math.min(.05, left), { mx: 0, mz: 0 });
-    netTick(dt);
+    S.player.mineCell = null;   // the cursor isn't on the game while it's in the background
+    try {
+      for (let left = dt; left > 1e-4; left -= .05) simulate(Math.min(.05, left), { mx: 0, mz: 0 });
+      netTick(dt);
+    } catch (err) { reportError(err); }
   };
 } catch { /* workers unavailable: the game simply pauses in the background */ }
 

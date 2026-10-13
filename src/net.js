@@ -21,11 +21,21 @@ export const netInfo = () => ({ role: S.net.role, code: S.net.code, players: [..
 const makeCode = () => Array.from({ length: 6 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
 export const cleanName = n => (String(n || '').replace(/[^\p{L}\p{N} _\-.]/gu, '').trim().slice(0, 16)) || 'Engineer';
 const invToList = inv => inv.toList();
+// Messages travel as JSON text. PeerJS's binary packer throws on Infinity, and that exception stopped the game
+// loop (the host's picture froze for good). JSON writes such numbers as null; the warning names the field.
+let badNumberWarned = false;
+const finite = (k, v) => {
+  if (typeof v !== 'number' || Number.isFinite(v)) return v;
+  if (!badNumberWarned) { badNumberWarned = true; console.warn(`co-op: "${k}" was ${v}, sent as null`); }
+  return null;
+};
+const send = (conn, m) => { if (conn?.open) conn.send(JSON.stringify(m, finite)); };
+const recv = m => typeof m === 'string' ? JSON.parse(m) : m;
 
 // ---------------------------------------------------------------- actions (same entry point for everyone)
 // Solo and host apply immediately; a friend's browser forwards to the host.
 export function doAction(op) {
-  if (S.net.role === 'client') { net.conn?.open && net.conn.send({ t: 'act', op }); return null; }
+  if (S.net.role === 'client') { send(net.conn, { t: 'act', op }); return null; }
   return applyAction(op);
 }
 function applyAction(op) {
@@ -57,15 +67,19 @@ export function host({ onReady, onError }) {
   let tries = 0;
   const attempt = () => {
     const code = makeCode(), peer = new Peer(PREFIX + code, { debug: 0 });
-    peer.on('open', () => { net.peer = peer; S.net.code = code; onReady?.(code); bus.emit('players'); });
+    peer.on('open', () => { if (net.peer === peer) return; net.peer = peer; S.net.code = code; onReady?.(code); bus.emit('players'); });
     peer.on('error', err => {
-      if (err.type === 'unavailable-id' && tries++ < 5) { peer.destroy(); attempt(); return; }
+      // A taken code only matters before the game is up. Later it means the broker still remembers us after a
+      // dropped link (common after tabbing out): destroying the peer here would kick every friend and change the code.
+      if (err.type === 'unavailable-id' && !net.peer && tries++ < 5) { peer.destroy(); attempt(); return; }
+      if (net.peer === peer) return;   // broker trouble after hosting started: friends stay connected, 'disconnected' retries
       if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') bus.emit('toast', 'co-op: trouble reaching the matchmaking server, retrying');
-      else if (!net.peer) onError?.(err.message || String(err.type));
+      else onError?.(err.message || String(err.type));
     });
-    peer.on('disconnected', () => { try { peer.reconnect(); } catch { /* already destroyed */ } });
+    // The broker link only matters for new friends joining. Reconnect gently, not in a tight loop.
+    peer.on('disconnected', () => setTimeout(() => { if (peer.disconnected && !peer.destroyed) try { peer.reconnect(); } catch { /* destroyed meanwhile */ } }, 3000));
     peer.on('connection', conn => {
-      conn.on('data', m => onHostMessage(conn, m));
+      conn.on('data', m => onHostMessage(conn, recv(m)));
       conn.on('close', () => dropFriend(conn.peer));
       conn.on('error', () => dropFriend(conn.peer));
     });
@@ -90,7 +104,7 @@ function onHostMessage(conn, m) {
     }
     S.players.set(p.id, p);
     net.conns.set(conn.peer, { conn, p, cache: new Map() });
-    conn.send({ t: 'welcome', id: p.id, name, color: p.color, world: serialize(), you: { x: p.x, z: p.z, inv: invToList(p.inv) } });
+    send(conn, { t: 'welcome', id: p.id, name, color: p.color, world: serialize(), you: { x: p.x, z: p.z, inv: invToList(p.inv) } });
     systemChat(`${name} joined${back ? ' (welcome back)' : ''}`);
     bus.emit('players');
     return;
@@ -130,7 +144,7 @@ bus.on('research', id => op({ o: 'research', id }));
 bus.on('pulse', e => op({ o: 'pulse', x: e.x, y: e.y, z: e.z }));
 bus.on('signal', kind => op({ o: 'signal', kind, sig: signalJSON() }));
 // Feedback meant for a friend (their toasts, floating text, pickup sounds) goes to their browser only.
-bus.on('remote', (p, ev, args) => { const c = net.conns.get(p.id); if (c?.conn.open) c.conn.send({ t: 'fx', ev, args }); });
+bus.on('remote', (p, ev, args) => { const c = net.conns.get(p.id); if (c) send(c.conn, { t: 'fx', ev, args }); });
 
 const signalJSON = () => ({ ...S.signal, taught: [...S.signal.taught], seen: [...S.signal.seen] });
 const playerJSON = p => ({ id: p.id, name: p.name, color: p.color, x: +p.x.toFixed(3), z: +p.z.toFixed(3), face: +(p.face || 0).toFixed(2), walk: +(p.walk || 0).toFixed(2),
@@ -139,7 +153,7 @@ const playerJSON = p => ({ id: p.id, name: p.name, color: p.color, x: +p.x.toFix
 function entState(e) { const o = entToJSON(e); o.st = e.status; o.age = Math.min(9, Math.round((S.T - e.lastActive) * 4) / 4); if (e.t !== undefined) o.ph = +e.t.toFixed(3); return o; }
 function hostTick(dt) {
   if (!net.conns.size) { net.ops.length = 0; return; }
-  if (net.ops.length) { const ops = net.ops.splice(0); for (const { conn } of net.conns.values()) if (conn.open) conn.send({ t: 'ops', ops }); }
+  if (net.ops.length) { const ops = net.ops.splice(0); for (const { conn } of net.conns.values()) send(conn, { t: 'ops', ops }); }
   if ((net.stateT += dt) < .15) return;
   net.stateT = 0;
   const key0 = (net.keyT += .15) > 3; if (key0) net.keyT = 0;          // every 3 s, a full correction
@@ -161,7 +175,7 @@ function hostTick(dt) {
     }
     for (const k of c.cache.keys()) if (!states.has(k)) c.cache.delete(k);
     const p = c.p;
-    c.conn.send({ ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null } });
+    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null } });
   }
 }
 
@@ -178,8 +192,8 @@ export function join(code, name, { onWelcome, onError }) {
   peer.on('open', () => {
     const conn = peer.connect(PREFIX + code.toUpperCase().trim(), { reliable: true });
     net.conn = conn;
-    conn.on('open', () => conn.send({ t: 'hello', name: cleanName(name) }));
-    conn.on('data', m => { if (m.t === 'welcome') { done = true; clearTimeout(timer); } onClientMessage(m); });
+    conn.on('open', () => send(conn, { t: 'hello', name: cleanName(name) }));
+    conn.on('data', raw => { const m = recv(raw); if (m.t === 'welcome') { done = true; clearTimeout(timer); } onClientMessage(m); });
     conn.on('close', () => { if (done) bus.emit('netlost'); else fail('The host closed the connection.'); });
   });
   peer.on('error', err => fail(err.type === 'peer-unavailable' ? 'No game found with that code.' : 'Connection problem: ' + (err.message || err.type)));
@@ -269,13 +283,13 @@ function applyState(m) {
 // ---------------------------------------------------------------- chat
 export function chat(text) {
   text = String(text || '').trim().slice(0, 200); if (!text) return;
-  if (S.net.role === 'client') { net.conn?.open && net.conn.send({ t: 'chat', text }); return; }
+  if (S.net.role === 'client') { send(net.conn, { t: 'chat', text }); return; }
   sendChat(S.player, text);
 }
 function sendChat(p, text) {
   const m = { t: 'chat', name: p.name, color: p.color, text: String(text).slice(0, 200) };
   bus.emit('chat', m);
-  for (const { conn } of net.conns.values()) if (conn.open) conn.send(m);
+  for (const { conn } of net.conns.values()) send(conn, m);
 }
 function systemChat(text) { sendChat({ name: '', color: 0x7d8796 }, text); }
 
@@ -285,7 +299,7 @@ export function netTick(dt) {
   else if (S.net.role === 'client' && net.conn?.open && (net.inputT += dt) > .066) {
     net.inputT = 0;
     const p = S.player;
-    net.conn.send({ t: 'input', x: p.x, z: p.z, face: p.face, walk: p.walk, moving: p.moving, vx: p.vx, vz: p.vz, mine: p.mineCell, pickup: !!p.pickup });
+    send(net.conn, { t: 'input', x: p.x, z: p.z, face: p.face, walk: p.walk, moving: p.moving, vx: p.vx, vz: p.vz, mine: p.mineCell, pickup: !!p.pickup });
   }
 }
 export function leave() { try { net.peer?.destroy(); } catch { /* ignore */ } }

@@ -591,13 +591,15 @@ export function simulate(dt, input = { mx: 0, mz: 0 }) {
   for (const b of world.beltOrder) beltTick(b, dt);
   for (const e of world.ents.values()) if (!e.items) tickEntity(e, dt);
   powerTick(dt);
-  for (const p of S.players.values()) {
-    setActor(p);
-    if (p.local) playerTick(dt, input);
-    else if (!isClient()) { mineTick(dt); pickupTick(dt); }
-    if (!isClient()) craftQueueTick(dt);
-  }
-  setActor(S.player);
+  // If this throws, the actor must not stay a friend, or the host's own clicks would use their inventory.
+  try {
+    for (const p of S.players.values()) {
+      setActor(p);
+      if (p.local) playerTick(dt, input);
+      else if (!isClient()) { mineTick(dt); pickupTick(dt); }
+      if (!isClient()) craftQueueTick(dt);
+    }
+  } finally { setActor(S.player); }
   if ((volTimer += dt) > .5) { volTimer = 0; computeVolume(); }
 }
 export function powerSummary() {
