@@ -6,10 +6,12 @@
 // rules (as that player) and streams back world changes plus regular snapshots. Friends also simulate
 // locally between snapshots, so belts and arms keep moving smoothly.
 import { Peer } from 'peerjs';
-import { S, world, bus, key, newPlayer, asActor, notify, inv } from './state.js';
+import { S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
 import { ITEMS, TECH } from './data.js';
-import { place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks } from './sim.js';
+import { place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory } from './sim.js';
 import { serialize, entToJSON, entFromJSON, applyEntJSON } from './save.js';
+import { placeRoad, applyRoads, placeSignal, placeVehicle, board, routeAction, vehToJSON, unitToJSON, applyVehicles } from './transport.js';
+import { fishToList, fishFromList } from './fish.js';
 
 const PREFIX = 'depthworks-v1-';
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -42,9 +44,30 @@ function applyAction(op) {
   const e = op.x !== undefined ? world.ents.get(key(op.x, op.y, op.z)) : null;
   switch (op.a) {
     case 'place': {
-      const err = canPlace(op.type, op.x, op.y, op.z, op.dir, op.dy, { reach: true });
+      const fac = factoryOf(op.fac) ? op.fac : actor.fac;
+      const err = canPlace(op.type, op.x, op.y, op.z, op.dir, op.dy, { reach: true, fac });
       if (err) { notify('toast', err); return null; }
-      return place(op.type, op.x, op.y, op.z, op.dir, op.dy);
+      return place(op.type, op.x, op.y, op.z, op.dir, op.dy, false, fac);
+    }
+    case 'road': { const err = placeRoad(op); if (err) notify('toast', err); break; }
+    case 'signal': { const err = placeSignal(op.x, op.z, op.dir); if (err) notify('toast', err); break; }
+    case 'vehicle': { const err = placeVehicle(op.type, op.x, op.z, op.dir); if (err) notify('toast', err); break; }
+    case 'board': board(); break;
+    case 'route': routeAction(op); break;
+    case 'factory': factoryAction(op); break;
+    case 'setfac': {
+      const list = [];
+      if (Array.isArray(op.area)) { const [x0, z0, x1, z1] = op.area; for (const e of world.ents.values()) if (e.x >= Math.min(x0, x1) && e.x <= Math.max(x0, x1) && e.z >= Math.min(z0, z1) && e.z <= Math.max(z0, z1)) list.push(e); }
+      setFactory(list, op.fac);
+      notify('toast', list.filter(e => e.fac === op.fac).length + ' buildings now belong to ' + (factoryOf(op.fac)?.name ?? '?'));
+      break;
+    }
+    case 'eat': {
+      const food = ITEMS[op.it]?.food;
+      if (!food || !invGet(op.it)) break;
+      invAdd(op.it, -1); actor.fed = Math.max(actor.fed || 0, S.T) + food;
+      notify('toast', 'well fed: faster walking and mining for ' + Math.round(actor.fed - S.T) + ' s');
+      break;
     }
     case 'rotate': if (e) rotateEntity(e, op.by || 1); break;
     case 'setdir': if (e && e.dir !== op.dir) rotateEntity(e, (op.dir - e.dir + 4) % 4); break;
@@ -60,6 +83,34 @@ function applyAction(op) {
     case 'mark': editMarks(op); break;
   }
   return null;
+}
+
+// Factories: create, rename, recolour, remove (its buildings go to the first factory), and pick the one you build for.
+function factoryAction(op) {
+  const F = world.factories, f = factoryOf(op.id), name = String(op.name ?? '').replace(/[<>]/g, '').trim().slice(0, 24);
+  switch (op.do) {
+    case 'add': {
+      if (!isResearched('factory_planning')) { notify('toast', 'research Factory planning to found more factories'); return; }
+      if (F.length >= 8) { notify('toast', 'eight factories is the limit'); return; }
+      const id = world.facNext++;
+      F.push({ id, name: name || 'Factory ' + id, color: FAC_COLORS.find(c => !F.some(x => x.color === c)) ?? FAC_COLORS[id % FAC_COLORS.length] });
+      actor.fac = id;
+      break;
+    }
+    case 'rename': if (f && name) f.name = name; break;
+    case 'color': if (f && /^#[0-9a-f]{6}$/i.test(op.color || '')) f.color = op.color; break;
+    case 'remove': {
+      if (!f || F.length < 2) return;
+      const to = F.find(x => x.id !== f.id);
+      setFactory([...world.ents.values()].filter(e => e.fac === f.id), to.id);
+      F.splice(F.indexOf(f), 1);
+      for (const p of S.players.values()) if (p.fac === f.id) p.fac = to.id;
+      break;
+    }
+    case 'select': if (f) actor.fac = f.id; return;
+    default: return;
+  }
+  bus.emit('factories');
 }
 
 // ---------------------------------------------------------------- hosting
@@ -115,7 +166,9 @@ function onHostMessage(conn, m) {
   const p = c.p;
   switch (m.t) {
     case 'input':
-      Object.assign(p, { x: m.x, z: m.z, face: m.face, walk: m.walk, moving: m.moving, vx: m.vx, vz: m.vz, pickup: !!m.pickup });
+      if (!p.veh) Object.assign(p, { x: m.x, z: m.z });
+      Object.assign(p, { face: m.face, walk: m.walk, moving: m.moving, vx: m.vx, vz: m.vz, pickup: !!m.pickup, drive: m.drive && typeof m.drive.t === 'number' ? { t: Math.max(-1, Math.min(1, m.drive.t)), s: Math.max(-1, Math.min(1, m.drive.s || 0)) } : null });
+      if (typeof m.fac === 'number' && factoryOf(m.fac)) p.fac = m.fac;
       p.mineCell = m.mine && typeof m.mine.x === 'number' ? m.mine : null;
       break;
     case 'act': asActor(p, () => applyAction(m.op)); break;
@@ -147,6 +200,11 @@ bus.on('pulse', e => op({ o: 'pulse', x: e.x, y: e.y, z: e.z }));
 bus.on('signal', kind => op({ o: 'signal', kind, sig: signalJSON() }));
 bus.on('links', () => op({ o: 'links', links: world.links }));
 bus.on('marks', () => op({ o: 'marks', marks: world.marks }));
+bus.on('roads', list => op({ o: 'roads', list }));
+// News for everyone (a net tearing, say): a toast here and in every friend's browser.
+bus.on('announce', text => { bus.emit('toast', text); op({ o: 'announce', text }); });
+bus.on('routes', () => op({ o: 'routes', routes: world.routes }));
+bus.on('factories', () => op({ o: 'factories', factories: world.factories, facNext: world.facNext }));
 // Feedback meant for a friend (their toasts, floating text, pickup sounds) goes to their browser only.
 bus.on('remote', (p, ev, args) => { const c = net.conns.get(p.id); if (c) send(c.conn, { t: 'fx', ev, args }); });
 
@@ -167,6 +225,8 @@ function hostTick(dt) {
     ground: world.ground.map(g => [ITEM_IDS.indexOf(g.type), +g.x.toFixed(2), +g.z.toFixed(2)]),
     research: { current: S.research.current, progress: S.research.progress, done: [...S.research.done] }, maxTier: S.maxTier,
     stats: withStats ? S.stats : undefined,
+    veh: world.vehicles.map(vehToJSON), units: withStats ? world.units.map(u => unitToJSON(u, false)) : undefined,
+    fish: (net.fishT = (net.fishT || 0) + 1) % 3 === 0 ? fishToList() : undefined,
   };
   const states = new Map();
   for (const e of world.ents.values()) states.set(key(e.x, e.y, e.z), entState(e));
@@ -179,7 +239,7 @@ function hostTick(dt) {
     }
     for (const k of c.cache.keys()) if (!states.has(k)) c.cache.delete(k);
     const p = c.p;
-    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null } });
+    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, fac: p.fac } });
   }
 }
 
@@ -245,6 +305,10 @@ function applyOp(o) {
     case 'pulse': bus.emit('pulse', { x: o.x, y: o.y, z: o.z }); break;
     case 'links': world.links = o.links || []; world.powerDirty = true; break;
     case 'marks': world.marks = o.marks; bus.emit('marks'); break;
+    case 'roads': applyRoads(o.list); break;
+    case 'announce': bus.emit('toast', o.text); break;
+    case 'routes': world.routes = o.routes || []; bus.emit('routes'); break;
+    case 'factories': world.factories = o.factories; world.facNext = o.facNext; bus.emit('factories'); break;
     case 'signal': {
       const s = o.sig;
       Object.assign(S.signal, s, { taught: new Set(s.taught), seen: new Set(s.seen) });
@@ -269,6 +333,8 @@ function applyState(m) {
   inv.loadAny(you.inv);
   S.player.craft = you.craft || [];
   S.player.mining = you.mining;
+  if (S.player.veh !== (you.veh ?? null)) { S.player.veh = you.veh ?? null; bus.emit('vehicles'); }
+  S.player.fed = you.fed || 0;
   bus.emit('inv');
   // world
   world.ground = m.ground.map(([i, x, z]) => ({ type: ITEM_IDS[i], x, z }));
@@ -276,6 +342,8 @@ function applyState(m) {
   for (const id of m.research.done) S.research.done.add(id);
   if (m.maxTier > S.maxTier) { S.maxTier = m.maxTier; bus.emit('tier', m.maxTier); }
   if (m.stats) S.stats = m.stats;
+  if (m.veh) applyVehicles(m.veh, m.units);
+  if (m.fish) fishFromList(m.fish);
   net.applying = true;
   try {
     for (const o of m.ents) {
@@ -305,7 +373,7 @@ export function netTick(dt) {
   else if (S.net.role === 'client' && net.conn?.open && (net.inputT += dt) > .066) {
     net.inputT = 0;
     const p = S.player;
-    send(net.conn, { t: 'input', x: p.x, z: p.z, face: p.face, walk: p.walk, moving: p.moving, vx: p.vx, vz: p.vz, mine: p.mineCell, pickup: !!p.pickup });
+    send(net.conn, { t: 'input', x: p.x, z: p.z, face: p.face, walk: p.walk, moving: p.moving, vx: p.vx, vz: p.vz, mine: p.mineCell, pickup: !!p.pickup, drive: p.drive, fac: p.fac });
   }
 }
 export function leave() { try { net.peer?.destroy(); } catch { /* ignore */ } }

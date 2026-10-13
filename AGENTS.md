@@ -12,7 +12,9 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
   ```
 - There is no automated test suite. Test in a browser through the console hooks on `window.depthworks`:
   `begin(fresh)`, `run(seconds, input)`, `give(item, n)`, `place(...)`, `doAction(op)`, `save()`, `load()`,
-  `host(...)`, `join(...)`, plus the live `S`, `world` and `inv`.
+  `host(...)`, `join(...)`, `toggleModal(id)`, plus the live `S`, `world` and `inv`. `run` takes driving keys too:
+  `run(2, { mx: 0, mz: 0, fx: 0, fz: 1 })` holds W while you sit in a vehicle. Modules can be reached with
+  `await import('/src/transport.js')` and friends: same instances as the game.
 - **Hidden or background tabs get no `requestAnimationFrame`.** Step the game with `depthworks.run(seconds)`,
   or render explicitly, instead of waiting for frames. A worker heartbeat in `main.js` keeps co-op ticking when
   frames stall.
@@ -26,7 +28,11 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 |---|---|
 | `src/data.js` | Pure data: items (stack sizes), entities, recipes, techs, tiers, tiles, fluids, voltages, quickbars, the alien script |
 | `src/state.js` | Shared mutable state `S`, `world` maps and tile grids, `Inventory` class, players, `actor`, the event `bus`, world generation (ores, trees, water, rivers), quickbars |
-| `src/sim.js` | All game rules: belts, machines, power networks and voltages, cables, fluids and the steam chain, research, precision, crafting, the engineer, building, slots, map marks |
+| `src/sim.js` | All game rules: belts, machines, power networks and voltages, cables, research, precision, crafting, the engineer, building, slots, map marks, factory reassignment |
+| `src/fluids.js` | Fluid networks: fluid boxes per entity, pipes, underground pipes, pumps, valves, tanks, machine ports, throughput, the steam chain |
+| `src/transport.js` | Roads (tile layer), rails and signal blocks, vehicles and driving, A* over road/rail/water tiles, the shared path follower, depots, routes and schedules |
+| `src/fish.js` | Water bodies, fish and their populations, fishing nets on boats |
+| `src/logistics.js` | The logistics window (L): one route editor and map for rail, road and sea |
 | `src/net.js` | Co-op: `doAction`, hosting/joining, op broadcast, snapshots, chat |
 | `src/save.js` | Save/load and the entity JSON format (shared with net sync) |
 | `src/scene.js` | Rendering: camera, post pass, terrain, clutter, particles, entity meshes, picking, arrows, preview |
@@ -38,7 +44,8 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 | `src/audio.js`, `src/signal.js`, `src/icons.js` | Sound, the alien conversation, pixel icons |
 
 Modules talk through direct imports plus `bus` events (`placed`, `removed`, `remesh`, `ore`, `feat`, `research`,
-`tier`, `pulse`, `signal`, `inv`, `players`, `chat`, `power`, `links`, `marks`, `openmap`, …).
+`tier`, `pulse`, `signal`, `inv`, `players`, `chat`, `power`, `links`, `marks`, `openmap`, `roads`, `routes`,
+`factories`, `vehicles`, `fluids`, `announce`, …).
 
 Keys go through `input.js`: check `is('action', e.code)` (or `isDown` for held keys), never a hard-coded code,
 so players can rebind them. Add new actions to `ACTIONS`.
@@ -53,7 +60,8 @@ so players can rebind them. Add new actions to `ACTIONS`.
    `asActor(p, fn)`. Use `notify(ev, …)` for feedback (toasts, floating text, pickup sounds) so it reaches the
    right player.
 3. **Guests don't decide outcomes.** Anything authoritative (ore tiles vanishing, research completing, alien
-   pulses and replies, crafting, mining results) is gated with `S.net.role === 'client'` / `isClient()`.
+   pulses and replies, crafting, mining results, vehicles moving, fish breeding) is gated with
+   `S.net.role === 'client'` / `isClient()`.
    Guests may simulate for smoothness, and the host's snapshots correct them.
 4. **New entity state must save and sync.** If you add a field that changes at runtime, add it to `FIELDS`
    in `save.js`, or handle it in `entToJSON`/`applyEntJSON`/`entFromJSON`. Objects in `FIELDS` are shallow-copied.
@@ -76,8 +84,21 @@ so players can rebind them. Add new actions to `ACTIONS`.
     on the surface. Use `isWater`, `tileAt` and `flowAt`. Liquid tiles block walking and building except for things
     marked `onWater`. If you change `generateWater`, bump `WATER_GEN` so older saves get their water redone.
 11. **Power** is rebuilt from scratch whenever `world.powerDirty` is set: poles of one voltage join by wire reach,
-    overlapping supply areas and hand-strung `world.links`; fluids join neighbouring buildings that list them in
-    `fluids`. Engines, boilers and pumps only work as hard as what draws on them.
+    overlapping supply areas and hand-strung `world.links`. Engines, boilers and pumps only work as hard as what
+    draws on them.
+12. **Fluids** (`fluids.js`) are rebuilt from scratch whenever `world.fluidDirty` is set (placing, removing,
+    rotating, changing a recipe or a depot's fuel). Every entity has fluid boxes (`boxesOf`): pipes carry whatever
+    their line carries; buildings with `fluids` join neighbours on every side (and pipes only on `pipeSides`);
+    machines with `ports` connect only at those sides, with fluids given by their recipe's `fin` / `fout`. A network
+    is a pool: `draw` (limited by its throughput) and `push`. Amounts live in each entity's `fa` between rebuilds,
+    so splits, joins and saves keep fluid. Never let two fluids join: `fluidConflict` refuses it at placement.
+13. **Factories:** every non-`shared` entity has `fac`. Anything that links two entities (belts, inserters, drills,
+    power, pipes, underground pairs) must check `sameFac(a, b)`. New buildings get the builder's factory through
+    `place(..., fac)`; the guest sends `fac` with its place action.
+14. **Transport:** roads are a tile map (`world.roads`), not entities; rails are entities. Trucks, boats and trains
+    are units (`world.units`) with a tile `path` and a position `s` along it (`evalPath`); cars and tanks are free
+    vehicles. Route logic (`plan`, `schedule`, `dockTick`) is shared by all three ways. The host moves every
+    vehicle; guests only show the snapshots. Bump `world.wayVersion` when roads or rails change so paths get checked.
 
 ## Style
 

@@ -1,7 +1,10 @@
 // HUD and panels. Panels re-render on a timer, so actions use pointerdown delegation via data-act.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER, HOTBARS, VOLTAGES, TILES } from './data.js';
-import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt } from './state.js';
-import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, voltsOf } from './sim.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER, HOTBARS, VOLTAGES, TILES, FLUIDS, ROADS, FUELS, FRAMES, ENGINES, VEHICLES, recipeIcon, recipeName } from './data.js';
+import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt, factoryOf, FAC_COLORS, isResearched } from './state.js';
+import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, slotsOf, voltsOf, nets } from './sim.js';
+import { vstats, unitOf, routeById, driverOf, roadAt, dockTiles, vehicleById } from './transport.js';
+import { fishTarget } from './fish.js';
+import { openLogistics, renderLogistics, drawLogistics } from './logistics.js';
 import { iconHTML, iconURL, fmtN } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
 import { project } from './scene.js';
@@ -12,6 +15,10 @@ import { renderSide, openMapView } from './map.js';
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const setHTML = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
+const hexCss = c => '#' + (c ?? 0x7d8796).toString(16).padStart(6, '0');
+const typing = el => el && el.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+// A small chip with the factory's colour and name.
+export const facChip = (id, act = '') => { const f = factoryOf(id ?? 1); return `<span class="facchip"${act ? ` data-act="${act}"` : ''}><i style="background:${f?.color ?? '#888'}"></i>${esc(f?.name ?? '?')}</span>`; };
 
 // ---------------------------------------------------------------- toasts + tooltip
 let toastTimer;
@@ -29,20 +36,24 @@ addEventListener('pointermove', e => {
   tip.style.top = Math.min(innerHeight - h - 8, e.clientY + 14) + 'px';
 });
 const tipAttr = html => ` data-tip="${esc(html)}"`;
+const MACHINE_FOR = { smelt: 'furnace', craft: 'assembler', refine: 'oil refinery', chem: 'chemical plant', barrel: 'barreling station', vehicle: 'vehicle factory' };
 function recipeTip(r) {
-  const outs = Object.entries(r.out).map(([k, n]) => `${n}× ${itemName(k)}`).join(', ');
-  const ins = Object.entries(r.in).map(([k, n]) => `<div>${iconHTML(k)} ${n} × ${itemName(k)} <span class="dim">(have ${fmtN(invGet(k))})</span></div>`).join('');
-  const ent = ENTITIES[r.id];
-  return `<b>${outs}</b><div class="dim">${r.time}s${r.cat === 'smelt' ? ' · furnace' : r.hand ? '' : ' · assembler only'}</div>${ins}${ent ? `<div class="dim" style="margin-top:4px">${ent.desc}</div>` : ''}`;
+  const outs = [...Object.entries(r.out).map(([k, n]) => `${n}× ${itemName(k)}`), ...Object.entries(r.fout || {}).map(([k, n]) => `${n} ${FLUIDS[k].name.toLowerCase()}`)].join(', ');
+  const ins = Object.entries(r.in).map(([k, n]) => `<div>${iconHTML(k)} ${n} × ${itemName(k)} <span class="dim">(have ${fmtN(invGet(k))})</span></div>`).join('')
+    + Object.entries(r.fin || {}).map(([k, n]) => `<div>${iconHTML(k)} ${n} ${FLUIDS[k].name.toLowerCase()} <span class="dim">(by pipe)</span></div>`).join('');
+  const ent = ENTITIES[r.id], veh = VEHICLES[r.id] && vstats(r.id);
+  return `<b>${r.name ? r.name + ': ' : ''}${outs}</b><div class="dim">${r.time}s${r.hand ? '' : ' · ' + (MACHINE_FOR[r.cat] ?? 'assembler') + ' only'}</div>${ins}${ent ? `<div class="dim" style="margin-top:4px">${ent.desc}</div>` : ITEMS[r.id]?.desc ? `<div class="dim" style="margin-top:4px">${ITEMS[r.id].desc}</div>` : ''}`
+    + (veh ? `<div class="dim">${veh.power ? `top speed ${veh.top.toFixed(1)} tiles/s · ${veh.power} kW · burns ${FLUIDS[veh.fuel].name.toLowerCase()}` : 'no engine'}${veh.cargo ? ` · ${veh.cargo} cargo slots` : ''}</div>` : '');
 }
 
 // ---------------------------------------------------------------- modals
-const modals = ['inventory', 'research', 'help', 'title', 'map'];
+const modals = ['inventory', 'research', 'help', 'title', 'map', 'logistics', 'factories'];
 export function openModal(id) {
   for (const m of modals) $(m).style.display = m === id ? '' : 'none';
   S.modal = id;
   if (id === 'map') openMapView();
   if (id === 'help') renderKeys();
+  if (id === 'logistics') openLogistics();
   renderModal();
 }
 export function closeModals() { for (const m of modals) $(m).style.display = 'none'; S.modal = null; rebinding = null; if (cursor) { cursor = null; showGhost(); } }
@@ -51,8 +62,11 @@ function renderModal() {
   if (S.modal === 'inventory') renderInventory();
   if (S.modal === 'research') renderResearch();
   if (S.modal === 'map') renderSide(true);
+  if (S.modal === 'logistics') renderLogistics(true);
+  if (S.modal === 'factories') renderFactories();
 }
 bus.on('openmap', () => openModal('map'));
+bus.on('openlogistics', () => openModal('logistics'));
 bus.on('closemap', () => closeModals());
 
 // ---------------------------------------------------------------- hide UI
@@ -116,14 +130,30 @@ export function renderHotbar() {
   for (let k = n - 1; k >= 1; k--) others.push(barHTML((S.bar + k) % n, false));
   setHTML($('hotbar'), others.join('') + barHTML(S.bar, true));
   $('hand').style.bottom = $('hotbar').offsetHeight + 18 + 'px';
-  const ent = S.sel && ENTITIES[S.sel], tool = ITEMS[S.sel]?.tool === 'link';
-  const hand = S.sel ? `${iconHTML(S.sel, invGet(S.sel))} <b>${itemName(S.sel)}</b>` + (ent ? ` · facing ${DIR_NAMES[S.dir]}`
-    : tool ? (S.linkFrom ? ' · now click the other pole · Esc cancels' : ' · click a pole, then another, to string a cable') : ' · Ctrl+click a machine to put it in · Z drops one')
+  const ent = S.sel && ENTITIES[S.sel], tool = ITEMS[S.sel]?.tool === 'link', it = ITEMS[S.sel];
+  const forFac = ent && !ent.shared && (world.factories.length > 1 || isResearched('factory_planning')) ? ` · for ${facChip(S.player.fac, 'factories')}` : '';
+  const hand = S.sel ? `${iconHTML(S.sel, invGet(S.sel))} <b>${itemName(S.sel)}</b>` + (ent ? ` · facing ${DIR_NAMES[S.dir]}${forFac}`
+    : tool ? (S.linkFrom ? ' · now click the other pole · Esc cancels' : ' · click a pole, then another, to string a cable')
+    : it?.road ? ` · drag to lay · R turns it (${S.dir % 2 ? 'east-west' : 'north-south'})` : it?.vehicle ? ` · click to put it down · R turns it · facing ${DIR_NAMES[S.dir]}`
+    : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : ' · Ctrl+click a machine to put it in · Z drops one')
     + (ent?.kind === 'lift' ? ` · ${S.dy === -1 ? 'down' : 'up'}` : '')
     + (ent?.kind === 'inserter' && S.mode === 'depth' ? ` · ${['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]}` : '')
     : '';
   setHTML($('hand'), hand);
   $('hand').style.display = hand ? '' : 'none';
+  renderRoadCfg();
+}
+// The road panel above your hand: how the road you hold gets laid.
+function renderRoadCfg() {
+  const el = $('roadcfg'), r = ROADS[S.sel];
+  if (!r || r.walk) { el.style.display = 'none'; return; }
+  const c = S.roadCfg, b = (k, v, label, tip) => `<button class="${c[k] === v ? 'on' : ''}" data-act="rcfg:${k}=${v}"${tip ? tipAttr(tip) : ''}>${label}</button>`;
+  const t = (k, label, tip) => `<button class="${c[k] ? 'on' : ''}" data-act="rcfg:${k}=${c[k] ? 0 : 1}"${tipAttr(tip)}>${label}</button>`;
+  setHTML(el, `<span class="dim">width</span>${[1, 2, 3, 4].map(w => b('w', w, w)).join('')}<span class="dim">lanes</span>${[1, 2, 3, 4].map(l => b('l', l, l)).join('')}
+    <span class="dim">centre</span>${b('m', 'none', '—', 'no centre line')}${b('m', 'dashed', '- -', 'dashed white')}${b('m', 'solid', '│', 'solid yellow')}${b('m', 'double', '║', 'double yellow')}
+    ${t('edges', 'edges', 'white lines along both edges')}${t('sw', 'sidewalks', 'a path on each side (uses Path tiles). Walking on paths is faster')}${t('cross', 'crossings', 'zebra crossings where roads meet (off: stop lines)')}`);
+  el.style.display = '';
+  el.style.bottom = $('hotbar').offsetHeight + 52 + 'px';
 }
 
 // ---------------------------------------------------------------- slots: drag and drop
@@ -134,10 +164,10 @@ let cursor = null;   // { ref, it, n, mode: 'drag' | 'held', moved, x, y, button
 const ghost = document.createElement('div'); ghost.id = 'cursorStack'; document.body.append(ghost);
 function readRef(ref) {
   if (ref.startsWith('p:')) { const sl = inv.slots[+ref.slice(2)]; return { it: sl?.it || null, n: sl?.n || 0 }; }
-  const sl = panelEnt && entSlots(panelEnt).find(x => x.id === ref.slice(2));
+  const sl = panelEnt && slotsOf(panelEnt).find(x => x.id === ref.slice(2));
   return { it: sl?.it || null, n: sl?.n || 0 };
 }
-function wire(ref) { return ref.startsWith('p:') ? { p: +ref.slice(2) } : { e: [panelEnt.x, panelEnt.y, panelEnt.z], s: ref.slice(2) }; }
+function wire(ref) { return ref.startsWith('p:') ? { p: +ref.slice(2) } : panelEnt.isVeh ? { v: panelEnt.id, s: ref.slice(2) } : { e: [panelEnt.x, panelEnt.y, panelEnt.z], s: ref.slice(2) }; }
 function refreshSlots() { if (panelEnt) renderEntity(); if (S.modal === 'inventory') renderInventory(); renderHotbar(); }
 function showGhost(x, y) {
   if (!cursor) { ghost.style.display = 'none'; return; }
@@ -171,7 +201,7 @@ document.addEventListener('pointerdown', ev => {
     showGhost(ev.clientX, ev.clientY); refreshSlots(); return;
   }
   const sl = readRef(ref); if (!sl.it) return;
-  if (ev.shiftKey) { doAction({ a: 'shift', from: wire(ref), ent: panelEnt ? [panelEnt.x, panelEnt.y, panelEnt.z] : null }); bus.emit('uiclick'); refreshSlots(); return; }
+  if (ev.shiftKey) { doAction({ a: 'shift', from: wire(ref), ent: panelEnt ? (panelEnt.isVeh ? { v: panelEnt.id } : [panelEnt.x, panelEnt.y, panelEnt.z]) : null }); bus.emit('uiclick'); refreshSlots(); return; }
   cursor = { ref, it: sl.it, n: ev.button === 2 ? Math.ceil(sl.n / 2) : sl.n, mode: 'drag', moved: false, x: ev.clientX, y: ev.clientY, button: ev.button };
   showGhost(ev.clientX, ev.clientY); refreshSlots();
 });
@@ -195,11 +225,13 @@ function invGridHTML() {
 }
 
 // ---------------------------------------------------------------- inventory + crafting
-const TABS = ['Logistics', 'Production', 'Intermediates', 'Science'];
+const TABS = ['Logistics', 'Production', 'Fluids', 'Transport', 'Intermediates', 'Science'];
 S.craftTab = 'Logistics';
 function recipeTab(r) {
-  const ent = ENTITIES[r.id];
-  return ITEMS[r.id]?.shape === 'pack' ? 'Science' : ITEMS[r.id]?.tool ? 'Logistics' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'lift', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
+  const ent = ENTITIES[r.id], it = ITEMS[r.id];
+  if (it?.road || it?.tool === 'signal' || it?.shape === 'engine' || ['chassis', 'wheel', 'hull', 'armor_plate', 'turret', 'fishing_net'].includes(r.id) || ['depot', 'rail'].includes(ent?.kind) || ent?.cats?.includes('vehicle')) return 'Transport';
+  if (['pipe', 'upipe', 'fpump', 'valve', 'tank', 'oilpump', 'fgen'].includes(ent?.kind) || ent?.ports || it?.shape === 'barrel') return 'Fluids';
+  return it?.shape === 'pack' ? 'Science' : it?.tool ? 'Logistics' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'lift', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
 }
 function renderInventory() {
   const rs = RECIPES.filter(r => r.cat === 'craft' && recipeUnlocked(r) && recipeTab(r) === S.craftTab);
@@ -225,7 +257,7 @@ function renderResearch() {
     const done = S.research.done.has(t.id), avail = techAvailable(t), active = S.research.current === t.id;
     const prog = (S.research.progress[t.id] || 0) / t.count;
     const cost = Object.keys(t.cost).map(p => iconHTML(p)).join('');
-    const unl = t.unlocks.map(u => ITEMS[u] ? iconHTML(u) : `<span class="tag">${u}</span>`).join('');
+    const unl = t.unlocks.map(u => ITEMS[u] ? iconHTML(u) : RECIPE[u] ? `<span${tipAttr(recipeName(RECIPE[u]))}>${iconHTML(recipeIcon(RECIPE[u]))}</span>` : `<span class="tag">${u}</span>`).join('');
     const needs = t.pre.filter(p => !S.research.done.has(p)).map(p => TECH[p].name);
     const lock = !done && !avail ? `<div class="warn">${needs.length ? 'needs ' + needs.join(', ') : ''}${(t.precision ?? 0) > S.maxTier ? `${needs.length ? ' · ' : 'needs '}precision ${t.precision}` : ''}</div>` : '';
     return `<div class="tech ${done ? 'done' : avail ? '' : 'locked'} ${active ? 'active' : ''}" data-act="tech:${t.id}">
@@ -255,30 +287,78 @@ function statusLine(e) {
 // The machine's own slots, grouped like Factorio's panels (Fuel / Input / Result ...), with a progress bar between.
 function machineSlotsHTML(e, progress) {
   const groups = [];
-  for (const sl of entSlots(e)) {
+  for (const sl of slotsOf(e)) {
     let g = groups.find(x => x.name === sl.group);
     if (!g) groups.push(g = { name: sl.group, cells: [] });
-    const extra = sl.id === 'fuel' ? `${e.burn.toFixed(1)} MJ burning` : sl.id.startsWith('res') || sl.id === 'buf' ? 'take it out: drag or shift+click' : '';
+    const extra = sl.id === 'fuel' ? (e.isVeh ? `drop ${itemName(sl.hint).toLowerCase()}s here: the empty barrels come back` : `${e.burn.toFixed(1)} MJ burning`)
+      : sl.id === 'catch' ? 'fish caught by the net: take them out, or unload at a port' : sl.id === 'net' ? 'a fishing net' : sl.id.startsWith('res') || sl.id === 'buf' ? 'take it out: drag or shift+click' : '';
     g.cells.push(slotHTML('e:' + sl.id, sl.it, sl.n, sl.hint, extra));
   }
   let html = '';
   for (const g of groups) {
-    html += `<div class="sgroup"><h4>${g.name}</h4><div class="${g.name === 'Storage' ? 'slots chest' : 'grid'}">${g.cells.join('')}</div></div>`;
+    html += `<div class="sgroup"><h4>${g.name}</h4><div class="${g.name === 'Storage' || g.name === 'Cargo' ? 'slots chest' : 'grid'}">${g.cells.join('')}</div></div>`;
     if (progress !== undefined && (g.name === 'Input' || g.name === 'Ingredients')) html += `<div class="sgroup arrow">▶<div class="bar"><i style="width:${Math.min(1, progress) * 100}%"></i></div></div>`;
   }
   return html ? `<div class="mslots">${html}</div>` : '';
 }
+// One line per fluid network an entity touches: what it holds, how full, how fast it can flow.
+function fluidHTML(e, only) {
+  const seen = new Set(), rows = [];
+  (e.fb || []).forEach((n, i) => {
+    if (!n || seen.has(n) || (only && !only(i))) return; seen.add(n);
+    const f = FLUIDS[n.fluid], col = hexCss(f?.color);
+    rows.push(`<div class="flrow"><i style="background:${col}"></i><b>${f?.name ?? 'empty'}</b>${n.mixed ? ' <span class="warn">two fluids meet: flush the line</span>' : ''}
+      <div class="bar"><i style="width:${n.cap ? Math.min(100, n.amount / n.cap * 100) : 0}%;background:${col}"></i></div>
+      <span class="dim">${fmtN(n.amount)} / ${fmtN(n.cap)} · ${n.members.length} in the line${n.pipes ? ` · ${n.pipes} pipes, up to ${fmtN(n.throughput)}/s` : ''} · flowing ${fmtN(n.flow || 0)}/s</span></div>`);
+  });
+  return rows.join('') || '<div class="dim">not connected to anything</div>';
+}
+const SIDE_NAMES = ['front', 'right', 'back', 'left'];
+function portsHTML(e) {
+  const def = ENTITIES[e.type], r = RECIPE[e.recipe], fins = Object.keys(r?.fin || {}), fouts = Object.keys(r?.fout || {});
+  let ni = 0, no = 0;
+  return `<div class="dim">${def.ports.map(p => { const f = p.fluid || (p.io === 'in' ? fins[ni++] : fouts[no++]); return f ? `${SIDE_NAMES[p.side]}: ${FLUIDS[f].name.toLowerCase()} ${p.io}` : null; }).filter(Boolean).join(' · ') || 'pick a recipe to see its ports'}</div>`;
+}
 function renderEntity() {
   const e = panelEnt; if (!e) return;
+  if (e.isVeh) { renderVehicle(e); return; }
   const def = ENTITIES[e.type]; let body = '';
   const pbar = p => `<div class="bar"><i style="width:${Math.min(1, p) * 100}%"></i></div>`;
   switch (e.kind) {
     case 'assembler': {
-      const rs = RECIPES.filter(x => x.cat === 'craft' && recipeUnlocked(x));
-      body += `<h4>Recipe</h4><div class="grid small">${rs.map(x => `<div class="cell ${x.id === e.recipe ? 'on' : ''}" data-act="recipe:${x.id}"${tipAttr(recipeTip(x))}>${iconHTML(x.id)}</div>`).join('')}</div>`;
+      const cats = def.cats || ['craft'], rs = RECIPES.filter(x => cats.includes(x.cat) && recipeUnlocked(x));
+      body += `<h4>Recipe</h4><div class="grid small">${rs.map(x => `<div class="cell ${x.id === e.recipe ? 'on' : ''}" data-act="recipe:${x.id}"${tipAttr(recipeTip(x))}>${iconHTML(recipeIcon(x))}</div>`).join('') || '<span class="dim">nothing researched for it yet</span>'}</div>`;
+      if (cats.includes('vehicle') && RECIPE[e.recipe]) { const st = vstats(e.recipe); body += `<div class="dim">${itemName(e.recipe)}: ${st.power ? `${st.top.toFixed(1)} tiles/s, ${st.power} kW, burns ${FLUIDS[st.fuel].name.toLowerCase()}` : 'no engine'}${st.cargo ? `, ${st.cargo} cargo slots` : ''}. The engine is the frame's power: a stronger one goes faster and drinks more.</div>`; }
+      if (def.ports) body += portsHTML(e);
       body += RECIPE[e.recipe] ? machineSlotsHTML(e, e.prog) : '<div class="dim" style="margin-top:6px">Pick a recipe to see its slots.</div>';
+      if (def.ports && RECIPE[e.recipe]) body += `<h4>Fluids</h4>${fluidHTML(e)}`;
       break;
     }
+    case 'pipe': case 'tank': case 'upipe':
+      body += `<h4>Contents</h4>${fluidHTML(e)}`;
+      if (e.kind === 'upipe') body += `<div class="dim">${e.pair ? `linked to the other end, ${Math.abs(e.pair.x - e.x) + Math.abs(e.pair.z - e.z)} tiles away` : 'no other end yet: place one up to ' + (def.range - 1) + ' tiles ahead, facing the same way'}</div>`;
+      body += `<div class="btns"><button data-act="flush"${tipAttr('Empty this whole line. What is in it is lost.')}>flush line</button></div>`;
+      break;
+    case 'fpump': case 'valve':
+      body += `<h4>Behind (in)</h4>${fluidHTML(e, i => i === 0)}<h4>In front (out)</h4>${fluidHTML(e, i => i === 1)}`;
+      if (e.kind === 'fpump') body += `<div class="dim">${def.rate}/s at most · ${def.power} kW · ${Math.round((e.load || 0) * 100)}% busy</div>`;
+      else body += `<h4>Mode</h4><div class="btns">${[['check', 'one way'], ['overflow', 'overflow only'], ['topup', 'top up only']].map(([m, l]) => `<button class="${e.mode === m ? 'on' : ''}" data-act="valve:${m}">${l}</button>`).join('')}</div>
+        <div class="dim">${e.mode === 'overflow' ? 'passes only what is over 80% on the input side' : e.mode === 'topup' ? 'passes only while the output side is under half full' : 'passes everything forward, nothing back'}</div>`;
+      body += `<div class="btns"><button data-act="rotate">rotate</button><button data-act="flush">flush</button></div>`;
+      break;
+    case 'oilpump': {
+      const o = world.oil.get(e.x + ',' + e.z);
+      body += `<h4>Well</h4>${o ? `${iconHTML('crude_oil')} yield ${o.yield.toFixed(1)}% · ${(def.rate * o.yield / 100).toFixed(1)} crude/s` : '<span class="warn">no oil here</span>'}`;
+      body += `<h4>Output (front)</h4>${fluidHTML(e)}<div class="dim">${def.power} kW · yield falls slowly as you pump, never under 20%</div><div class="btns"><button data-act="rotate">rotate</button></div>`;
+      break;
+    }
+    case 'fgen':
+      body += `<h4>Output</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.out)} / ${def.out} kW · burns ${((e.load || 0) * def.out / 1000 / FLUIDS.diesel.fuel).toFixed(2)} diesel/s</div><h4>Diesel</h4>${fluidHTML(e)}`;
+      break;
+    case 'depot': body += depotHTML(e); break;
+    case 'rail':
+      body += `<div class="dim">Track block ${e.block !== undefined ? e.block + 1 : '?'}. ${e.sig !== null && e.sig !== undefined ? `A signal here splits the track toward the ${DIR_NAMES[e.sig]}: one train at a time on each side.` : 'Rail signals split track into blocks so several trains can share it.'}</div>`;
+      break;
     case 'furnace': body += machineSlotsHTML(e, e.prog); break;
     case 'drill': {
       const o = world.ores.get(key(e.x, e.y, e.z));
@@ -301,23 +381,25 @@ function renderEntity() {
     case 'solar': body += `<div>${def.out} kW, always on.</div>`; break;
     case 'pump': {
       const w = e.fnet?.water, boilers = w ? w.members.filter(m => m.kind === 'boiler').length : 0;
-      body += `<h4>Pumping</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.rate)} / ${def.rate} water/s · always full, delivers only what is drawn</div>`;
-      body += `<div>${boilers} boiler${boilers === 1 ? '' : 's'} connected${boilers > 20 ? ' <span class="warn">(one pump keeps 20 busy)</span>' : ''}</div>`;
+      body += `<h4>Pumping</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.rate)} / ${def.rate} water/s · delivers only what is drawn</div>`;
+      body += `<div>${boilers} boiler${boilers === 1 ? '' : 's'} on its water${boilers > 20 ? ' <span class="warn">(one pump keeps 20 busy)</span>' : ''}</div><h4>Water line</h4>${fluidHTML(e)}`;
       break;
     }
     case 'boiler': {
       body += machineSlotsHTML(e);
       const engines = e.fnet?.steam ? e.fnet.steam.members.filter(m => m.kind === 'engine').length : 0;
       body += `<h4>Steam</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.steam)} / ${def.steam} steam/s · ${def.heat} MW at full</div>`;
-      const short = e.water > 0 && e.water < 1 ? ` <span class="warn">${Math.round(e.water * 100)}%: too many boilers on the pump</span>` : '';
-      body += `<div>water: ${e.fnet?.water?.cap ? `<span class="okc">pump connected</span>${short}` : '<span class="warn">no pump touching it</span>'} · ${engines} engine${engines === 1 ? '' : 's'} on its steam</div>`;
+      const short = e.water > 0 && e.water < .98 ? ` <span class="warn">${Math.round(e.water * 100)}%: not enough water for every boiler</span>` : '';
+      const pumped = e.fnet?.water?.members.some(m => m.kind === 'pump' || m.kind === 'pipe' || m.kind === 'tank');
+      body += `<div>water: ${pumped ? `<span class="okc">connected</span>${short}` : '<span class="warn">no pump or pipe touching it</span>'} · ${engines} engine${engines === 1 ? '' : 's'} on its steam</div>`;
+      body += `<div class="dim">pipes join water at the drum ends (left and right) and steam at the back</div>`;
       break;
     }
     case 'engine': {
-      const s = e.fnet?.steam, n = e.net;
+      const st = e.fnet?.steam, n = e.net;
       body += `<h4>Output</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.out)} / ${def.out} kW · ${Math.round((e.load || 0) * def.steam)} steam/s</div>`;
-      const boilers = s ? s.members.some(m => m.kind === 'boiler') : false;
-      body += `<div>steam: ${!boilers ? '<span class="warn">no boiler touching it</span>' : s.cap ? `<span class="okc">${Math.round((s.ratio || 0) * 100)}% available</span>` : '<span class="warn">boilers have no fuel or water</span>'} · ${n ? `network ${n.id + 1}` : '<span class="warn">not in a pole\'s area</span>'}</div>`;
+      const boilers = st ? st.members.some(m => m.kind === 'boiler') : false;
+      body += `<div>steam: ${!boilers ? '<span class="warn">no boiler on its steam</span>' : st.amount > 0 ? `<span class="okc">${fmtN(st.amount)} in the line</span>` : '<span class="warn">boilers have no fuel or water</span>'} · ${n ? `network ${n.id + 1}` : '<span class="warn">not in a pole\'s area</span>'}</div>`;
       break;
     }
     case 'pole': {
@@ -362,14 +444,88 @@ function renderEntity() {
       break;
     }
   }
-  setHTML($('epBody'), `<div class="eph"><img src="${iconURL(e.type)}"> <b>${def.name}</b> <span class="dim">L${e.y} · ${DIR_NAMES[e.dir]}</span><span class="x" data-act="close">✕</span></div>${statusLine(e)}${body}`);
+  if (typing($('epBody'))) return;   // don't rebuild under someone typing a name
+  const chip = def.shared || e.kind === 'frame' ? '' : ' ' + facChip(e.fac, 'fac');
+  setHTML($('epBody'), `<div class="eph"><img src="${iconURL(e.type)}"> <b>${def.name}</b> <span class="dim">L${e.y} · ${DIR_NAMES[e.dir]}</span>${chip}<span class="x" data-act="close">✕</span></div>${statusLine(e)}${body}`);
   setHTML($('epInv'), `<h3>Character <span class="dim">${inv.used()}/${PLAYER.inventory}</span></h3>${invGridHTML()}<div class="dim tiny">drag stacks between your inventory and the machine · shift+click sends a stack across</div>`);
 }
 
+// ---------------------------------------------------------------- depots
+const knownItems = extra => Object.keys(ITEMS).filter(it => !FLUIDS[it] && (invGet(it) > 0 || S.stats.made?.[it] || extra?.has(it)));
+let rulePick = false;
+function depotHTML(e) {
+  const def = ENTITIES[e.type], n = e.fb?.[0], f = FLUIDS[e.fuelFluid], docks = dockTiles(e);
+  const here = world.units.filter(u => u.dock === key(e.x, e.y, e.z) && u.state === 'dock');
+  let h = `<h4>Name</h4><input class="txt" data-chg="dname" maxlength="32" value="${esc(e.dname)}"><div class="dim">Routes stop at depots by name. Depots that share a name share the work.</div>`;
+  h += `<div class="row">priority <button data-act="prio:-1">−</button> <b>${e.prio}</b> <button data-act="prio:1">+</button> &nbsp; vehicle limit <button data-act="vlimit:-1">−</button> <b>${e.vlimit || '∞'}</b> <button data-act="vlimit:1">+</button></div>`;
+  h += `<div class="dim">Vehicles pick the highest-priority depot with this name that has room under its limit.</div>`;
+  h += `<h4>Fuel tank</h4><div class="btns">${FUELS.map(fl => `<button class="${fl === e.fuelFluid ? 'on' : ''}" data-act="dfuel:${fl}"${tipAttr(FLUIDS[fl].name)}>${iconHTML(fl)}</button>`).join('')}</div>`;
+  h += `<div class="bar"><i style="width:${n ? Math.min(100, n.amount / n.cap * 100) : 0}%;background:${hexCss(f?.color)}"></i></div><div class="dim">${n ? `${fmtN(n.amount)} / ${fmtN(n.cap)} ${f.name.toLowerCase()}` : 'empty'} · pipe it in on any side, or drop ${f.name.toLowerCase()} barrels in storage. Docked vehicles that burn it refuel here.</div>`;
+  h += `<h4>Import and export</h4>`;
+  h += e.rules.length ? e.rules.map(r => `<div class="rule">${iconHTML(r.it)} <button data-act="ruleio:${r.it}" class="${r.io === 'in' ? 'in' : 'out'}">${r.io === 'in' ? 'import' : 'export'}</button>
+    <span class="dim">${r.io === 'in' ? 'up to' : 'keep'}</span> <input class="num" data-chg="rulen:${r.it}" value="${r.n || ''}" placeholder="${r.io === 'in' ? 'any' : '0'}"> <span class="x" data-act="rulerm:${r.it}">✕</span></div>`).join('')
+    : '<div class="dim">No rules: vehicles may unload anything here and load anything from it.</div>';
+  h += `<div class="btns"><button data-act="rulepick">${rulePick ? 'cancel' : '+ rule'}</button></div>`;
+  if (rulePick) h += `<div class="grid small">${knownItems(new Set(e.store.counts().keys())).map(it => `<div class="cell" data-act="ruleadd:${it}"${tipAttr(itemName(it))}>${iconHTML(it)}</div>`).join('')}</div>`;
+  h += `<div class="dim">${docks.length ? `${docks.length} docking tile${docks.length > 1 ? 's' : ''}` : '<span class="warn">no ' + (def.way === 'sea' ? 'water' : def.way) + ' next to it</span>'}${here.length ? ' · serving ' + here.map(u => esc(u.name)).join(', ') : ''}</div>`;
+  return h + machineSlotsHTML(e);
+}
+
+// ---------------------------------------------------------------- vehicles
+function renderVehicle(v) {
+  const st = vstats(v.type), u = unitOf(v), fr = FRAMES[st.frame], d = driverOf(v), fl = FLUIDS[st.fuel];
+  let body = `<div class="dim">${st.power ? `${ENGINES[st.engine].name} · ${st.power} kW · top speed ${st.top.toFixed(1)} tiles/s${u?.way === 'rail' ? ' alone, less with wagons' : ''}` : 'no engine: couple it behind a locomotive'}${st.cargo ? ` · ${st.cargo} cargo slots` : ''}</div>`;
+  if (st.tank) body += `<h4>Fuel</h4><div class="bar"><i style="width:${Math.min(100, v.fuel / st.tank * 100)}%;background:${hexCss(fl.color)}"></i></div><div class="dim">${Math.round(v.fuel)} / ${st.tank} ${fl.name.toLowerCase()} · ${st.burn.toFixed(2)}/s flat out · refuels at depots that stock it</div>`;
+  if (u) {
+    const routes = world.routes.filter(r => r.way === u.way), r = routeById(u.route);
+    const cars = u.cars.map(vehicleById).filter(Boolean);
+    body += `<h4>${esc(u.name)} <span class="dim">${u.way === 'rail' ? cars.length + ' car' + (cars.length > 1 ? 's' : '') : ''}</span></h4>`;
+    if (u.way === 'rail' && cars.length > 1) body += `<div>${cars.map(c => iconHTML(c.type)).join('')}</div>`;
+    body += `<div class="${u.auto ? 'okc' : 'dim'}">${esc(u.msg || u.state)}</div>`;
+    body += `<div class="row">route <select data-chg="vroute"><option value="">none</option>${routes.map(x => `<option value="${x.id}"${x.id === u.route ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+      ${r ? `<button data-act="vauto"${tipAttr('start or stop following the route')}>${u.auto ? 'stop' : 'go'}</button>` : ''} <button data-act="openlog">routes (L)</button></div>`;
+  } else body += `<div class="dim">${fr.desc}</div>`;
+  body += `<div class="dim">${d ? `${esc(d.name)} is driving` : 'B gets in when you stand next to it'} · hold right-click to pick it up</div>`;
+  body += machineSlotsHTML(v);
+  if (typing($('epBody'))) return;
+  setHTML($('epBody'), `<div class="eph"><img src="${iconURL(v.type)}"> <b>${itemName(v.type)}</b><span class="x" data-act="close">✕</span></div>${body}`);
+  setHTML($('epInv'), `<h3>Character <span class="dim">${inv.used()}/${PLAYER.inventory}</span></h3>${invGridHTML()}<div class="dim tiny">drag stacks between your inventory and the vehicle · shift+click sends a stack across</div>`);
+}
+bus.on('vehicles', () => { if (panelEnt?.isVeh && !world.vehicles.includes(panelEnt)) { const v = vehicleById(panelEnt.id); if (v) panelEnt = S.openEnt = v; else closeEntity(); } });
+
+// ---------------------------------------------------------------- factories window
+let facDelArm = null;
+function renderFactories() {
+  if (typing($('facBody'))) return;
+  const F = world.factories, counts = new Map(), kw = new Map();
+  for (const e of world.ents.values()) if (!ENTITIES[e.type].shared) counts.set(e.fac ?? 1, (counts.get(e.fac ?? 1) || 0) + 1);
+  for (const n of nets) { const f = n.poles[0]?.fac ?? 1; kw.set(f, (kw.get(f) || 0) + n.produced); }
+  const rows = F.map(f => `<div class="facrow${S.player.fac === f.id ? ' on' : ''}"><i class="sw" data-act="faccol:${f.id}" style="background:${f.color}"${tipAttr('click for the next colour')}></i>
+    <input class="txt" data-chg="facname:${f.id}" maxlength="24" value="${esc(f.name)}"><span class="dim">${counts.get(f.id) || 0} buildings · ${Math.round(kw.get(f.id) || 0)} kW</span>
+    <button data-act="facsel:${f.id}" class="${S.player.fac === f.id ? 'on' : ''}">${S.player.fac === f.id ? 'building here' : 'build here'}</button>
+    ${F.length > 1 ? `<button data-act="facdel:${f.id}">${facDelArm === f.id ? 'sure? click again' : 'remove'}</button>` : ''}</div>`).join('');
+  const can = isResResearched();
+  setHTML($('facBody'), `<div class="dim">A factory is its own network inside this world. Belts, inserters, pipes and power never cross from one factory to another:
+    goods move between factories only by truck, train or ship, through depots. Everything you build belongs to the factory you build for
+    (${keyName('nextFactory')} switches it). Rails, roads and vehicles belong to nobody.</div>${rows}
+    <div class="btns"><button data-act="facadd"${can ? '' : ' disabled'}>found a new factory</button>${can ? '' : ' <span class="warn">research Factory planning first</span>'}</div>
+    <div class="dim">To move buildings to another factory: open one and click its factory name, or on the map (M) pick the Factories view and drag the Assign tool over an area.</div>`);
+}
+const isResResearched = () => isResearched('factory_planning');
+bus.on('factories', () => { if (S.modal === 'factories') renderFactories(); renderHotbar(); });
+
 // ---------------------------------------------------------------- actions
 function act(a, ev) {
-  const [cmd, arg] = a.split(':'), e = panelEnt;
+  const i = a.indexOf(':'), cmd = i < 0 ? a : a.slice(0, i), arg = i < 0 ? undefined : a.slice(i + 1), e = panelEnt;
   switch (cmd) {
+    case 'rcfg': { const [k, v] = arg.split('='); S.roadCfg[k] = ['m'].includes(k) ? v : k === 'w' || k === 'l' ? +v : v === '1'; renderHotbar(); return; }
+    case 'factories': toggleModal('factories'); return;
+    case 'facsel': S.player.fac = +arg; doAction({ a: 'factory', do: 'select', id: +arg }); renderFactories(); renderHotbar(); return;
+    case 'facadd': doAction({ a: 'factory', do: 'add' }); return;
+    case 'faccol': { const f = factoryOf(+arg); if (f) doAction({ a: 'factory', do: 'color', id: f.id, color: FAC_COLORS[(FAC_COLORS.indexOf(f.color) + 1) % FAC_COLORS.length] }); return; }
+    case 'facdel': if (facDelArm !== +arg) { facDelArm = +arg; renderFactories(); setTimeout(() => { facDelArm = null; }, 3000); return; } facDelArm = null; doAction({ a: 'factory', do: 'remove', id: +arg }); return;
+    case 'openlog': closeEntity(); openModal('logistics'); return;
+    case 'rulepick': rulePick = !rulePick; renderEntity(); return;
     case 'hot': {
       const [b, i] = arg.split('.').map(Number), bar = S.bars[b];
       if (!bar) return;
@@ -396,6 +552,24 @@ function act(a, ev) {
     case 'copycode': return;
   }
   if (!e) return;
+  if (e.isVeh) {
+    const u = unitOf(e);
+    if (cmd === 'vauto' && u) doAction({ a: 'route', do: 'auto', unit: u.id, on: !u.auto });
+    renderEntity(); return;
+  }
+  if (cmd === 'fac') {   // move it to the next factory
+    const F = world.factories, j = F.findIndex(f => f.id === (e.fac ?? 1));
+    doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: 'fac', arg: F[(j + 1) % F.length].id }); renderEntity(); return;
+  }
+  if (e.kind === 'depot') {
+    const send = (c, v) => { doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: c, arg: v }); renderEntity(); };
+    const rule = it => e.rules.find(r => r.it === it);
+    if (cmd === 'prio' || cmd === 'vlimit') return send(cmd, (e[cmd] || 0) + +arg);
+    if (cmd === 'dfuel') return send('fuel', arg);
+    if (cmd === 'ruleio') { const r = rule(arg); return send('rule', JSON.stringify({ ...r, io: r.io === 'in' ? 'out' : 'in' })); }
+    if (cmd === 'rulerm') return send('rule', JSON.stringify({ it: arg, del: true }));
+    if (cmd === 'ruleadd') { rulePick = false; return send('rule', JSON.stringify({ it: arg, io: 'in', n: 0 })); }
+  }
   // machine panel commands run under the game rules (on the host when playing co-op)
   doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd, arg });
   renderEntity(); renderHotbar();
@@ -404,6 +578,17 @@ document.addEventListener('pointerdown', ev => {
   const el = ev.target.closest?.('[data-act]'); if (!el) return;
   ev.preventDefault(); bus.emit('uiclick'); act(el.dataset.act, ev);
 });
+// Text boxes and dropdowns in panels: names, numbers, route choice.
+document.addEventListener('change', ev => {
+  const el = ev.target.closest?.('[data-chg]'); if (!el) return;
+  const [cmd, arg] = el.dataset.chg.split(':'), e = panelEnt, v = el.value;
+  if (cmd === 'facname') { doAction({ a: 'factory', do: 'rename', id: +arg, name: v }); return; }
+  if (!e) return;
+  if (cmd === 'vroute') { const u = unitOf(e); if (u) doAction({ a: 'route', do: 'assign', unit: u.id, route: v ? +v : null }); renderEntity(); return; }
+  if (cmd === 'dname') doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: 'dname', arg: v });
+  if (cmd === 'rulen') { const r = e.rules.find(x => x.it === arg); if (r) doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: 'rule', arg: JSON.stringify({ ...r, n: Math.max(0, Math.floor(+v || 0)) }) }); }
+});
+document.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.closest?.('[data-chg]')) ev.target.blur(); });
 document.addEventListener('contextmenu', ev => { if (ev.target.closest?.('.panel')) ev.preventDefault(); });
 
 // ---------------------------------------------------------------- signal log
@@ -488,16 +673,26 @@ function renderStatus() {
     <div class="bar"><i style="width:${nx ? Math.min(100, S.activeVol / nx.need * 100) : 100}%"></i></div>
     <div class="row"${tipAttr('Electric networks are joined by pole wires. Machines slow down when a network is overloaded. Click a pole to see its network.')}>Power${P.count > 1 ? ` <span class="dim">(${P.count} networks)</span>` : ''} <span class="${P.sat < 1 && P.demand > 0 ? 'warn' : 'dim'}">${Math.round(P.produced)} / ${Math.round(P.capacity)} kW${P.demand > P.capacity && P.demand > 0 ? ` · ${Math.round(P.sat * 100)}%` : ''}</span></div>
     <div class="bar pw"><i style="width:${P.capacity ? Math.min(100, P.produced / P.capacity * 100) : 0}%"></i></div>
+    ${S.player.veh ? (v => v ? `<div class="row">Driving <b>${itemName(v.type)}</b> <span class="dim">${Math.abs(v.v).toFixed(1)} tiles/s${vstats(v.type).tank ? ` · fuel ${Math.round(v.fuel / vstats(v.type).tank * 100)}%` : ''} · ${keyName('board')} gets out</span></div>` : '')(vehicleById(S.player.veh)) : ''}
+    ${S.player.fed > S.T ? `<div class="row okc">Well fed <span class="dim">${Math.ceil(S.player.fed - S.T)} s: faster walking and mining</span></div>` : ''}
+    ${world.factories.length > 1 ? `<div class="row" data-act="factories"${tipAttr(`The factory you build for. ${keyName('nextFactory')} switches, ${keyName('factories')} manages`)}>Building for ${facChip(S.player.fac)}</div>` : ''}
     ${cur ? `<div class="row">Research <b>${cur.name}</b> <span class="dim">${S.research.progress[cur.id] || 0}/${cur.count}</span></div><div class="bar rs"><i style="width:${(S.research.progress[cur.id] || 0) / cur.count * 100}%"></i></div>` : `<div class="row dim">No research. Press T.</div>`}`);
 }
 export function describeCell(c) {
   if (!c) return '';
   const k = key(c.x, c.y, c.z), e = world.ents.get(k), f = world.frames.get(k), o = world.ores.get(k), out = [];
-  if (e) out.push(`<b>${ENTITIES[e.type].name}</b> <span class="dim">${e.status || ''}</span>`);
+  const vh = c.veh && vehicleById(c.veh);
+  if (vh) { const u = unitOf(vh); out.push(`<b>${itemName(vh.type)}</b> <span class="dim">${u ? esc(u.name) + ' · ' + esc(u.msg || u.state) : 'click to open · B to drive'}</span>`); }
+  if (e) out.push(`<b>${ENTITIES[e.type].name}</b> <span class="dim">${e.status || ''}</span>${world.factories.length > 1 && !ENTITIES[e.type].shared ? ' ' + facChip(e.fac) : ''}`);
   if (f) out.push('Hollow frame' + (e ? ' (machine inside)' : ''));
   const ft = c.y === 0 && world.feats.get(k);
   if (ft) out.push(`<b>${ft.type === 'tree' ? 'Tree' : 'Rock'}</b> <span class="dim">hold right-click to mine</span>`);
   if (o) out.push(`${iconHTML(o.type)} ${itemName(o.type)} · ${fmtN(o.amount)}`);
+  const oil = c.y === 0 && world.oil.get(c.x + ',' + c.z);
+  if (oil) out.push(`${iconHTML('crude_oil')} Crude oil · yield ${Math.round(oil.yield)}% <span class="dim">a pumpjack draws it</span>`);
+  const rd = c.y === 0 && roadAt(c.x, c.z);
+  if (rd) out.push(`<b>${ROADS[rd.s].name}</b> <span class="dim">${rd.w ? `${rd.w} wide, ${rd.l} lane${rd.l > 1 ? 's' : ''}` : 'faster walking'}</span>`);
+  if (c.y === 0 && TILES[tileAt(c.x, c.z)]?.liquid && fishTarget(c)) out.push('<b>Fish</b> <span class="dim">hold right-click to catch it</span>');
   const t = c.y === 0 && TILES[tileAt(c.x, c.z)];
   if (t?.liquid) out.push(`<b>${t.name}</b> <span class="dim">${flowAt(c.x, c.z) >= 0 ? `flows ${DIR_NAMES[flowAt(c.x, c.z)]} · ` : ''}no walking or building, except water pumps</span>`);
   out.push(`<span class="dim">${c.x},${c.z} · layer ${c.y}</span>`);
@@ -518,6 +713,7 @@ let slowT = 0;
 export function updateUI(dt, hover) {
   setHTML($('info'), describeCell(hover));
   renderMineBar();
+  if (S.modal === 'logistics') drawLogistics();
   if ((slowT += dt) < .2) return;
   slowT = 0;
   renderStatus(); renderGoals(); renderHotbar(); updateSignalText(); renderCoop();
@@ -526,6 +722,8 @@ export function updateUI(dt, hover) {
   if (S.modal === 'inventory') renderInventory();
   if (S.modal === 'research') renderResearch();
   if (S.modal === 'map') renderSide(false);
+  if (S.modal === 'logistics') renderLogistics(false);
+  if (S.modal === 'factories') renderFactories();
   setHTML($('craftq'), S.player.craft.slice(0, 10).map((c, i) => `<div class="cell${c.top ? '' : ' sub'}" data-act="cancel:${i}"${tipAttr(c.top ? `<b>${itemName(c.rid)}</b><div class="dim">click to cancel</div>` : `<b>${itemName(c.rid)}</b><div class="dim">part for the next item</div>`)}>${iconHTML(c.rid, (c.times - c.done) * RECIPE[c.rid].out[c.rid])}<i class="pbar" style="width:${(i === 0 ? c.prog : 0) * 100}%"></i></div>`).join(''));
 }
 bus.on('research', id => { toast(`Research complete: ${TECH[id].name}`, 3500, 'good'); renderModal(); });

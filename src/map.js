@@ -2,8 +2,8 @@
 // changed get redrawn (a few per frame at most), so even a big world never hitches. The minimap shows the
 // area around you; the big map (M, or click the minimap) zooms and pans over everything, holds markers and
 // labelled areas, and switches views: terrain, resources, production and power.
-import { ENTITIES, ITEMS, TILES, VOLTAGES } from './data.js';
-import { S, world, bus, key, GRID, LAYER_MAX } from './state.js';
+import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES } from './data.js';
+import { S, world, bus, key, GRID, LAYER_MAX, factoryOf } from './state.js';
 import { nets, voltsOf } from './sim.js';
 import { powerProblem } from './scene.js';
 import { doAction } from './net.js';
@@ -12,8 +12,8 @@ import { iconHTML, fmtN } from './icons.js';
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const setHTML = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
-const MODES = [['terrain', 'Terrain'], ['resources', 'Resources'], ['production', 'Production'], ['power', 'Power']];
-const TOOLS = [['pan', 'Move'], ['marker', 'Marker'], ['area', 'Area']];
+const MODES = [['terrain', 'Terrain'], ['resources', 'Resources'], ['production', 'Production'], ['power', 'Power'], ['factories', 'Factories']];
+const TOOLS = [['pan', 'Move'], ['marker', 'Marker'], ['area', 'Area'], ['assign', 'Assign']];
 const ZOOM = [2, 3, 4, 6, 8, 12, 16, 24];
 const COLORS = ['#ffd23f', '#7ef6ff', '#9be37a', '#ff8a3d', '#ff5a7a', '#b07ad8', '#e8ecf2'];
 const view = { cx: GRID / 2, cz: GRID / 2, ppt: 6 };
@@ -37,17 +37,28 @@ function entColor(e) {
   const c = rgb(ENTITIES[e.type].color);
   return e.items ? shade(c, .75) : c;
 }
+const OIL = rgb(0x231c2a), RAIL = rgb(0x9a8a76);
+const hexRgb = h => rgb(parseInt((h || '#888888').slice(1), 16));
 function tileColor(x, z) {
   const k = key(x, 0, z), t = TILES[world.tiles[z * GRID + x]], v = .92 + hashT(x, z) * .14;
-  const ore = world.ores.get(k), feat = world.feats.get(k), e = topThing(x, z);
+  const ore = world.ores.get(k), feat = world.feats.get(k), e = topThing(x, z), road = world.roads.get(x + ',' + z), oil = world.oil.get(x + ',' + z);
   let c = t.liquid ? rgb(t.map) : shade(GROUND, v);
+  if (road) c = shade(ROADS[road.s]?.paint ?? GROUND, ROADS[road.s]?.walk ? 1.05 : 1.15);
+  if (mode === 'factories') {
+    c = t.liquid ? shade(c, .55) : shade(mix(c, [60, 60, 60], .6), .55);
+    if (road) c = shade(ROADS[road.s]?.paint ?? GROUND, .7);
+    if (e && e.kind !== 'frame') c = e.kind === 'rail' ? RAIL : ENTITIES[e.type].shared ? shade(entColor(e), .6) : hexRgb(factoryOf(e.fac ?? 1)?.color);
+    return c;
+  }
   if (mode === 'terrain') {
     if (ore) c = mix(c, rgb(ITEMS[ore.type].color), .7);
+    if (oil) c = OIL;
     if (feat) c = feat.type === 'tree' ? shade(TREE, v) : ROCK;
-    if (e) c = entColor(e);
+    if (e) c = e.kind === 'rail' ? RAIL : entColor(e);
   } else if (mode === 'resources') {
     c = t.liquid ? shade(c, .7) : shade(mix(c, [70, 70, 70], .5), .6);
     if (ore) c = mix(rgb(ITEMS[ore.type].color), [255, 255, 255], Math.min(.35, ore.amount / 4000));
+    else if (oil) c = mix([60, 30, 90], [200, 160, 255], Math.min(.6, oil.yield / 300));
     else if (e) c = mix(c, entColor(e), .3);
   } else {
     c = t.liquid ? shade(c, .55) : shade(mix(c, [60, 60, 60], .6), .5);
@@ -99,10 +110,14 @@ for (const ev of ['placed', 'removed', 'remesh']) bus.on(ev, e => dirtyAt(e.x, e
 bus.on('ore', (x, y, z) => { if (y === 0) dirtyAt(x, z); });
 bus.on('feat', (x, z) => dirtyAt(x, z));
 bus.on('marks', () => { if (S.modal === 'map') renderSide(true); });
+bus.on('roads', list => { for (const [x, z] of list || []) dirtyAt(x, z); });
+bus.on('factories', () => { if (mode === 'factories') dirtyAll(); });
 export function resetMap() { dirtyAll(); hist.length = 0; selected = null; }
 
 // ---------------------------------------------------------------- drawing
-function drawWorld(ctx, W, H, v, big) {
+// Also used by the logistics window, which draws its routes on top through `overlay(sx, sz)`.
+export function drawMapView(ctx, W, H, v, big, overlay) { refreshChunks(4); drawWorld(ctx, W, H, v, big, overlay); }
+function drawWorld(ctx, W, H, v, big, overlay) {
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#0b0d12'; ctx.fillRect(0, 0, W, H);
   const sx = x => (x - v.cx) * v.ppt + W / 2, sz = z => (z - v.cz) * v.ppt + H / 2;
@@ -131,6 +146,17 @@ function drawWorld(ctx, W, H, v, big) {
     if (selected === m.id) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, z - 7, 9, 0, Math.PI * 2); ctx.stroke(); }
     if (big) { ctx.fillStyle = '#000'; ctx.fillText(m.name, x + 9, z - 15); ctx.fillStyle = m.color; ctx.fillText(m.name, x + 8, z - 16); }
   }
+  // vehicles: a rotated block in their colour
+  for (const vh of world.vehicles) {
+    const fr = FRAMES[VEHICLES[vh.type]?.frame]; if (!fr) continue;
+    ctx.save(); ctx.translate(sx(vh.rx ?? vh.x), sz(vh.rz ?? vh.z)); ctx.rotate(-(vh.ra ?? vh.ang));
+    const w = Math.max(3, v.ppt * .5), l = Math.max(4, v.ppt * fr.len);
+    ctx.fillStyle = '#000'; ctx.fillRect(-w / 2 - 1, -l / 2 - 1, w + 2, l + 2);
+    ctx.fillStyle = '#' + fr.color.toString(16).padStart(6, '0'); ctx.fillRect(-w / 2, -l / 2, w, l);
+    ctx.fillStyle = '#fff'; ctx.fillRect(-w / 2, l / 2 - 2, w, 2);
+    ctx.restore();
+  }
+  if (overlay) overlay(sx, sz);
   for (const p of S.players.values()) {
     const x = sx(p.local ? p.x : p.rx ?? p.x), z = sz(p.local ? p.z : p.rz ?? p.z), r = big ? 7 : 5, f = p.face || 0;
     ctx.fillStyle = p.local ? '#ffffff' : '#' + p.color.toString(16).padStart(6, '0'); ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
@@ -195,7 +221,7 @@ let drag = null;
 cv.addEventListener('pointerdown', e => {
   e.preventDefault(); cv.setPointerCapture(e.pointerId);
   const t = tileAtEvent(e);
-  if (e.button === 0 && tool === 'area') drag = { area: t, cur: t };
+  if (e.button === 0 && (tool === 'area' || tool === 'assign')) drag = { area: t, cur: t, assign: tool === 'assign' };
   else drag = { x: e.clientX, y: e.clientY, cx: view.cx, cz: view.cz, moved: false, button: e.button };
 });
 cv.addEventListener('pointermove', e => {
@@ -208,6 +234,7 @@ cv.addEventListener('pointermove', e => {
 cv.addEventListener('pointerup', e => {
   const d = drag; drag = null; if (!d) return;
   const t = tileAtEvent(e);
+  if (d.assign) { doAction({ a: 'setfac', fac: S.player.fac, area: [d.area.x, d.area.z, t.x, t.z] }); tool = 'pan'; renderSide(true); return; }
   if (d.area) {
     if (d.area.x === t.x && d.area.z === t.z) return;
     addMark({ kind: 'area', x0: d.area.x, z0: d.area.z, x1: t.x, z1: t.z, name: `Area ${world.marks.next}` });
@@ -240,7 +267,7 @@ $('mapBar').addEventListener('pointerdown', e => {
   e.preventDefault();
   const [cmd, arg] = b.dataset.map.split(':');
   if (cmd === 'mode') { mode = arg; dirtyAll(); }
-  if (cmd === 'tool') tool = arg;
+  if (cmd === 'tool') { tool = arg; if (arg === 'assign' && mode !== 'factories') { mode = 'factories'; dirtyAll(); } }
   if (cmd === 'zoom') zoomAt(+arg);
   if (cmd === 'home') { view.cx = S.player.x; view.cz = S.player.z; }
   if (cmd === 'close') { bus.emit('closemap'); return; }
@@ -252,6 +279,7 @@ $('mapSide').addEventListener('pointerdown', e => {
   if (cmd === 'goto') { const m = findMark(+arg); if (m) { selected = m.id; view.cx = (m.x ?? (m.x0 + m.x1) / 2) + .5; view.cz = (m.z ?? (m.z0 + m.z1) / 2) + .5; } }
   else if (cmd === 'color') doAction({ a: 'mark', do: 'edit', id: selected, color: arg });
   else if (cmd === 'remove') { doAction({ a: 'mark', do: 'remove', id: selected }); selected = null; }
+  else if (cmd === 'fac') { S.player.fac = +arg; doAction({ a: 'factory', do: 'select', id: +arg }); }
   else return;
   e.preventDefault(); renderSide(true);
 });
@@ -277,6 +305,7 @@ export function renderSide(force) {
       <div class="btns"><button data-map="remove">Remove</button></div><hr>`;
   }
   html += tool === 'marker' ? '<div class="hint">Click the map to drop a marker.</div>' : tool === 'area' ? '<div class="hint">Drag across the map to mark an area.</div>'
+    : tool === 'assign' ? `<div class="hint">Drag across buildings to move them into ${esc(factoryOf(S.player.fac)?.name ?? '?')}.</div>`
     : '<div class="dim">Drag to move, wheel to zoom, click a marker or area to edit it.</div>';
   html += modeHTML();
   const list = [...world.marks.markers, ...world.marks.areas];
@@ -284,7 +313,12 @@ export function renderSide(force) {
   setHTML($('mapSide'), html);
 }
 function modeHTML() {
-  if (mode === 'terrain') return `<h4>Legend</h4><div class="legend"><i style="background:#${TILES[1].map.toString(16)}"></i>water <i style="background:#${TILES[2].map.toString(16)}"></i>river <i style="background:#2f5a2a"></i>trees</div>`;
+  if (mode === 'factories') {
+    const counts = new Map(); for (const e of world.ents.values()) if (!ENTITIES[e.type].shared) counts.set(e.fac ?? 1, (counts.get(e.fac ?? 1) || 0) + 1);
+    return `<h4>Factories</h4>${world.factories.map(f => `<div class="mrow${S.player.fac === f.id ? ' on' : ''}" data-map="fac:${f.id}"><i style="background:${f.color}"></i>${esc(f.name)} <span class="dim">${counts.get(f.id) || 0}</span></div>`).join('')}
+      <div class="dim">Click one to build for it. The Assign tool drags buildings into the one you build for.</div>`;
+  }
+  if (mode === 'terrain') return `<h4>Legend</h4><div class="legend"><i style="background:#${TILES[1].map.toString(16)}"></i>water <i style="background:#${TILES[2].map.toString(16)}"></i>river <i style="background:#2f5a2a"></i>trees <i style="background:#231c2a"></i>oil <i style="background:#9a8a76"></i>rail</div>`;
   if (mode === 'resources') {
     const by = {};
     for (const [k, o] of world.ores) { const y = +k.split(',')[1], r = by[o.type] ||= { 0: 0, '-1': 0, '-2': 0, tiles: 0 }; r[y] += o.amount; r.tiles++; }

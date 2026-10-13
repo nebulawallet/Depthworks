@@ -1,7 +1,7 @@
 // Sound. Everything is synthesised with Web Audio at runtime: no sample files.
 // One-shots for actions, and ambient loops whose volume follows the working machines near the engineer.
 import { S, world, bus } from './state.js';
-import { ENTITIES } from './data.js';
+import { ENTITIES, VEHICLES } from './data.js';
 
 let ctx = null, master, sfxBus, ambBus, noiseBuf;
 const loops = {};
@@ -165,7 +165,9 @@ export function updateAudio(dt) {
       case 'drill': if (e.status === 'mining') w.drill += near * .6; break;
       case 'furnace': if (e.crafting && active) (ENTITIES[e.type].burner ? (w.fire += near * .6) : (w.machine += near * .5)); break;
       case 'assembler': if (e.crafting && active) w.machine += near * .6; break;
-      case 'generator': w.engine += near * (e.load || 0) * 1.4; break;
+      case 'generator': case 'fgen': w.engine += near * (e.load || 0) * 1.4; break;
+      case 'oilpump': if ((e.load || 0) > 0) w.drill += near * .35; break;
+      case 'fpump': if ((e.load || 0) > 0) w.machine += near * .3; break;
       case 'lab': case 'transmitter': if (active) w.shimmer += near; break;
       case 'inserter': {
         const was = prevHeld.get(e);
@@ -174,6 +176,11 @@ export function updateAudio(dt) {
         break;
       }
     }
+  }
+  for (const v of world.vehicles) {   // engines idle when parked and roar with speed
+    if (!VEHICLES[v.type]?.engine) continue;
+    const dx = v.x - p.x, dz = v.z - p.z, d2 = dx * dx + dz * dz;
+    if (d2 < 400) w.engine += 1 / (1 + d2 / 30) * (.15 + Math.min(1.2, Math.abs(v.v || 0) / 5)) * (p.veh === v.id ? 1.4 : 1);
   }
   fire = Math.min(1, w.fire);
   const under = S.mode === 'depth' && S.layer < 0;

@@ -1,5 +1,6 @@
-import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER } from './data.js';
-import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, generateWater, startingInventory, layerRange, layerLockReason, itemName, freshBars } from './state.js';
+import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES } from './data.js';
+import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, generateWater, generateOil, startingInventory, layerRange, layerLockReason, itemName, freshBars, factoryOf } from './state.js';
+import { stockFish } from './fish.js';
 import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo } from './sim.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
 import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI } from './ui.js';
@@ -32,10 +33,12 @@ function begin(fresh) {
   generateOres();
   S.player.name = nick();
   if (fresh) {
-    Object.assign(S.player, { x: 48.5, z: 52.5, face: 0 });
+    Object.assign(S.player, { x: 48.5, z: 52.5, face: 0, fac: 1, veh: null });
+    Object.assign(world, { vehicles: [], units: [], routes: [], factories: [{ id: 1, name: 'Main factory', color: '#7ef6ff' }], facNext: 2, nextId: 1 });
+    world.roads.clear();
     S.seed = Math.floor(Math.random() * 1e9);   // every new world gets its own coastline, lakes and maybe a river
-    generateWater(S.seed);
-    startingInventory(); generateFeatures();
+    generateWater(S.seed); generateOil(S.seed);
+    startingInventory(); generateFeatures(); stockFish();
     freshBars();
   } else {
     if (!load()) { toast('save could not be read, starting fresh'); return begin(true); }
@@ -160,6 +163,10 @@ addEventListener('keydown', e => {
   if (is('hideUI', c)) return setHideUI(!S.hideUI);
   if (is('cycleBar', c)) return cycleBar();
   if (is('signal', c)) return $('signal').classList.toggle('collapsed');
+  if (is('board', c)) { doAction({ a: 'board' }); return; }
+  if (is('logistics', c)) { sfx(S.modal === 'logistics' ? 'close' : 'open'); return toggleModal('logistics'); }
+  if (is('factories', c)) { sfx(S.modal === 'factories' ? 'close' : 'open'); return toggleModal('factories'); }
+  if (is('nextFactory', c)) { const F = world.factories, i = F.findIndex(f => f.id === S.player.fac); S.player.fac = F[(i + 1) % F.length].id; toast('building for ' + factoryOf(S.player.fac).name, 1500); renderHotbar(); return; }
   if (is('pipette', c)) return pipette();
   if (is('drop', c)) { drop(); renderHotbar(); return; }
   if (is('altMode', c)) { e.preventDefault(); S.altMode = !S.altMode; return; }
@@ -202,8 +209,10 @@ const view = renderer.domElement;
 view.addEventListener('webglcontextlost', () => { console.warn('WebGL context lost'); toast('The graphics were reset. They should come back in a moment.', 5000); });
 view.addEventListener('webglcontextrestored', () => console.warn('WebGL context restored'));
 const setMouse = e => { setMouseFromEvent(e); S.mouseClient = { x: e.clientX, y: e.clientY }; };
-// With a building in hand you aim at the floor tile; with an empty hand you aim at whatever is drawn under the cursor.
-const pick = () => S.sel && ENTITIES[S.sel] ? pickCell() : pickTarget();
+// With a building (or road, vehicle, signal) in hand you aim at the floor tile; with an empty hand you aim at
+// whatever is drawn under the cursor.
+const floorTool = it => !!it && (ENTITIES[it] || ROADS[it] || VEHICLES[it] || ITEMS[it]?.tool === 'signal');
+const pick = () => floorTool(S.sel) ? pickCell() : pickTarget();
 view.addEventListener('contextmenu', e => e.preventDefault());
 view.addEventListener('pointermove', setMouse);
 view.addEventListener('pointerleave', () => { mouse.set(9, 9); S.mouseClient = null; });
@@ -214,6 +223,8 @@ view.addEventListener('pointerdown', e => {
   if (e.button === 1) { e.preventDefault(); pipette(); return; }
   if (e.button === 2) { rmb = true; return; }    // hold right-click to mine
   if (e.button !== 0 || !hover) return;
+  if (hover.veh && !S.sel) { const v = world.vehicles.find(x => x.id === hover.veh); if (v) { if (Math.hypot(v.x - S.player.x, v.z - S.player.z) > PLAYER.reach + 1) toast('out of reach'); else { openEntity(v); sfx('open'); } } return; }
+  if (ITEMS[S.sel]?.food) { doAction({ a: 'eat', it: S.sel }); sfx('craft'); renderHotbar(); return; }
   const ent = world.ents.get(key(hover.x, hover.y, hover.z));
   if (ITEMS[S.sel]?.tool === 'link') { linkClick(ent); return; }
   if (e.ctrlKey && ent) {                                         // Ctrl+click fast transfer
@@ -241,6 +252,13 @@ function linkClick(ent) {
 }
 
 function paintAt(c, first) {
+  if (ROADS[S.sel]) { paintRoad(c, first); return; }
+  if (VEHICLES[S.sel] || ITEMS[S.sel]?.tool === 'signal') {
+    if (!first) return;
+    if (c.y !== 0) { toast('that goes on the ground layer'); return; }
+    doAction(VEHICLES[S.sel] ? { a: 'vehicle', type: S.sel, x: c.x, z: c.z, dir: S.dir } : { a: 'signal', x: c.x, z: c.z, dir: S.dir });
+    building = false; renderHotbar(); return;
+  }
   const k = key(c.x, c.y, c.z), ent = world.ents.get(k), def = S.sel && ENTITIES[S.sel];
   if (!def) {
     if (first && ent) { if (distTo(c.x, c.z) > PLAYER.reach) { toast('out of reach'); sfx('error'); } else { openEntity(ent); sfx('open'); } building = false; }
@@ -262,10 +280,29 @@ function paintAt(c, first) {
     }
     lastPaint = c; lastPlacedCell = null; return;
   }
-  doAction({ a: 'place', type: S.sel, x: c.x, y: c.y, z: c.z, dir: S.dir, dy });
+  doAction({ a: 'place', type: S.sel, x: c.x, y: c.y, z: c.z, dir: S.dir, dy, fac: S.player.fac });
   lastPlacedCell = { ...c, kind: def.kind };
   lastPaint = c;
   if (S.net.role !== 'client' && !invGet(S.sel)) toast(`out of ${itemName(S.sel)}`);
+  renderHotbar();
+}
+
+// Dragging a road lays it in straight runs along the drag, every tile, even when the mouse skips some. Each step
+// covers the road's width across the way you move; changing direction starts a new run from the corner.
+let roadDrag = null;
+const layRoad = (x, z, ax) => doAction({ a: 'road', x, z, ax, surf: S.sel, cfg: S.roadCfg });
+function paintRoad(c, first) {
+  if (c.y !== 0) { if (first) toast('roads go on the ground layer'); return; }
+  if (first) { roadDrag = { last: c, start: c, a: S.dir % 2, fresh: true }; layRoad(c.x, c.z, roadDrag.a); lastPaint = c; renderHotbar(); return; }
+  const d = roadDrag; if (!d) return;
+  const dx = c.x - d.last.x, dz = c.z - d.last.z; if (!dx && !dz) return;
+  const a = Math.abs(dx) >= Math.abs(dz) ? 1 : 0, step = Math.sign(a ? dx : dz);
+  if (d.fresh && a !== d.a) layRoad(d.start.x, d.start.z, a);   // now we know which way the first tile runs
+  d.fresh = false; d.a = a;
+  let { x, z } = d.last;
+  for (let i = 0; i < Math.abs(a ? dx : dz); i++) { if (a) x += step; else z += step; layRoad(x, z, a); }
+  d.last = { x, z }; lastPaint = c;
+  S.dir = a ? (step > 0 ? 1 : 3) : (step > 0 ? 2 : 0);
   renderHotbar();
 }
 
@@ -323,7 +360,7 @@ frame();
 
 // Console hooks for testing and tinkering.
 window.depthworks = {
-  S, world, inv, place, removeAt, simulate, begin, beginGuest, save, load, completeResearch, computeVolume, TIERS, held, doAction, host, join,
+  S, world, inv, place, removeAt, simulate, begin, beginGuest, save, load, completeResearch, computeVolume, TIERS, held, doAction, host, join, toggleModal,
   run(seconds, input) { for (let i = 0; i < seconds * 20; i++) { simulate(.05, input); netTick(.05); } },
   give(it, n = 100) { inv.add(it, n); bus.emit('inv'); },
 };

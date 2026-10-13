@@ -1,5 +1,5 @@
 // Procedural 16x16 pixel icons for every item, drawn once and cached.
-import { ITEMS, ENTITIES } from './data.js';
+import { ITEMS, ENTITIES, FLUIDS, VEHICLES } from './data.js';
 import { hash01 } from './state.js';
 
 const cache = {};
@@ -11,7 +11,7 @@ const hex = (c, k = 1) => {
 export function iconCanvas(id) {
   if (cache[id]) return cache[id];
   const c = document.createElement('canvas'); c.width = c.height = 16;
-  const g = c.getContext('2d', { willReadFrequently: true }), it = ITEMS[id] || { color: 0xff00ff, shape: 'ore' }, col = it.color;
+  const g = c.getContext('2d', { willReadFrequently: true }), it = ITEMS[id] || (FLUIDS[id] ? { color: FLUIDS[id].color, shape: 'fluid' } : { color: 0xff00ff, shape: 'ore' }), col = it.color;
   const px = (x, y, k = 1, w = 1, h = 1, cc = col) => { g.fillStyle = typeof k === 'string' ? k : hex(cc, k); g.fillRect(x, y, w, h); };
   switch (it.shape) {
     case 'ore': {
@@ -36,6 +36,30 @@ export function iconCanvas(id) {
     case 'coil': px(4, 2, .8, 8, 12); for (let y = 3; y < 13; y += 2) px(4, y, 1.25, 8, 1); px(3, 2, '#5b4a10', 10, 1); px(3, 13, '#5b4a10', 10, 1); break;
     case 'pack': px(6, 1, '#c8d0da', 4, 3); px(5, 4, '#c8d0da', 6, 2); for (let y = 6; y < 15; y++) { const w = Math.min(12, 6 + (y - 6) * 2); px(8 - w / 2, y, y < 9 ? 1.25 : 1, w, 1); } px(6, 9, '#ffffff'); break;
     case 'machine': drawMachine(px, it.entity, col); break;
+    case 'fluid': for (let y = 2; y < 15; y++) for (let x = 2; x < 14; x++) { const d = y < 8 ? Math.abs(x - 7.5) * 2.2 - (y - 2) : Math.hypot(x - 7.5, y - 9.5) * 1.6 - 6; if (d < 0) px(x, y, y < 9 ? 1.25 : .9); } px(5, 9, '#ffffff', 1, 2); break;
+    case 'barrel': {
+      const f = it.barrel ? FLUIDS[it.barrel].color : null;
+      px(4, 2, '#8a96a6', 8, 13); px(4, 2, '#b8c0ca', 8, 1); px(4, 14, '#5c6470', 8, 1); px(4, 6, '#5c6470', 8, 1); px(4, 10, '#5c6470', 8, 1);
+      if (f) { px(5, 7, 1, 6, 3, f); px(5, 7, 1.3, 6, 1, f); }
+      break;
+    }
+    case 'engine': px(2, 5, '#5c6470', 11, 8); px(3, 3, 1, 9, 3); for (let x = 3; x < 12; x += 2) px(x, 6, '#2c3038', 1, 6); px(12, 7, '#939ca8', 3, 4); px(1, 12, '#2c3038', 13, 2); px(4, 4, 1.35, 7, 1); break;
+    case 'vehicle': drawVehicle(px, VEHICLES[id]?.frame, col); break;
+    case 'part': px(2, 6, 1, 12, 5); px(2, 6, 1.3, 12, 1); px(3, 11, '#2c3038', 3, 3); px(10, 11, '#2c3038', 3, 3); px(6, 4, .8, 4, 2); break;
+    case 'wheel': for (let y = 1; y < 15; y++) for (let x = 1; x < 15; x++) { const d = Math.hypot(x - 7.5, y - 7.5); if (d < 6.5) px(x, y, d > 4.5 ? 1 : d > 2 ? '#8a929c' : '#c3cad3'); } break;
+    case 'hull': for (let y = 6; y < 13; y++) { const w = 14 - (y - 6) * 1.2; px(8 - w / 2, y, y === 6 ? 1.3 : 1, w, 1); } px(6, 3, '#e0e4ea', 4, 3); break;
+    case 'signal': px(7, 5, '#2c3038', 2, 11); px(5, 1, '#16181d', 6, 6); px(6, 2, '#ff4a3a', 4, 2); px(6, 4, '#3aff5a', 4, 2); break;
+    case 'net': for (let y = 2; y < 14; y++) for (let x = 2; x < 14; x++) if ((x + y) % 3 === 0 || (x - y + 30) % 3 === 0) px(x, y, (x + y) % 2 ? 1 : .8); break;
+    case 'fish': for (let y = 4; y < 12; y++) for (let x = 2; x < 12; x++) if (Math.hypot((x - 7) / 1.6, y - 8) < 3.2) px(x, y, y < 7 ? 1.25 : 1); px(11, 5, 1, 2, 6); px(13, 4, .8, 2, 8); px(4, 7, '#16181d'); break;
+    case 'road': {
+      const r = col >> 16 & 255;
+      px(1, 3, 1, 14, 10);
+      if (id === 'path_tile') { for (let x = 1; x < 15; x += 4) px(x, 3, .75, 1, 10); px(1, 8, .75, 14, 1); }
+      else if (r < 90) { px(2, 7, '#e8e4d8', 3, 1); px(7, 7, '#e8e4d8', 3, 1); px(12, 7, '#e8e4d8', 3, 1); }
+      else { for (let i = 0; i < 12; i++) px(2 + (i * 5) % 12, 4 + (i * 7) % 8, i % 2 ? 1.25 : .75); }
+      px(1, 3, 1.25, 14, 1);
+      break;
+    }
   }
   // dark rim for legibility
   const img = g.getImageData(0, 0, 16, 16), d = img.data, o = new Uint8ClampedArray(d);
@@ -48,9 +72,37 @@ export function iconCanvas(id) {
   cache[id] = c; return c;
 }
 
+function drawVehicle(px, frame, col) {
+  switch (frame) {
+    case 'car': px(2, 7, 1, 12, 4); px(4, 4, '#9fe8f2', 7, 3); px(4, 4, 1.2, 7, 1); for (const x of [3, 10]) px(x, 11, '#22252b', 3, 3); break;
+    case 'truck': px(1, 3, '#c3cad3', 9, 8); px(10, 5, 1, 4, 6); px(11, 6, '#9fe8f2', 2, 2); px(1, 11, '#2c3038', 14, 1); for (const x of [2, 6, 11]) px(x, 12, '#22252b', 3, 3); break;
+    case 'tank': px(1, 9, '#2a2c30', 14, 4); px(2, 6, 1, 12, 4); px(5, 3, 1, 6, 3); px(10, 4, '#2c3038', 6, 1); break;
+    case 'boat': for (let y = 8; y < 13; y++) { const w = 15 - (y - 8) * 1.6; px(8 - w / 2, y, 1, w, 1); } px(3, 5, '#d84a3a', 3, 3); px(6, 5, '#3a7ad8', 3, 3); px(9, 5, '#e0c03a', 3, 3); px(12, 3, '#e0e4ea', 2, 5); break;
+    case 'locomotive': px(1, 4, 1, 10, 7); px(11, 3, 1, 4, 8); px(12, 4, '#9fe8f2', 2, 2); px(4, 2, '#16181d', 2, 2); px(1, 11, '#2c3038', 14, 2); for (const x of [2, 6, 10]) px(x, 13, '#22252b', 2, 2); break;
+    case 'cargo_wagon': px(1, 4, 1, 14, 7); for (const x of [4, 8, 12]) px(x, 4, .7, 1, 7); px(1, 11, '#2c3038', 14, 2); for (const x of [3, 11]) px(x, 13, '#22252b', 2, 2); break;
+  }
+}
 function drawMachine(px, ent, col) {
-  const kind = ENTITIES[ent].kind;
+  const def = ENTITIES[ent], kind = def.model || def.kind;
   switch (kind) {
+    case 'pipe': px(1, 6, 1, 14, 4); px(1, 6, 1.3, 14, 1); px(0, 5, '#5c6470', 2, 6); px(14, 5, '#5c6470', 2, 6); px(7, 5, '#3a8ad8', 2, 2); break;
+    case 'upipe': px(1, 6, 1, 7, 4); px(1, 6, 1.3, 7, 1); px(7, 4, '#2c3038', 8, 9); px(8, 5, '#5c6470', 6, 2); px(10, 9, '#9be37a', 2, 2); break;
+    case 'fpump': px(0, 6, '#939ca8', 16, 4); px(4, 3, 1, 8, 10); px(4, 3, 1.3, 8, 1); px(7, 5, '#ffffff', 2, 5); px(6, 6, '#ffffff', 4, 1); break;
+    case 'valve': px(0, 7, '#939ca8', 16, 3); px(5, 5, 1, 6, 7); px(7, 1, '#2c3038', 2, 5); px(4, 1, '#d84a3a', 8, 2); break;
+    case 'tank': px(2, 3, 1, 12, 12); px(3, 2, 1.25, 10, 2); for (const y of [6, 10]) px(2, y, .75, 12, 1); px(4, 5, '#3a8ad8', 1, 8); break;
+    case 'oilpump': px(1, 13, '#2c3038', 14, 2); px(6, 6, '#939ca8', 1, 7); px(9, 6, '#939ca8', 1, 7); px(1, 4, 1, 14, 2); px(1, 4, '#5c6470', 3, 6); px(12, 5, '#2c3038', 3, 3); break;
+    case 'refinery': px(1, 13, '#2c3038', 14, 2); px(9, 1, '#c3cad3', 3, 12); px(12, 4, '#c3cad3', 3, 9); for (let y = 3; y < 13; y += 3) { px(9, y, 1, 3, 1); px(12, y + 1, 1, 3, 1); } px(1, 7, '#8f8373', 6, 6); px(2, 10, '#ff7a2a', 3, 2); px(3, 3, '#645a4d', 2, 4); break;
+    case 'chem': px(1, 13, '#2c3038', 14, 2); px(2, 6, 1, 5, 7); px(9, 6, 1, 5, 7); px(2, 4, '#9fe8f2', 5, 2); px(9, 4, '#9fe8f2', 5, 2); px(7, 8, '#ffd23f', 2, 2); break;
+    case 'barreler': px(1, 4, 1, 14, 9); px(1, 4, 1.3, 14, 1); px(9, 6, '#8a96a6', 4, 6); px(9, 8, '#5c6470', 4, 1); px(3, 7, '#3a8ad8', 4, 3); break;
+    case 'vfactory': px(1, 4, 1, 14, 11); px(1, 3, '#939ca8', 14, 2); px(4, 8, '#16181d', 8, 7); px(5, 11, '#d84a3a', 6, 3); break;
+    case 'fgen': px(1, 12, '#2c3038', 14, 3); px(2, 5, 1, 8, 7); for (let x = 3; x < 10; x += 2) px(x, 6, .7, 1, 5); px(3, 1, '#645a4d', 2, 4); for (let y = 4; y < 13; y++) for (let x = 10; x < 16; x++) { const d = Math.hypot(x - 12.5, y - 8.5); if (d < 3.4 && d > 2.2) px(x, y, '#c3cad3'); } break;
+    case 'depot': {
+      if (def.way === 'rail') { px(1, 9, '#8f8373', 14, 5); px(1, 3, 1, 14, 2); px(2, 5, '#939ca8', 1, 4); px(13, 5, '#939ca8', 1, 4); px(5, 6, '#ffd23f', 6, 2); }
+      else if (def.way === 'road') { px(2, 4, 1, 12, 10); px(2, 3, '#939ca8', 12, 2); px(4, 8, '#2c3038', 6, 6); px(11, 9, '#d84a3a', 3, 5); }
+      else { px(0, 10, '#3a8ad8', 16, 6); px(1, 8, '#8a5a2c', 14, 3); px(10, 1, '#e5ad2e', 1, 8); px(4, 1, '#e5ad2e', 7, 1); px(3, 5, 1, 4, 3); }
+      break;
+    }
+    case 'rail': for (let x = 1; x < 16; x += 3) px(x, 3, '#5e3b1a', 2, 10); px(0, 5, '#c3cad3', 16, 1); px(0, 10, '#c3cad3', 16, 1); break;
     case 'belt': px(1, 3, '#2b2f36', 14, 10); for (let i = 0; i < 3; i++) { px(4 + i * 3, 5, 1, 2, 1); px(5 + i * 3, 6, 1, 2, 1); px(6 + i * 3, 7, 1, 2, 2); px(5 + i * 3, 9, 1, 2, 1); px(4 + i * 3, 10, 1, 2, 1); } px(1, 3, .7, 14, 1); px(1, 12, .7, 14, 1); break;
     case 'underground': px(1, 4, '#2b2f36', 7, 8); px(8, 2, 1, 7, 12); px(9, 4, '#111', 5, 8); px(2, 7, 1, 5, 2); px(5, 6, 1, 1, 4); break;
     case 'splitter': px(1, 6, '#2b2f36', 6, 4); px(6, 2, 1, 4, 12); px(10, 1, '#2b2f36', 5, 4); px(10, 11, '#2b2f36', 5, 4); px(10, 6, '#2b2f36', 5, 4); break;
@@ -77,6 +129,6 @@ function drawMachine(px, ent, col) {
 
 export function iconURL(id) { const c = iconCanvas(id); return c._url ||= c.toDataURL(); }
 export function iconHTML(id, n, cls = '') {
-  return `<span class="icon ${cls}" title="${ITEMS[id]?.name ?? id}"><img src="${iconURL(id)}" alt="">${n !== undefined && n !== null && n !== '' ? `<b>${fmtN(n)}</b>` : ''}</span>`;
+  return `<span class="icon ${cls}" title="${ITEMS[id]?.name ?? FLUIDS[id]?.name ?? id}"><img src="${iconURL(id)}" alt="">${n !== undefined && n !== null && n !== '' ? `<b>${fmtN(n)}</b>` : ''}</span>`;
 }
 export function fmtN(n) { return n >= 10000 ? Math.round(n / 1000) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.floor(n)); }

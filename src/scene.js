@@ -2,10 +2,11 @@
 // sub-pixel offset is applied by sliding the canvas, so motion stays smooth without shimmering), then a
 // post pass draws pixel outlines from depth and normal edges and upscales with hard pixels.
 import * as THREE from 'three';
-import { ENTITIES, ITEMS, TILES, VOLTAGES } from './data.js';
-import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater } from './state.js';
-import { makeMesh, disposeMesh, setGhost, setPreview, poseInserter, itemGeo, itemMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER } from './models.js';
+import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE } from './data.js';
+import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf } from './state.js';
+import { makeMesh, disposeMesh, setGhost, setPreview, poseInserter, itemGeo, itemMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo } from './models.js';
 import { canPlace, visibleOnBelt, distTo, mineTargetAt, voltsOf } from './sim.js';
+import { roadAt, roadCells, signalRed, vehicleById, onWay, dockTiles, vstats } from './transport.js';
 import { isDown } from './input.js';
 
 export const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -138,10 +139,73 @@ function waterPixel(wx, wz, c) {
   const foam = field < .56 && !TILES[best].current ? 18 : 0;   // a light rim on still shores only
   return p.map(v => v * dk + ripple + foam);
 }
+// Crude oil: a dark glossy stain, bigger and blacker where the well is richer.
+function oilPixel(o, fx, fz, c, grain) {
+  const d = Math.hypot(fx - .5, fz - .5), r = .26 + Math.min(.2, o.yield / 900) + (vnoise((fx + 3) * 4.1, fz * 4.1) - .5) * .18;
+  if (d > r + .1) return c;
+  if (d > r) return c.map(v => v * .8);
+  return grain > .9 ? [96, 90, 110] : [24 + grain * 10, 20 + grain * 8, 28 + grain * 12];
+}
+// What a road tile needs to know about its neighbours to paint itself: corners, junctions, kerbs.
+function roadInfo(x, z) {
+  const r = roadAt(x, z); if (!r) return null;
+  const n = DIRS.map(([dx, dz]) => roadAt(x + dx, z + dz)), car = t => !!t && !ROADS[t.s]?.walk, walk = !!ROADS[r.s]?.walk;
+  const same = n.map(t => walk ? !!t && !!ROADS[t.s]?.walk : car(t));
+  let corner = null;   // exactly two neighbours of its own kind, at right angles: round off the outside corner
+  const on = [0, 1, 2, 3].filter(d => same[d]);
+  if (on.length === 2 && (on[0] + on[1]) % 2 === 1 && n.every((t, d) => on.includes(d) || !t)) corner = [.5 + (DIRS[on[0]][0] + DIRS[on[1]][0]) * .5, .5 + (DIRS[on[0]][1] + DIRS[on[1]][1]) * .5];
+  const junction = !walk && n.some(t => car(t) && t.a !== r.a);
+  // an approach: the next tile along the road is a junction tile
+  let approach = -1;
+  if (!walk && !junction) for (const d of r.a === 0 ? [0, 2] : [1, 3]) {
+    const t = n[d]; if (!car(t)) continue;
+    const tx = x + DIRS[d][0], tz = z + DIRS[d][1];
+    if (DIRS.some(([dx, dz]) => { const q = roadAt(tx + dx, tz + dz); return car(q) && q.a !== t.a; }) || t.a !== r.a) approach = d;
+  }
+  return { r, walk, n, car: n.map(car), corner, junction, approach, def: ROADS[r.s] };
+}
+const YELLOW = [214, 176, 52], WHITE = [222, 222, 214];
+function roadPixel(I, fx, fz, c, x, z) {
+  const { r, def } = I;
+  if (I.corner && Math.hypot(fx - I.corner[0], fz - I.corner[1]) > 1) return null;   // rounded outside corner
+  if (I.walk) {   // paving slabs with grout, and a pale kerb where it meets a road
+    const sx = Math.floor(fx * 2), sz = Math.floor(fz * 2), grout = (fx * 2) % 1 < .08 || (fz * 2) % 1 < .08;
+    let col = def.paint.map(v => v + (hash2(x * 2 + sx, z * 2 + sz) - .5) * 12);
+    if (grout) col = col.map(v => v * .78);
+    for (let d = 0; d < 4; d++) if (I.car[d]) { const e = d === 0 ? fz : d === 1 ? 1 - fx : d === 2 ? 1 - fz : fx; if (e < .1) col = e < .04 ? [120, 116, 108] : [196, 192, 184]; }
+    return col;
+  }
+  const g = hash2(Math.floor(x * 16 + fx * 16), Math.floor(z * 16 + fz * 16));
+  let col = def.paint.slice();
+  if (r.s === 'gravel_road') col = col.map(v => v + (g - .5) * 34 + (g > .93 ? 26 : 0));
+  else if (r.s === 'cobble_road') {
+    const row = Math.floor(fz * 4), u = fx * 4 + (row % 2) * .5, mort = (u % 1) < .12 || (fz * 4) % 1 < .12;
+    col = mort ? col.map(v => v * .62) : col.map(v => v + (hash2(Math.floor(x * 4 + u), z * 4 + row) - .5) * 26);
+  } else if (r.s === 'concrete_road') { col = col.map(v => v + (g - .5) * 8); if (fx < .03 || fz < .03) col = col.map(v => v * .8); }
+  else col = col.map(v => v + (g - .5) * 10);
+  if (I.junction) return col;
+  const w = r.w || 1, u = (r.i || 0) + (r.a === 0 ? fx : fz), v = r.a === 0 ? z + fz : x + fx, lw = .05;
+  if (I.approach >= 0) {   // zebra crossing or a stop line on the edge that meets the junction
+    const d = I.approach, edge = d === 0 ? fz : d === 1 ? 1 - fx : d === 2 ? 1 - fz : fx;
+    if (r.c && edge < .38 && edge > .06 && (u * 5) % 1 < .5) return WHITE;
+    if (!r.c && edge < .09) return WHITE;
+  }
+  if (r.e && (u < .06 + lw && u > .06 || u > w - .06 - lw && u < w - .06)) return WHITE;
+  const L = r.l || 1;
+  for (let k = 1; k < L; k++) {
+    const b = w * k / L, centre = L % 2 === 0 && k === L / 2;
+    if (!centre) { if (Math.abs(u - b) < lw / 2 + .01 && (v % 1) < .5) return WHITE; continue; }
+    if (r.m === 'double') { if (Math.abs(Math.abs(u - b) - .05) < .025) return YELLOW; }
+    else if (r.m === 'solid') { if (Math.abs(u - b) < lw / 2 + .01) return YELLOW; }
+    else if (r.m === 'dashed') { if (Math.abs(u - b) < lw / 2 + .01 && (v % 1) < .5) return WHITE; }
+  }
+  return col;
+}
 function paintTile(y, x, z) {
   const L = layers[y], g = L.ctx, pal = PALETTES[y], og = oreGrid(y);
   const at = (tx, tz) => tx < 0 || tz < 0 || tx >= GRID || tz >= GRID ? -1 : og[tz * GRID + tx];
   const img = L.img ||= g.createImageData(TP, TP), d = img.data;
+  const road = y === 0 ? roadInfo(x, z) : null, oil = y === 0 ? world.oil.get(x + ',' + z) : null;
   for (let py = 0; py < TP; py++) for (let px = 0; px < TP; px++) {
     const wx = x + (px + .5) / TP, wz = z + (py + .5) / TP;
     const n = fbm(wx * .18 + y * 9, wz * .18), m = vnoise(wx * .9, wz * .9), grain = hash2(x * TP + px + y * 7777, z * TP + py);
@@ -160,6 +224,8 @@ function paintTile(y, x, z) {
       if (grain < .16) c = oc.map(v => v * (.6 + grain * 2.4));
     }
     if (y === 0) { const w = waterPixel(wx, wz, c); if (w) c = w; }
+    if (oil) c = oilPixel(oil, wx - x, wz - z, c, grain);
+    if (road) { const r = roadPixel(road, wx - x, wz - z, c, x, z); if (r) c = r; }
     c = c.map(v => Math.round(v / 4) * 4);
     const i = (py * TP + px) * 4; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
   }
@@ -217,7 +283,7 @@ function buildClutter() {
   // ground cover: tufts and pebbles on empty surface tiles
   const tufts = [], pebbles = [];
   for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
-    const k = key(x, 0, z); if (world.ores.has(k) || world.feats.has(k) || isWater(x, z)) continue;
+    const k = key(x, 0, z); if (world.ores.has(k) || world.feats.has(k) || isWater(x, z) || world.roads.has(x + ',' + z) || world.oil.has(x + ',' + z)) continue;
     const h = hash2(x * 3 + 1, z * 5 + 2);
     if (h < .2) tufts.push([k, x, z, h]); else if (h > .93) pebbles.push([k, x, z, h]);
   }
@@ -257,6 +323,11 @@ function buildClutter() {
     featIndex.set(rock.uuid + i, k);
   });
   featMeshes = [trunk, crownA, crownB, rock];
+  // crude oil: a dark puddle with a sheen over each well
+  const wells = [...world.oil.keys()];
+  const oilIm = inst(new THREE.CylinderGeometry(.3, .34, .02, 10), M(0x1a161e, { emissive: 0x2a2440, emissiveIntensity: .35 }), wells.length);
+  oilIm.castShadow = false;
+  wells.forEach((k2, i) => { const [x, z] = k2.split(',').map(Number), r = rng(x * 31 + z * 17); _m.compose(V(x + .5, .012, z + .5), _q.setFromEuler(_e.set(0, r() * 6, 0)), V(1, 1, .8 + r() * .3)); addClutter(key(x, 0, z), oilIm, i, _m); });
   for (const im of clutterMeshes) if (im.instanceColor) im.instanceColor.needsUpdate = true;
   // hide clutter under anything already built
   for (const e of world.ents.values()) showClutter(key(e.x, e.y, e.z), false);
@@ -321,6 +392,18 @@ export function buildTerrain() {
   }
   buildClutter();
 }
+// A road change repaints its tiles and their neighbours (corners, kerbs and junction markings depend on them).
+bus.on('roads', list => {
+  if (!layers[0]) return;
+  const seen = new Set();
+  for (const [x, z] of list || []) for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+    const tx = x + dx, tz = z + dz, k = tx + ',' + tz;
+    if (tx < 0 || tz < 0 || tx >= GRID || tz >= GRID || seen.has(k)) continue;
+    seen.add(k); paintTile(0, tx, tz);
+  }
+  for (const [x, z] of list || []) showClutter(key(x, 0, z), !roadAt(x, z) && !world.ents.has(key(x, 0, z)));
+  layers[0].tex.needsUpdate = true;
+});
 bus.on('ore', (x, y, z) => {
   showClutter(key(x, y, z), false); clutter.delete(key(x, y, z));
   if (!layers[y]) return;
@@ -502,7 +585,7 @@ const boltMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(.62, .62), new 
 boltMesh.layers.set(UI_LAYER); boltMesh.renderOrder = 30; boltMesh.frustumCulled = false; boltMesh.count = 0; boltMesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(boltMesh);
 export const powerProblem = e => {
   const def = ENTITIES[e.type];
-  if (!def.power && e.kind !== 'engine' && e.kind !== 'generator' && e.kind !== 'solar') return null;
+  if (!def.power && e.kind !== 'engine' && e.kind !== 'generator' && e.kind !== 'solar' && e.kind !== 'fgen') return null;
   if (!e.net) return 'none';
   if (def.power && e.net.capacity <= 0) return 'none';
   if (def.power && e.net.demand > e.net.capacity) return 'low';
@@ -556,6 +639,67 @@ function animateOthers(dt) {
   for (const [id, m] of others) if (!S.players.has(id)) { scene.remove(m); others.delete(id); }
 }
 
+// ---------------------------------------------------------------- vehicles
+// The host moves vehicles; in a friend's browser they glide toward the positions in each snapshot.
+const vehMeshes = new Map();
+const lerpAng = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
+function animateVehicles(dt) {
+  const k = S.net.role === 'client' ? 1 - Math.pow(.0005, dt) : 1, under = S.mode === 'depth' && S.layer < 0;
+  for (const v of world.vehicles) {
+    let m = vehMeshes.get(v.id);
+    if (!m || m.userData.type !== v.type) { if (m) scene.remove(m); m = makeVehicle(v); scene.add(m); vehMeshes.set(v.id, m); v.rx = v.x; v.rz = v.z; v.ra = v.ang; }
+    if (v.rx === undefined || Math.hypot(v.x - v.rx, v.z - v.rz) > 4) { v.rx = v.x; v.rz = v.z; v.ra = v.ang; }
+    v.rx += (v.x - v.rx) * k; v.rz += (v.z - v.rz) * k; v.ra = lerpAng(v.ra, v.ang, k);
+    const P = m.userData.P, frame = VEHICLES[v.type].frame, sea = frame === 'boat';
+    m.position.set(v.rx, sea ? -.05 + Math.sin(S.T * 1.7 + v.id) * .025 : 0, v.rz);
+    m.rotation.set(sea ? Math.sin(S.T * 1.3 + v.id) * .03 : 0, v.ra, sea ? Math.sin(S.T * 1.1 + v.id * 2) * .04 : 0);
+    if (P.net) P.net.visible = !!v.net;
+    if (P.turret) P.turret.rotation.y = Math.sin(S.T * .3 + v.id) * .5;
+    if (m.userData.ghost !== under) { m.userData.ghost = under; setGhost(m, under); }
+    if (Math.abs(v.v) > .6 && VEHICLES[v.type].engine && !under && (v.smokeT = (v.smokeT || 0) + dt) > .35 / Math.min(2, Math.abs(v.v) / 3)) {
+      v.smokeT = 0; const L = FRAMES[frame].len * .5;
+      smoke(v.rx - Math.sin(v.ra) * L, sea ? .5 : .35, v.rz - Math.cos(v.ra) * L, frame !== 'car');
+    }
+  }
+  for (const [id, m] of vehMeshes) if (!world.vehicles.some(v => v.id === id)) { scene.remove(m); disposeMesh(m); vehMeshes.delete(id); }
+}
+// ---------------------------------------------------------------- fish
+const fishMesh = new THREE.InstancedMesh(fishGeo(), M(0xffffff), 600);
+fishMesh.count = 0; fishMesh.frustumCulled = false; fishMesh.castShadow = false; fishMesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(fishMesh);
+function animateFish() {
+  let n = 0;
+  if (S.started && !(S.mode === 'depth' && S.layer < 0)) for (const f of world.fish) {
+    if (n >= 600) break;
+    const jump = (f.id * 7919 + Math.floor(S.T / 9)) % 23 === 0 ? Math.max(0, Math.sin((S.T % 9) * 3)) * .25 : 0;
+    _m.compose(V(f.x, -.02 + jump, f.z), _q.setFromEuler(_e.set(-jump * 2, f.a, 0)), V(1, 1, 1));
+    fishMesh.setMatrixAt(n, _m); fishMesh.setColorAt(n++, _c.setHex(f.id % 3 ? 0x9ab8cc : 0xd88a4a));
+  }
+  fishMesh.count = n; fishMesh.instanceMatrix.needsUpdate = true; if (fishMesh.instanceColor) fishMesh.instanceColor.needsUpdate = true;
+}
+// ---------------------------------------------------------------- factory tags
+// With more than one factory, alt mode marks every building with its factory's colour.
+const tagTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 8; const g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, 8, 8); g.fillStyle = '#fff'; g.fillRect(1, 1, 6, 6);
+  const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const tagMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(.2, .2), new THREE.MeshBasicMaterial({ map: tagTex, depthTest: false, depthWrite: false, transparent: true }), 4096);
+tagMesh.layers.set(UI_LAYER); tagMesh.renderOrder = 28; tagMesh.frustumCulled = false; tagMesh.count = 0; tagMesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(tagMesh);
+const facColors = new Map(), UNTAGGED = new Set(['pipe', 'upipe', 'inserter', 'pole']);   // small connectors: hover them to see their factory
+function updateTags() {
+  let n = 0;
+  if (S.started && S.altMode && world.factories.length > 1) {
+    facColors.clear(); for (const f of world.factories) facColors.set(f.id, new THREE.Color(f.color));
+    const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
+    for (const e of world.ents.values()) {
+      if (n >= 4096 || e.ghost || e.items || ENTITIES[e.type].shared || UNTAGGED.has(e.kind) || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R) continue;
+      _m.compose(V(e.x + .2, e.y + Math.min(.9, heightOf(e)) + .12, e.z + .2), camera.quaternion, V(1, 1, 1));
+      tagMesh.setMatrixAt(n, _m); tagMesh.setColorAt(n++, facColors.get(e.fac ?? 1) || _c.setHex(0xffffff));
+    }
+  }
+  tagMesh.count = n; tagMesh.instanceMatrix.needsUpdate = true; if (tagMesh.instanceColor) tagMesh.instanceColor.needsUpdate = true;
+}
+
 // ---------------------------------------------------------------- animation
 const rings = [];
 bus.on('pulse', e => {
@@ -590,7 +734,23 @@ function animate(dt) {
         smoking = on && !!P.smoke;
         break;
       }
-      case 'assembler': if (active && e.crafting) { P.spool.rotation.x += dt * 6; P.gear.rotation.y -= dt * 2.5; } if (P.sprite) P.sprite.visible = !!e.recipe && S.altMode && !e.ghost; break;
+      case 'assembler': {
+        const on = active && e.crafting;
+        if (on && P.spool) P.spool.rotation.x += dt * 6;
+        if (on && P.gear) P.gear.rotation.y -= dt * 2.5;
+        if (on && P.stir) P.stir.rotation.y += dt * 5;
+        if (on && P.spin) P.spin.rotation.y += dt * 4;
+        if (P.crane) P.crane.position.z = on ? Math.sin(S.T * 1.2) * .3 : P.crane.position.z * .95;
+        if (P.glow) { P.glow.emissiveIntensity = on ? 1.5 + .4 * Math.sin(S.T * 17 + e.x) : .08; smoking = on && !!P.smoke; dark = true; }
+        if (P.sprite) P.sprite.visible = !!e.recipe && S.altMode && !e.ghost;
+        break;
+      }
+      case 'oilpump': e.ph = (e.ph || 0) + dt * 2.2 * (e.load || 0); P.beam.rotation.x = Math.sin(e.ph) * .26; P.rod.position.y = .4 + Math.sin(e.ph) * .1; break;
+      case 'fpump': P.fly.rotation.x += dt * 14 * (e.load || 0); break;
+      case 'fgen': P.fly.rotation.x += dt * 14 * (e.load || 0); P.glow.emissiveIntensity = (e.load || 0) > 0 ? .5 + e.load : .05; smoking = (e.load || 0) > .05; dark = true; break;
+      case 'depot': if (P.crane) P.crane.rotation.y = active ? Math.sin(S.T * .9) * .9 : P.crane.rotation.y * .97; break;
+      case 'rail': if (P.lamp) P.lamp.emissive.setHex(signalRed(e) ? 0xff3a2a : 0x3aff5a); break;
+      case 'tank': if (P.level) { const f = Math.min(1, (e.fa?.[0] || 0) / ENTITIES[e.type].cap); P.level.emissiveIntensity = .2 + f; } break;
       case 'lab': if (active) P.ring.rotation.y += dt * 2; P.glow.emissiveIntensity = active ? 1 + .5 * Math.sin(S.T * 4) : .2; break;
       case 'generator': P.fly.rotation.x += dt * 10 * (e.load || 0); P.glow.emissiveIntensity = (e.load || 0) > 0 ? 1.3 : .05; smoking = (e.load || 0) > .05; dark = true; break;
       case 'transmitter': P.spin.rotation.y += dt * .5; P.glow.emissiveIntensity = .3 + e.prog * 3; break;
@@ -600,7 +760,7 @@ function animate(dt) {
     }
     if (smoking && !e.ghost) {
       e.smokeT = (e.smokeT || 0) + dt;
-      if (e.smokeT > (e.kind === 'generator' || e.kind === 'boiler' ? .5 / Math.max(.2, e.load) : .4)) {
+      if (e.smokeT > (e.kind === 'generator' || e.kind === 'boiler' || e.kind === 'fgen' ? .5 / Math.max(.2, e.load) : .4)) {
         e.smokeT = 0; _w.set(...P.smoke); e.mesh.localToWorld(_w); smoke(_w.x, _w.y, _w.z, dark);
       }
     }
@@ -626,6 +786,8 @@ function animate(dt) {
     r.mesh.scale.setScalar(1 + r.age * 10); r.mesh.material.opacity = Math.max(0, .8 - r.age * .4);
     if (r.age > 2) { scene.remove(r.mesh); r.mesh.geometry.dispose(); rings.splice(i, 1); }
   }
+  animateVehicles(dt);
+  animateFish();
   updateParticles(dt);
 }
 
@@ -637,9 +799,9 @@ export function moveInput() {
   if (isDown('down', keys)) fz--;
   if (isDown('right', keys)) fx++;
   if (isDown('left', keys)) fx--;
-  if (!fx && !fz) return { mx: 0, mz: 0 };
+  if (!fx && !fz) return { mx: 0, mz: 0, fx, fz };
   const sy = Math.sin(S.cam.yaw), cy = Math.cos(S.cam.yaw), mx = -sy * fz + cy * fx, mz = -cy * fz - sy * fx, l = Math.hypot(mx, mz);
-  return { mx: mx / l, mz: mz / l };
+  return { mx: mx / l, mz: mz / l, fx, fz };   // fx / fz are the raw keys, for driving
 }
 export function zoomStep(dir) {
   const C = S.cam; let i = ZOOMS.indexOf(C.ppuT); if (i < 0) i = 4;
@@ -687,18 +849,19 @@ export function pickCell() {
   if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), p)) return null;
   const x = Math.floor(p.x), z = Math.floor(p.z);
   if (x < 0 || z < 0 || x >= GRID || z >= GRID) return null;
-  return { x, y, z };
+  return { x, y, z, px: p.x, pz: p.z };
 }
 // The thing you are actually pointing at: a machine's body or a tree, not the ground behind it.
 export function pickTarget() {
   ray.setFromCamera(mouse, camera);
   const y = S.mode === 'depth' ? S.layer : 0, list = [];
   for (const e of world.ents.values()) if (e.mesh && e.y === y) list.push(e.mesh);
-  if (y === 0) list.push(...featMeshes);
+  if (y === 0) list.push(...featMeshes, ...vehMeshes.values());
   const hits = ray.intersectObjects(list, true);
   for (const h of hits) {
     if (h.instanceId !== undefined) { const k = featIndex.get(h.object.uuid + h.instanceId); if (k && world.feats.has(k)) { const [x, , z] = k.split(',').map(Number); return { x, y: 0, z }; } continue; }
-    let o = h.object; while (o && !o.userData.ent) o = o.parent;
+    let o = h.object; while (o && !o.userData.ent && !o.userData.veh) o = o.parent;
+    if (o?.userData.veh) { const v = vehicleById(o.userData.veh); if (v) return { x: Math.floor(v.x), y: 0, z: Math.floor(v.z), veh: v.id }; continue; }
     if (o) { const e = o.userData.ent; return { x: e.x, y: e.y, z: e.z }; }
   }
   return pickCell();
@@ -759,10 +922,18 @@ function cross(tx, y, tz) {
   hintCross.setMatrixAt(nX, _m); _c.setHex(COL.BAD); hintCross.setColorAt(nX++, _c);
 }
 const SINKS = new Set(['furnace', 'assembler', 'lab', 'chest', 'generator', 'transmitter', 'boiler']);
+// Where a pipe-like thing would join: green arrows toward neighbours with a fluid connection on our side.
+function fluidHint2At(x, y, z) {
+  for (let d = 0; d < 4; d++) {
+    const n = world.ents.get(key(x + DIRS[d][0], y, z + DIRS[d][1]));
+    if (n && (n.fb || ENTITIES[n.type].fluids || ENTITIES[n.type].ports)) arrow(x + DIRS[d][0], y, z + DIRS[d][1], d, COL.OK, .7);
+  }
+}
 const beltish = e => !!(e && e.items);
 // Draw the inputs and outputs of a machine of `type` at (x, y, z) facing `dir`. Returns a hint sentence.
 function ioHints(type, x, y, z, dir, dy) {
   const def = ENTITIES[type], kind = def.kind, [dx, dz] = DIRS[dir], at = (tx, ty, tz) => world.ents.get(key(tx, ty, tz));
+  const fluidHint2 = () => fluidHint2At(x, y, z);
   if (kind === 'inserter') {
     const r = def.reach, sx = x - dx * r, sz = z - dz * r, tx = x + dx * r, tz = z + dz * r;
     const src = at(sx, y, sz), tgt = at(tx, y + dy, tz);
@@ -777,12 +948,30 @@ function ioHints(type, x, y, z, dir, dy) {
   }
   if (kind === 'belt' || kind === 'underground' || kind === 'splitter' || kind === 'lift') {
     const ny = kind === 'lift' ? y + dy : y, nx = x + dx, nz = z + dz, n = at(nx, ny, nz);
-    if (kind === 'underground') return 'Underground belt: place the exit up to 4 tiles ahead, facing the same way';
+    if (kind === 'underground') return `Underground belt: place the exit up to ${def.range - 1} tiles ahead, facing the same way`;
     if (n && !beltish(n) && n.kind !== 'inserter') { cross(nx, ny, nz); return `Belts can't load a ${ENTITIES[n.type].name.toLowerCase()} directly: put an inserter between them`; }
     arrow(nx, ny, nz, dir, COL.FLOW, .75);
     if (kind === 'splitter') { arrow(x + DIRS[(dir + 3) % 4][0], y, z + DIRS[(dir + 3) % 4][1], (dir + 3) % 4, COL.FLOW, .75); arrow(x + DIRS[(dir + 1) % 4][0], y, z + DIRS[(dir + 1) % 4][1], (dir + 1) % 4, COL.FLOW, .75); }
     return '';
   }
+  if (kind === 'pipe' || kind === 'tank') { fluidHint2(); return kind === 'pipe' ? 'Pipe: joins every pipe and fluid port next to it. Arrows show what it would join' : 'Storage tank: joins pipes on every side'; }
+  if (kind === 'upipe') { const back = (dir + 2) % 4; arrow(x + DIRS[back][0], y, z + DIRS[back][1], back, COL.OK, .8); return `Underground pipe: connects behind it; place the other end up to ${def.range - 1} tiles ahead, facing the same way`; }
+  if (kind === 'fpump' || kind === 'valve') {
+    const b = (dir + 2) % 4; arrow(x + DIRS[b][0], y, z + DIRS[b][1], dir, COL.IN, .8); arrow(x + dx, y, z + dz, dir, COL.OUT, .8);
+    return kind === 'fpump' ? 'Pump: takes fluid from the blue arrow and pushes it out at the orange one. Needs power' : 'Valve: fluid passes from the blue arrow to the orange one, never back';
+  }
+  if (def.ports) {
+    for (const p of def.ports) { const d = (p.side + dir) % 4; arrow(x + DIRS[d][0], y, z + DIRS[d][1], p.io === 'in' ? (d + 2) % 4 : d, p.io === 'in' ? COL.IN : COL.OUT, .8); }
+    if (kind === 'oilpump') return y === 0 && !world.oil.has(x + ',' + z) ? 'Pumpjacks go on crude oil (dark patches on the ground)' : 'Pumpjack: crude oil comes out at the orange arrow: lead a pipe or a tank from there';
+    return `${def.name}: fluids go in at the blue arrows and out at the orange ones. Items by inserter`;
+  }
+  if (kind === 'depot') {
+    const e0 = { x, y, z, dir, type };
+    for (const [tx, tz] of y === 0 ? dockTiles(e0) : []) arrow(tx, y, tz, dir, COL.OK, .9);
+    const way = def.way, ok = y === 0 && DIRS.some(([ddx, ddz]) => onWay(way, x + ddx, z + ddz));
+    return ok ? `${def.name}: vehicles stop at the green arrow. Inserters and pipes connect on any side` : way === 'sea' ? 'Ports go on the shore, next to water' : way === 'rail' ? 'Train stations go right beside a rail' : 'Truck depots go right beside a road';
+  }
+  if (kind === 'rail') return 'Rail: drag to lay track. Rails join every rail next to them; three or four make a junction. Use rail signals to let several trains share track';
   // fluids pass between side-by-side buildings: point at the neighbours that would join up
   const fluidHint = () => {
     for (let d = 0; d < 4; d++) {
@@ -794,7 +983,8 @@ function ioHints(type, x, y, z, dir, dy) {
     fluidHint();
     return y === 0 && !isWater(x, z) ? 'Water pumps go on water, next to the shore' : 'Water pump: boilers touching it get water (one pump is enough for 20)';
   }
-  if (kind === 'engine') { fluidHint(); return 'Steam engine: put it against a boiler or another engine, inside a pole\'s supply area'; }
+  if (kind === 'engine') { fluidHint(); return 'Steam engine: put it against a boiler or another engine (or pipe steam to it), inside a pole\'s supply area'; }
+  if (kind === 'fgen') { fluidHint(); return 'Diesel generator: pipe diesel to any side, and put it in a pole\'s supply area'; }
   if (kind === 'pole' && def.volts) return 'Transformer: wires itself to low voltage poles. Hold a transformer cable and click it, then a power line';
   if (kind === 'pole' && voltsOf(def)[0] > 0) return 'Power line: high voltage, wires to other lines. Step it down with a transformer station';
   if (SINKS.has(kind)) {
@@ -834,8 +1024,9 @@ function updateAltArrows() {
 }
 
 let preview = null, previewKey = '';
-const electricKind = sel => !!sel && (ENTITIES[sel].kind === 'pole' || !!ENTITIES[sel].power || ['generator', 'solar', 'engine'].includes(ENTITIES[sel].kind));
-const heightOf = e => e ? (e.items ? .22 : e.kind === 'inserter' ? .45 : e.kind === 'pole' ? (ENTITIES[e.type]?.top ?? 1.26) + .09 : e.kind === 'frame' ? 1 : e.kind === 'boiler' ? .95 : .75) : .04;
+const electricKind = sel => !!sel && !!ENTITIES[sel] && (ENTITIES[sel].kind === 'pole' || !!ENTITIES[sel].power || ['generator', 'solar', 'engine', 'fgen'].includes(ENTITIES[sel].kind));
+const HEIGHTS = { inserter: .45, frame: 1, boiler: .95, pipe: .36, upipe: .25, valve: .55, fpump: .45, tank: 1.05, rail: .1, depot: .8, oilpump: .9 };
+const heightOf = e => e ? (e.items ? .22 : e.kind === 'pole' ? (ENTITIES[e.type]?.top ?? 1.26) + .09 : ENTITIES[e.type]?.model === 'refinery' ? 1.3 : HEIGHTS[e.kind] ?? .75) : .04;
 function updatePreview(hover) {
   nH = nX = 0; S.hint = '';
   updateHover(hover);
@@ -843,8 +1034,26 @@ function updatePreview(hover) {
   for (const im of [hintArrows, hintCross]) { im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }
   updateAltArrows();
   updateBolts();
+  updateTags();
+}
+// What you'd lay with a road in hand: one quad per tile of the strip, green where it fits, red where it doesn't.
+const roadPrev = new THREE.InstancedMesh(new THREE.PlaneGeometry(.96, .96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: .4, depthWrite: false }), 12);
+roadPrev.layers.set(UI_LAYER); roadPrev.renderOrder = 6; roadPrev.frustumCulled = false; roadPrev.count = 0; roadPrev.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(roadPrev);
+function updateRoadPreview(hover) {
+  let n = 0;
+  if (hover && ROADS[S.sel] && hover.y === 0) {
+    for (const { c: [x, z], t, side } of roadCells(hover.x, hover.z, S.dir % 2, S.roadCfg, S.sel)) {
+      if (n >= 12 || x < 0 || z < 0 || x >= GRID || z >= GRID) continue;
+      const e = world.ents.get(key(x, 0, z)), bad = isWater(x, z) || world.feats.has(key(x, 0, z)) || (e && !ENTITIES[e.type].onRoad);
+      _m.compose(V(x + .5, .03, z + .5), _q.identity(), V(1, 1, 1));
+      roadPrev.setMatrixAt(n, _m); roadPrev.setColorAt(n++, _c.setHex(bad ? (side ? 0x7a6a50 : 0xff5a4a) : side ? 0xc8c0b0 : 0x9be37a));
+    }
+  }
+  roadPrev.count = n; roadPrev.instanceMatrix.needsUpdate = true; if (roadPrev.instanceColor) roadPrev.instanceColor.needsUpdate = true;
 }
 function updateHover(hover) {
+  updateRoadPreview(hover);
+  if (VEHICLES[S.sel] || ROADS[S.sel] || ITEMS[S.sel]?.tool === 'signal') { updateToolHover(hover); return; }
   const sel = S.sel && ENTITIES[S.sel] ? S.sel : null;
   const kind = sel && ENTITIES[sel].kind;
   const dy = kind === 'lift' ? (S.dy === -1 ? -1 : 1) : kind === 'inserter' && S.mode === 'depth' ? S.dy : 0;
@@ -883,6 +1092,34 @@ function updateHover(hover) {
   const err = canPlace(sel, x, y, z, S.dir, dy, { reach: true });
   marker.material.color.setHex(err ? 0xff5a4a : 0x9be37a);
   S.hint = ioHints(sel, x, y, z, S.dir, dy);
+}
+
+// Vehicles, roads and signals in hand: a vehicle ghost or the road strip, and a coloured bracket.
+function updateToolHover(hover) {
+  const pk = [S.sel, S.dir, 'tool'].join();
+  if (pk !== previewKey) {
+    if (preview) { scene.remove(preview); preview = null; }
+    if (VEHICLES[S.sel]) { preview = makeVehicle({ id: -1, type: S.sel, net: null }); setPreview(preview); scene.add(preview); }
+    previewKey = pk;
+  }
+  if (supplyMesh) supplyMesh.visible = false;
+  marker.visible = !!hover; if (preview) preview.visible = !!hover;
+  updateLinkLine(null);
+  if (!hover) return;
+  const { x, y, z } = hover;
+  marker.position.set(x + .5, y, z + .5); marker.scale.set(1.08, .4, 1.08); marker.material.opacity = 1;
+  let ok = y === 0 && distTo(x, z) <= 10, hint = '';
+  if (VEHICLES[S.sel]) {
+    const st = vstats(S.sel), r = world.ents.get(key(x, 0, z));
+    let a = Math.atan2(DIRS[S.dir][0], DIRS[S.dir][1]);
+    if (st.way === 'rail' && r?.kind === 'rail' && !(r.conn >> S.dir & 1) && !(r.conn >> ((S.dir + 2) % 4) & 1)) { const d = [0, 1, 2, 3].find(d => r.conn >> d & 1); if (d !== undefined) a = Math.atan2(DIRS[d][0], DIRS[d][1]); }
+    preview.position.set(x + .5, st.way === 'sea' ? -.05 : 0, z + .5); preview.rotation.y = a;
+    ok = ok && (st.way === 'land' ? !isWater(x, z) : onWay(st.way, x, z));
+    hint = st.way === 'rail' ? 'Locomotives and wagons go on rails. Put a wagon right behind a stopped train to couple it' : st.way === 'road' ? 'Trucks go on roads. Give them a route in the logistics window (L)' : st.way === 'sea' ? 'Boats go on water. Give them a route between ports (L)' : 'Click to put it down. Stand next to it and press B to drive';
+  } else if (ROADS[S.sel]) hint = ROADS[S.sel].walk ? 'Path: drag to pave a walkway' : `Road: drag to lay it. ${S.roadCfg.w} wide, ${S.roadCfg.l} lane${S.roadCfg.l > 1 ? 's' : ''}${S.roadCfg.sw ? ', with sidewalks' : ''}. Change it in the road panel above your hand`;
+  else { const r = world.ents.get(key(x, 0, z)); ok = ok && r?.kind === 'rail'; if (ok) arrow(x + DIRS[S.dir][0], 0, z + DIRS[S.dir][1], S.dir, COL.FLOW, .7); hint = 'Rail signal: click a rail. The track splits into blocks here; R turns it to face along the track'; }
+  marker.material.color.setHex(ok ? 0x9be37a : 0xff5a4a);
+  S.hint = hint;
 }
 
 // ---------------------------------------------------------------- frame

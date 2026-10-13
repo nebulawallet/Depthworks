@@ -3,8 +3,8 @@
 // Everything is toon-shaded so the pixel-outline post pass reads cleanly.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ENTITIES, ITEMS, TIERS } from './data.js';
-import { S } from './state.js';
+import { ENTITIES, ITEMS, TIERS, FLUIDS, FRAMES, VEHICLES, ENGINES, RECIPE, recipeIcon } from './data.js';
+import { S, DIRS, factoryOf } from './state.js';
 import { iconCanvas } from './icons.js';
 
 // ---------------------------------------------------------------- materials
@@ -95,6 +95,16 @@ export function itemGeo(type) {
     coil: () => new THREE.CylinderGeometry(.08, .08, .2, 8).rotateZ(Math.PI / 2).translate(0, .08, 0),
     pack: () => new THREE.CylinderGeometry(.06, .1, .2, 6).translate(0, .1, 0),
     machine: () => new THREE.BoxGeometry(.22, .22, .22).translate(0, .11, 0),
+    barrel: () => new THREE.CylinderGeometry(.1, .1, .26, 8).translate(0, .13, 0),
+    engine: () => new THREE.BoxGeometry(.24, .16, .2).translate(0, .08, 0),
+    vehicle: () => new THREE.BoxGeometry(.26, .14, .3).translate(0, .07, 0),
+    part: () => new THREE.BoxGeometry(.26, .08, .2).translate(0, .04, 0),
+    wheel: () => new THREE.CylinderGeometry(.11, .11, .07, 8).rotateZ(Math.PI / 2).translate(0, .11, 0),
+    hull: () => new THREE.BoxGeometry(.18, .1, .3).translate(0, .05, 0),
+    signal: () => new THREE.CylinderGeometry(.03, .03, .26, 5).translate(0, .13, 0),
+    net: () => new THREE.BoxGeometry(.24, .06, .24).translate(0, .03, 0),
+    fish: () => new THREE.SphereGeometry(.1, 6, 4).scale(.6, .5, 1.4).translate(0, .05, 0),
+    road: () => new THREE.BoxGeometry(.26, .04, .26).translate(0, .02, 0),
   };
   return (itemGeoCache[shape] = G[shape]());
 }
@@ -121,6 +131,8 @@ const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 const cyl = (rt, rb, h, seg) => new THREE.CylinderGeometry(rt, rb, h, seg);
 const glowMat = (color, intensity = 0) => new THREE.MeshToonMaterial({ color: 0x1a0c06, emissive: color, emissiveIntensity: intensity, gradientMap: toonRamp });
 
+// Local side (as built, facing north) of an absolute direction, for things shaped by their neighbours.
+const localSide = (e, a) => (a - e.dir + 4) % 4;
 export function makeMesh(e) {
   const res = TIERS[S.maxTier].res, def = ENTITIES[e.type], g = new THREE.Group(), P = {}, statics = [];
   const st = (geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) => {
@@ -131,7 +143,213 @@ export function makeMesh(e) {
   const col = M(def.color), dark = M(C.dark), mid = M(C.mid), steel = M(C.steel), black = M(C.black);
   const seg = Math.max(6, res);
 
-  switch (def.kind) {
+  // pipe stubs with a flange, from the middle of the tile out to side l (local), at pipe height
+  const PIPE_Y = .22;
+  const pipeArm = (l, mat, len = .5, r = .1) => {
+    const [dx, dz] = DIRS[l], along = dx ? cyl(r, r, len, seg).rotateZ(Math.PI / 2) : cyl(r, r, len, seg).rotateX(Math.PI / 2);
+    st(along, mat, dx * len / 2, PIPE_Y, dz * len / 2);
+    const fl = dx ? cyl(r + .035, r + .035, .05, seg).rotateZ(Math.PI / 2) : cyl(r + .035, r + .035, .05, seg).rotateX(Math.PI / 2);
+    st(fl, M(C.mid), dx * (len - .03), PIPE_Y, dz * (len - .03));
+  };
+  // fluid ports on machines: a short pipe stub with a coloured collar, so you can see where pipes go
+  const ports = () => {
+    for (const p of def.ports || []) {
+      const [dx, dz] = DIRS[p.side], col2 = M(p.io === 'in' ? 0x4aa3ff : 0xffa53d);
+      const along = dx ? cyl(.08, .08, .14, seg).rotateZ(Math.PI / 2) : cyl(.08, .08, .14, seg).rotateX(Math.PI / 2);
+      st(along, M(C.steel), dx * .44, PIPE_Y, dz * .44);
+      const fl = dx ? cyl(.11, .11, .04, seg).rotateZ(Math.PI / 2) : cyl(.11, .11, .04, seg).rotateX(Math.PI / 2);
+      st(fl, col2, dx * .49, PIPE_Y, dz * .49);
+    }
+  };
+  switch (def.model || def.kind) {
+    case 'pipe': {
+      const pm = M(def.color), band = M(e.fluid ? FLUIDS[e.fluid].color : 0x3a414c);
+      const sides = [0, 1, 2, 3].filter(a => e.conn >> a & 1).map(a => localSide(e, a));
+      if (!sides.length) sides.push(0, 2);
+      if (sides.length === 1) sides.push((sides[0] + 2) % 4);
+      for (const l of sides) pipeArm(l, pm);
+      st(new THREE.SphereGeometry(.13, seg, Math.max(4, seg >> 1)), pm, 0, PIPE_Y, 0);
+      st(box(.1, .05, .1), band, 0, PIPE_Y + .13, 0);   // a sight glass showing what flows inside
+      st(box(.06, PIPE_Y - .08, .06), dark, 0, (PIPE_Y - .08) / 2, 0);
+      break;
+    }
+    case 'upipe': {
+      const pm = M(def.color), out = e.role === 'out';
+      pipeArm(out ? 0 : 2, pm);
+      st(box(.42, .18, .42), M(C.dark), 0, .09, 0);
+      st(cyl(.13, .13, .1, seg), pm, 0, .2, 0);
+      st(box(.36, .03, .36), M(C.mid), 0, .185, 0);
+      st(box(.08, .03, .2), M(e.pair ? 0x9be37a : 0xffa53d), 0, .2, out ? .1 : -.1);
+      break;
+    }
+    case 'fpump': {
+      pipeArm(0, M(C.steel), .5, .09); pipeArm(2, M(C.steel), .5, .09);
+      st(box(.44, .34, .44), col, 0, .2, 0);
+      st(box(.48, .05, .48), M(C.dark), 0, .39, 0);
+      st(cyl(.1, .1, .22, seg).rotateZ(Math.PI / 2), M(C.mid), .22, .26, .08);
+      st(new THREE.ConeGeometry(.08, .16, 4).rotateX(-Math.PI / 2), M(0xf2f2f2), 0, .44, -.08);
+      P.fly = grp(g, -.2, .26, .1); dyn(P.fly, cyl(.08, .08, .05, seg).rotateZ(Math.PI / 2), M(C.light));
+      break;
+    }
+    case 'valve': {
+      pipeArm(0, M(C.steel)); pipeArm(2, M(C.steel));
+      st(box(.26, .26, .3), col, 0, PIPE_Y, 0);
+      st(cyl(.03, .03, .2, 6), M(C.dark), 0, .42, 0);
+      st(new THREE.TorusGeometry(.12, .025, 4, seg).rotateX(Math.PI / 2), M(0xd84a3a), 0, .52, 0);
+      st(new THREE.ConeGeometry(.06, .12, 4).rotateX(-Math.PI / 2), M(0xf2f2f2), 0, .36, -.12);
+      break;
+    }
+    case 'tank': {
+      st(box(.94, .08, .94), dark, 0, .04, 0);
+      st(cyl(.44, .44, .8, seg), col, 0, .48, 0);
+      st(new THREE.SphereGeometry(.44, seg, Math.max(4, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2).scale(1, .35, 1), M(C.light), 0, .88, 0);
+      for (const y of [.2, .5, .78]) st(cyl(.455, .455, .04, seg), M(C.mid), 0, y, 0);
+      st(box(.05, .8, .05), M(C.dark), .3, .48, -.34); st(box(.05, .8, .05), M(C.dark), .38, .48, -.26);
+      P.level = glowMat(e.fluid ? FLUIDS[e.fluid].color : 0x3a414c, .6);
+      dyn(g, box(.08, .5, .02), P.level, -.2, .45, -.445);
+      break;
+    }
+    case 'oilpump': {   // a pumpjack: walking beam nodding on an A-frame, horse head over the well
+      st(box(.9, .1, .9), dark, 0, .05, 0);
+      st(box(.5, .18, .5), col, .12, .19, .1);
+      for (const x of [-.12, .12]) { st(box(.05, .62, .05).rotateZ(x > 0 ? -.18 : .18), M(C.steel), x * .7, .46, .1); }
+      st(cyl(.06, .08, .25, seg), M(C.dark), 0, .12, -.3);
+      pipeArm(0, M(C.steel), .5, .07);
+      P.beam = grp(g, 0, .78, .1);
+      dyn(P.beam, box(.08, .08, .9), col, 0, 0, -.1);
+      dyn(P.beam, box(.12, .26, .1), M(C.mid), 0, -.08, -.56);
+      dyn(P.beam, box(.16, .16, .14), M(C.dark), 0, -.05, .36);
+      P.rod = dyn(g, box(.025, .45, .025), M(C.light), 0, .4, -.46);
+      break;
+    }
+    case 'refinery': {   // two distillation columns, a fired heater and its stack
+      st(box(.96, .1, .96), dark, 0, .05, 0);
+      st(box(.4, .28, .5), M(C.stone), -.22, .24, .12);
+      st(cyl(.06, .08, .7, seg), M(C.stoneDark), -.3, .7, .3);
+      for (const [x, z, h] of [[.2, -.12, 1.15], [.22, .26, .85]]) {
+        st(cyl(.14, .16, h, seg), M(C.light), x, .1 + h / 2, z);
+        for (let y = .3; y < h; y += .22) st(cyl(.165, .165, .03, seg), col, x, .1 + y, z);
+        st(new THREE.SphereGeometry(.14, seg, 4, 0, Math.PI * 2, 0, Math.PI / 2), M(C.light), x, .1 + h, z);
+      }
+      st(box(.06, .06, .5), M(C.steel), -.05, .5, -.1);
+      P.glow = glowMat(0xff6a1a); dyn(g, box(.24, .1, .03), P.glow, -.22, .2, -.135);
+      P.smoke = [-.3, 1.08, .3];
+      ports();
+      break;
+    }
+    case 'chem': {   // two domed reactors and a stirred mixing vessel
+      st(box(.96, .1, .96), dark, 0, .05, 0);
+      for (const [x, z] of [[-.22, .2], [.22, .2]]) {
+        st(cyl(.17, .17, .42, seg), col, x, .31, z);
+        st(new THREE.SphereGeometry(.17, seg, 4, 0, Math.PI * 2, 0, Math.PI / 2), M(C.glass, { emissive: 0x1d5a66, emissiveIntensity: .3 }), x, .52, z);
+      }
+      st(cyl(.2, .22, .32, seg), M(C.steel), 0, .26, -.18);
+      st(box(.5, .04, .04), M(C.mid), 0, .55, .2);
+      P.stir = grp(g, 0, .45, -.18);
+      dyn(P.stir, cyl(.025, .025, .3, 6), M(C.dark), 0, .05, 0);
+      dyn(P.stir, box(.3, .04, .05), M(C.yellow), 0, .2, 0);
+      ports();
+      break;
+    }
+    case 'barreler': {
+      st(box(.96, .1, .96), dark, 0, .05, 0);
+      st(box(.6, .5, .5), col, 0, .35, .12);
+      st(box(.64, .05, .54), M(C.steel), 0, .62, .12);
+      st(box(.3, .06, .4), M(C.dark), 0, .14, -.24);
+      P.spin = grp(g, 0, .3, -.24);
+      dyn(P.spin, cyl(.1, .1, .26, 8), M(0x8a96a6));
+      dyn(P.spin, cyl(.105, .105, .03, 8), M(C.dark), 0, .06, 0);
+      ports();
+      break;
+    }
+    case 'vfactory': {   // a big assembly hall with an open door and a gantry crane inside
+      st(box(.98, .08, .98), dark, 0, .04, 0);
+      for (const x of [-.44, .44]) st(box(.1, .7, .96), col, x, .39, 0);
+      st(box(.96, .7, .1), col, 0, .39, .43);
+      st(box(1, .06, 1), M(C.steel), 0, .77, 0);
+      for (let i = -2; i <= 2; i++) st(box(.14, .04, .02), M(i % 2 ? C.yellow : C.hazard), i * .16, .7, -.49);
+      P.crane = grp(g, 0, .66, 0);
+      dyn(P.crane, box(.8, .05, .06), M(C.yellow));
+      dyn(P.crane, box(.1, .1, .1), M(C.dark), 0, -.06, 0);
+      P.sprite = new THREE.Sprite(iconSpriteMat(e.recipe || 'car_petrol')); P.sprite.scale.set(.5, .5, 1); P.sprite.position.set(0, 1.15, 0);
+      P.sprite.visible = !!e.recipe && S.altMode; P.sprite.renderOrder = 10; P.sprite.layers.set(UI_LAYER); g.add(P.sprite);
+      break;
+    }
+    case 'fgen': {   // diesel generator: engine block, exhaust stack and a flywheel
+      st(box(.94, .14, .94), dark, 0, .07, 0);
+      st(box(.5, .36, .7), col, -.1, .32, 0);
+      for (let i = -2; i <= 2; i++) st(box(.52, .03, .04), M(C.mid), -.1, .42, i * .12);
+      st(cyl(.05, .06, .5, seg), M(C.stoneDark), -.25, .7, .25);
+      st(cyl(.07, .07, .04, seg), black, -.25, .95, .25);
+      P.fly = grp(g, .28, .34, 0); dyn(P.fly, cyl(.24, .24, .06, seg).rotateZ(Math.PI / 2), M(C.light)); dyn(P.fly, box(.07, .4, .07), dark);
+      P.glow = glowMat(0xffaa3a); dyn(g, box(.04, .08, .2), P.glow, .16, .22, -.25);
+      P.smoke = [-.25, 1, .25];
+      break;
+    }
+    case 'depot': {
+      const way = def.way, tint = M(factoryColorHex(e));
+      if (way === 'rail') {   // platform, canopy on posts, a sign in the factory's colour
+        st(box(.96, .16, .96), M(C.stone), 0, .08, 0);
+        st(box(.96, .03, .1), M(C.yellow), 0, .175, -.43);
+        for (const [x, z] of [[-.34, .28], [.34, .28], [-.34, -.2], [.34, -.2]]) st(box(.05, .6, .05), M(C.steel), x, .45, z);
+        st(box(.9, .05, .66), col, 0, .78, .04);
+        st(box(.5, .16, .03), tint, 0, .62, .3);
+        st(box(.3, .2, .24), M(C.wood), -.2, .28, .2); st(box(.22, .18, .2), M(C.wood), .18, .27, .25);
+      } else if (way === 'road') {   // a garage with a fuel pump out front
+        st(box(.96, .06, .96), M(0x4a4c52), 0, .03, 0);
+        st(box(.8, .5, .5), col, 0, .3, .2);
+        st(box(.84, .05, .54), M(C.steel), 0, .57, .2);
+        st(box(.5, .34, .02), M(C.dark), 0, .23, -.05);
+        st(box(.84, .05, .3), tint, 0, .52, -.22);
+        st(box(.14, .3, .12), M(0xd84a3a), .3, .2, -.3);
+        st(box(.1, .06, .02), M(C.glass), .3, .3, -.37);
+      } else {   // a wooden pier with bollards and a small crane
+        st(box(.98, .1, .98), M(C.wood), 0, .1, 0);
+        for (let i = -3; i <= 3; i++) st(box(.98, .02, .02), M(C.woodDark), 0, .155, i * .14);
+        for (const [x, z] of [[-.4, -.4], [.4, -.4], [-.4, .4], [.4, .4]]) st(cyl(.05, .05, .5, 6), M(C.woodDark), x, -.1, z);
+        for (const x of [-.32, .32]) st(cyl(.04, .05, .12, 6), M(C.dark), x, .22, -.4);
+        st(box(.34, .3, .3), tint, -.2, .3, .25);
+        P.crane = grp(g, .25, .16, .2);
+        dyn(P.crane, cyl(.06, .08, .6, 6), M(C.yellow), 0, .3, 0);
+        dyn(P.crane, box(.06, .06, .6), M(C.yellow), 0, .6, -.22);
+        dyn(P.crane, box(.02, .25, .02), M(C.dark), 0, .48, -.5);
+      }
+      ports();
+      break;
+    }
+    case 'rail': {
+      // Rails join every rail next to them: straight, quarter curve around a tile corner, junction or crossing.
+      const tie = M(C.woodDark), steelR = M(0xb8bec8), sides = [0, 1, 2, 3].filter(a => e.conn >> a & 1).map(a => localSide(e, a));
+      const straight = (axis, half = 0) => {   // axis 0: north-south, 1: east-west; half: only toward one side
+        const zs = half ? [half * .125, half * .375] : [-.375, -.125, .125, .375], len = half ? .5 : 1, off = half ? half * .25 : 0;
+        for (const z of zs) st(axis ? box(.12, .04, .7) : box(.7, .04, .12), tie, axis ? z : 0, .02, axis ? 0 : z);
+        for (const x of [-.2, .2]) st(axis ? box(len, .05, .045) : box(.045, .05, len), steelR, axis ? off : x, .065, axis ? x : off);
+      };
+      const curve = (a, b) => {
+        const cx = (DIRS[a][0] + DIRS[b][0]) * .5, cz = (DIRS[a][1] + DIRS[b][1]) * .5, qx = -Math.sign(cx), qz = -Math.sign(cz);
+        const th = { '1,-1': 0, '-1,-1': Math.PI / 2, '-1,1': Math.PI, '1,1': -Math.PI / 2 }[qx + ',' + qz];
+        for (const r of [.3, .7]) st(new THREE.TorusGeometry(r, .024, 3, Math.max(6, seg), Math.PI / 2).rotateX(-Math.PI / 2).rotateY(th).translate(0, .065, 0), steelR, cx, 0, cz);
+        const f0 = Math.atan2(qz, qx) - Math.PI / 4;
+        for (let i = 0; i < 4; i++) { const f = f0 + (i + .5) * Math.PI / 8; st(box(.7, .04, .12).rotateY(-f), tie, cx + Math.cos(f) * .5, .02, cz + Math.sin(f) * .5); }
+      };
+      const has = l => sides.includes(l);
+      if (sides.length === 2 && (sides[0] + sides[1]) % 2 === 1) curve(sides[0], sides[1]);
+      else if (sides.length <= 2) {
+        const axis = sides.length ? sides[0] % 2 : 0;
+        if (sides.length === 1) { straight(axis, sides[0] === 0 || sides[0] === 3 ? -1 : 1); const [dx, dz] = DIRS[(sides[0] + 2) % 4]; st(box(axis ? .08 : .5, .16, axis ? .5 : .08), M(0xd84a3a), dx * .1, .08, dz * .1); }
+        else straight(axis);
+      } else {   // junctions: the through line plus the branches
+        if (has(0) && has(2)) straight(0); if (has(1) && has(3)) straight(1);
+        if (sides.length === 3) { const branch = [0, 1, 2, 3].find(l => has(l) && !has((l + 2) % 4)); curve(branch, (branch + 1) % 4); curve(branch, (branch + 3) % 4); }
+      }
+      if (e.sig !== null && e.sig !== undefined) {   // a signal post beside the track, facing along it
+        const l = localSide(e, e.sig), [dx, dz] = DIRS[l], [rx, rz] = DIRS[(l + 1) % 4], px = dx * .38 + rx * .42, pz = dz * .38 + rz * .42;
+        st(cyl(.025, .03, .62, 6), M(C.dark), px, .31, pz);
+        st(box(.12, .2, .1), M(C.black), px, .66, pz);
+        P.lamp = glowMat(0x3aff5a, 1.2); dyn(g, box(.07, .07, .03), P.lamp, px - dx * .06, .7, pz - dz * .06);
+      }
+      break;
+    }
     case 'belt': {
       const tread = treadMat(e.type);
       if (!e.curve) {
@@ -155,7 +373,7 @@ export function makeMesh(e) {
     case 'underground': {
       const out = e.role === 'out', s = out ? -1 : 1;
       st(box(.9, .07, .5), dark, 0, .06, .25 * s);
-      st(new THREE.PlaneGeometry(.78, .5).rotateX(-Math.PI / 2), treadMat('belt'), 0, .1, .25 * s);
+      st(new THREE.PlaneGeometry(.78, .5).rotateX(-Math.PI / 2), treadMat(e.type === 'underground' ? 'belt' : e.type === 'fast_underground' ? 'fast_belt' : 'express_belt'), 0, .1, .25 * s);
       for (const x of [-.44, .44]) st(box(.08, .14, .5), col, x, .09, .25 * s);
       st(box(.94, .44, .52), col, 0, .22, -.25 * s);
       st(box(.98, .07, .56), M(0x7a6420), 0, .47, -.25 * s);
@@ -418,6 +636,11 @@ export function makeMesh(e) {
     }
   }
 
+  // fluid machines show their recipe in alt mode, like assemblers
+  if (def.ports && def.kind === 'assembler') {
+    P.sprite = new THREE.Sprite(iconSpriteMat(RECIPE[e.recipe] ? recipeIcon(RECIPE[e.recipe]) : 'pipe')); P.sprite.scale.set(.5, .5, 1); P.sprite.position.set(0, 1.25, 0);
+    P.sprite.visible = !!e.recipe && S.altMode; P.sprite.renderOrder = 10; P.sprite.layers.set(UI_LAYER); g.add(P.sprite);
+  }
   // merge static parts by material, with baked occlusion
   const byMat = new Map();
   for (const [geo, mat] of statics) { if (!byMat.has(mat)) byMat.set(mat, []); byMat.get(mat).push(geo); }
@@ -434,6 +657,64 @@ export function makeMesh(e) {
   g.userData.ent = e;
   e.parts = P;
   return g;
+}
+
+// The factory colour as a number, for signs and tags.
+export const factoryColorHex = e => parseInt((factoryOf(e.fac ?? 1)?.color || '#7ef6ff').slice(1), 16);
+
+// ---------------------------------------------------------------- vehicles
+// Built facing +z like the engineer; the scene turns them to their heading. Engine colour shows on a stripe.
+export function makeVehicle(v) {
+  const id = v.type, vt = VEHICLES[id], fr = FRAMES[vt.frame], g = new THREE.Group(), P = {}, body = M(fr.color), dark = M(C.dark), steel = M(C.steel);
+  const stripe = M(vt.engine ? ENGINES[vt.engine].color : C.mid), glass = M(C.glass, { emissive: 0x1d5a66, emissiveIntensity: .25 }), tire = M(0x22252b);
+  const add = (geo, mat, x = 0, y = 0, z = 0, parent = g) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
+  const wheels = (xs, zs, r = .1, y = .1) => { for (const x of xs) for (const z of zs) add(cyl(r, r, .07, 8).rotateZ(Math.PI / 2), tire, x, y, z); };
+  switch (vt.frame) {
+    case 'car':
+      add(box(.46, .16, .82), body, 0, .2, 0); add(box(.4, .15, .4), glass, 0, .35, -.06); add(box(.42, .03, .42), body, 0, .44, -.06);
+      add(box(.48, .03, .84), stripe, 0, .2, 0); wheels([-.24, .24], [-.26, .27]);
+      for (const x of [-.15, .15]) add(box(.08, .05, .02), M(0xfff2b0, { emissive: 0x806a30, emissiveIntensity: .6 }), x, .22, .41);
+      break;
+    case 'truck':
+      add(box(.5, .3, .32), body, 0, .3, .42); add(box(.44, .12, .04), glass, 0, .38, .58);
+      add(box(.54, .38, .8), M(C.light), 0, .36, -.18); add(box(.56, .04, .82), stripe, 0, .19, -.18);
+      add(box(.5, .06, 1.24), dark, 0, .12, 0); wheels([-.26, .26], [.42, -.1, -.42], .11, .11);
+      break;
+    case 'tank':
+      add(box(.62, .2, .96), body, 0, .2, 0); for (const x of [-.34, .34]) add(box(.14, .18, 1), M(0x2a2c30), x, .13, 0);
+      add(box(.64, .03, .98), stripe, 0, .3, 0);
+      P.turret = new THREE.Group(); P.turret.position.set(0, .32, -.04); g.add(P.turret);
+      add(cyl(.2, .22, .14, 10), body, 0, .07, 0, P.turret); add(cyl(.035, .035, .6, 6).rotateX(Math.PI / 2), dark, 0, .09, .4, P.turret);
+      break;
+    case 'boat':
+      add(box(.6, .22, 1.1), body, 0, .06, -.1); add(new THREE.ConeGeometry(.3, .5, 4).rotateX(Math.PI / 2).rotateZ(Math.PI / 4).scale(1, .6, 1), body, 0, .06, .7);
+      add(box(.62, .04, 1.12), stripe, 0, .17, -.1);
+      for (const [z, c] of [[.2, 0xd84a3a], [-.12, 0x3a7ad8], [-.42, 0xe0c03a]]) add(box(.44, .18, .26), M(c), 0, .28, z);
+      add(box(.4, .28, .2), M(C.light), 0, .32, -.62); add(box(.3, .06, .02), glass, 0, .4, -.51);
+      add(cyl(.03, .03, .3, 6), dark, .12, .55, -.66);
+      P.net = add(box(.66, .06, .3), M(0xb8a878), 0, .1, -.76); P.net.visible = !!v.net;
+      break;
+    case 'locomotive':
+      add(box(.6, .1, .96), dark, 0, .14, 0); add(box(.54, .38, .62), body, 0, .38, -.12);
+      add(box(.54, .32, .3), body, 0, .35, .32); add(box(.5, .12, .02), glass, 0, .46, .47);
+      add(box(.58, .05, .66), M(C.dark), 0, .6, -.12); add(box(.56, .04, .98), stripe, 0, .22, 0);
+      add(cyl(.05, .06, .14, 6), M(C.black), 0, .62, .1); wheels([-.27, .27], [-.3, 0, .3], .08, .08);
+      add(box(.1, .06, .02), M(0xfff2b0, { emissive: 0x806a30, emissiveIntensity: .7 }), 0, .32, .48);
+      break;
+    case 'cargo_wagon':
+      add(box(.6, .08, .94), dark, 0, .14, 0); add(box(.56, .34, .86), body, 0, .37, 0);
+      for (const z of [-.3, 0, .3]) add(box(.58, .3, .03), M(C.woodDark), 0, .37, z);
+      wheels([-.27, .27], [-.3, .3], .08, .08);
+      break;
+  }
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  g.userData.veh = v.id; g.userData.P = P; g.userData.type = id;
+  return g;
+}
+// A fish: a small body and tail, instanced by the scene.
+export function fishGeo() {
+  const body = new THREE.SphereGeometry(.09, 6, 4).scale(.55, .45, 1.3).toNonIndexed(), tail = new THREE.ConeGeometry(.06, .1, 3).rotateX(-Math.PI / 2).translate(0, 0, -.15).toNonIndexed();
+  return mergeGeometries([body, tail]);
 }
 
 export function disposeMesh(root) {

@@ -100,8 +100,11 @@ rules (through an `actor` binding, so every rule knows whose inventory and posit
 world changes as they happen, plus snapshots of changed machines at about 7 Hz and a full correction every 3 s.
 Friends simulate locally between snapshots so belts and arms move smoothly.
 
-Not yet built: enemies and turrets, fluids (pumps, pipes, oil), two-lane belts, blueprints and
-copy-paste, a map view, a larger or infinite map, music, rotational precision, and richer alien grammar.
+Later additions (see HANDOFF.md): water and steam power, pipes and oil refining, vehicles built from engines and
+frames, roads, rails, ports and depots with routes, separate factories in one world, and fish.
+
+Not yet built: enemies and turrets, two-lane belts, blueprints and copy-paste, a larger or infinite map, music,
+rotational precision, and richer alien grammar.
 
 ## Open questions
 

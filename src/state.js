@@ -23,13 +23,15 @@ export const S = {
   seed: 20261013,               // world seed for water; ores and trees use their own fixed layout
   bars: [], bar: 0,             // quickbars (see HOTBARS); S.hotbar is bars[0]
   hideUI: false,
+  roadCfg: { w: 2, l: 2, m: 'dashed', sw: false, edges: true, cross: true },   // how the road in hand gets laid
 };
 
 // ---------------------------------------------------------------- players
 // Every engineer has their own body, inventory and crafting queue. S.player is the one on this screen.
 export function newPlayer(id, name = 'Engineer', color = 0xe07a2e, local = false) {
   return { id, name, color, local, x: 48.5, z: 52.5, vx: 0, vz: 0, face: 0, walk: 0, moving: false,
-    mining: null, mineCell: null, pickup: false, inv: local ? null : new Inventory(PLAYER.inventory), craft: [] };
+    mining: null, mineCell: null, pickup: false, inv: local ? null : new Inventory(PLAYER.inventory), craft: [],
+    fac: 1, veh: null, drive: null, fed: 0 };   // fac: the factory they build for; veh: the vehicle they drive; fed: well fed until
 }
 
 // ---------------------------------------------------------------- inventories
@@ -96,7 +98,18 @@ export const world = {
   flow: new Int8Array(GRID * GRID).fill(-1),   // flow direction of moving water (index into DIRS), -1 for still
   links: [],          // cables strung by hand: { kind: item id, a: [x, y, z], b: [x, y, z] }
   marks: { markers: [], areas: [], next: 1 },   // map markers and labelled areas
+  oil: new Map(),     // "x,z" -> { yield } crude oil wells on the surface (percent)
+  roads: new Map(),   // "x,z" -> road tile (see transport.js)
+  vehicles: [],       // cars, trucks, tanks, boats, locomotives and wagons
+  units: [],          // what moves along a route: a truck, a boat, or a train of cars
+  routes: [],         // schedules shared by units: { id, name, way, loop, stops }
+  factories: [{ id: 1, name: 'Main factory', color: '#7ef6ff' }], facNext: 2,
+  fish: [], fishBodies: [],   // fish swimming in each body of water, and how many each can hold
+  nextId: 1,
 };
+// Factories are separate networks inside one world: everything built belongs to one (see sim.js sameFac).
+export const factoryOf = id => world.factories.find(f => f.id === id) || null;
+export const FAC_COLORS = ['#7ef6ff', '#ffd23f', '#9be37a', '#ff8a3d', '#ff5a7a', '#b07ad8', '#e8ecf2', '#4aa3ff'];
 export const tileAt = (x, z) => x < 0 || z < 0 || x >= GRID || z >= GRID ? 0 : world.tiles[z * GRID + x];
 export const isWater = (x, z) => !!TILES[tileAt(x, z)].liquid;
 export const flowAt = (x, z) => x < 0 || z < 0 || x >= GRID || z >= GRID ? -1 : world.flow[z * GRID + x];
@@ -183,11 +196,29 @@ export function generateOres(seed = 20261013) {
   patch(32, 32, 4, -2, 'abyssal_ore', 2); patch(12, 41, 3.5, -2, 'abyssal_ore', 3); patch(46, 14, 3, -2, 'crystal', 3);
 }
 
+// Crude oil: a few fields of wells away from the landing site, off ore and water. Yield is a percentage.
+export function generateOil(seed = S.seed, avoid = () => false) {
+  world.oil.clear();
+  const R = rng(seed + 4111);
+  const ok = (x, z) => x >= 1 && z >= 1 && x < GRID - 1 && z < GRID - 1 && !world.ores.has(key(x, 0, z)) && !isWater(x, z) && !avoid(x, z) && Math.hypot(x + .5 - SPAWN.x, z + .5 - SPAWN.z) > 16;
+  for (let field = 0, tries = 0; field < 5 && tries < 200; tries++) {
+    const cx = 6 + R() * (GRID - 12), cz = 6 + R() * (GRID - 12);
+    if (!ok(Math.floor(cx), Math.floor(cz)) || [...world.oil.keys()].some(k => { const [x, z] = k.split(',').map(Number); return Math.hypot(x - cx, z - cz) < 14; })) continue;
+    const wells = 3 + Math.floor(R() * 4), rich = .6 + R() * 1.2;
+    for (let i = 0, t = 0; i < wells && t < 40; t++) {
+      const x = Math.floor(cx + (R() - .5) * 7), z = Math.floor(cz + (R() - .5) * 7);
+      if (!ok(x, z) || world.oil.has(x + ',' + z)) continue;
+      world.oil.set(x + ',' + z, { yield: Math.round((50 + R() * 100) * rich) }); i++;
+    }
+    field++;
+  }
+}
+
 // Trees in clumps and rocks scattered; nothing on ore or right next to spawn.
 export function generateFeatures(seed = 77) {
   world.feats.clear();
   const R = rng(seed), sx = S.player.x, sz = S.player.z;
-  const ok = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID && !world.ores.has(key(x, 0, z)) && !isWater(x, z) && Math.hypot(x - sx, z - sz) > 6;
+  const ok = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID && !world.ores.has(key(x, 0, z)) && !world.oil.has(x + ',' + z) && !isWater(x, z) && Math.hypot(x - sx, z - sz) > 6;
   for (let f = 0; f < 22; f++) {
     const cx = R() * GRID, cz = R() * GRID, rad = 3 + R() * 6;
     for (let i = 0; i < rad * rad * 1.4; i++) {

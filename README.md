@@ -15,8 +15,21 @@ conversation with something that only understands machines.
   science packs, storage). Drag stacks between them.
 - **Logistics:** belts in three speeds that compress, side-load and curve; underground belts, splitters,
   and lifts that move items between layers. Inserters can pitch up or down a layer.
-- **Power:** coal generators and solar panels on separate pole networks, with visible wires and supply areas.
-- **Research:** 21 technologies across four science packs, plus "precision" tiers earned by keeping machinery busy.
+- **Power:** coal generators, steam engines, diesel generators and solar panels on separate pole networks, with
+  visible wires and supply areas, high voltage lines and transformers.
+- **Oil and fluids:** pipes that branch wherever they meet, underground pipes, pumps, valves and storage tanks, with
+  less flow down long lines. Pumpjacks on crude oil feed refineries and chemical plants that make heavy fuel oil,
+  diesel, gasoline and jet fuel. Barrels carry fluids on belts and in vehicles.
+- **Vehicles:** a vehicle factory joins an engine (petrol, diesel, marine or turbine, each burning its own fuel) to
+  a frame: car, truck, tank, cargo boat, locomotive or cargo wagon. Engine and frame decide speed and fuel use.
+- **Transport networks:** customisable roads (width, lanes, markings, sidewalks, junctions with crossings), rails
+  with junctions and block signals, and the sea. Trucks keep to roads, trains to rails, boats to water.
+- **Depots and routes:** train stations, truck depots and ports store goods and fuel. One logistics window (L)
+  sets up rail lines, truck routes and sea lanes: stops, what to load, when to leave, and loops.
+- **Factories:** found several separate factories in one world; belts, pipes and power never cross between them,
+  so goods move from one to another only by truck, train or ship.
+- **Fish:** catch fish by hand or with a net on a boat. Overfished water recovers slowly.
+- **Research:** 31 technologies across four science packs, plus "precision" tiers earned by keeping machinery busy.
 - **Depth:** seven buildable layers, from two rock layers below ground to frames stacked above it.
 - **The signal:** the endgame is a nine-step conversation answered by arranging working machines.
 - **Co-op:** free, peer to peer, with invite codes, nicknames and chat.
@@ -36,9 +49,13 @@ conversation with something that only understands machines.
 | Ctrl + click | Move items in or out of a machine |
 | In inventories | Drag stacks · right-drag for half · Shift + click to send across |
 | Tab | Depth mode (PgUp/PgDn or Shift+wheel for layers, [ ] to orbit, V to set inserter pitch) |
+| B | Get in or out of a vehicle (WASD drives; A/D pick the branch on rails) |
+| L | Logistics: routes for trains, trucks and boats |
+| K / J | Factories window · switch the factory you build for |
+| M | Map |
 | Enter | Chat (co-op) |
-| Alt | Toggle the small arrows and recipe icons |
-| H | Help |
+| Alt | Toggle the small arrows, recipe icons and factory tags |
+| H / F1 | Hide the interface · help and key bindings |
 
 ## Co-op
 
@@ -81,6 +98,11 @@ There's no build step; every push to `main` updates the site.
 | `src/data.js` | Items, machines, recipes, research tree, precision tiers, the alien script |
 | `src/state.js` | Shared state, players and inventories, world generation, layer rules |
 | `src/sim.js` | Belts, inserters, machines, power, research, precision, crafting, the engineer, building, slots |
+| `src/fluids.js` | Pipe and fluid networks, pumps, valves, the steam chain, fluid ports on machines |
+| `src/transport.js` | Roads, rails and signals, vehicles and driving, path finding, depots, routes and schedules |
+| `src/fish.js` | Fish, water bodies and their populations, fishing nets |
+| `src/logistics.js` | The logistics window: one route editor for rail, road and sea |
+| `src/map.js` | Minimap and big map with its views, markers and the factory assign tool |
 | `src/net.js` | Co-op: invite codes, host-authoritative sync, chat (PeerJS / WebRTC) |
 | `src/save.js` | Save / load, and the entity format shared with co-op sync |
 | `src/scene.js` | Pixel-snapped camera, outline post pass, terrain, ore piles and ground cover, particles, picking, arrows |

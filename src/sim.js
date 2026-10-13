@@ -1,6 +1,10 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS } from './data.js';
-import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater } from './state.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED } from './data.js';
+import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf } from './state.js';
+import { rebuildFluids, fluidPre, fluidPost, producerCaps, burnNet, burnRate, draw, push, avail, room, passThrough, fluidConflict, flush, sameFac, isPipeLike } from './fluids.js';
+import { roadAt, removeRoad, isWalkway, roadBlocks, transportTick, rebuildRails, wayNear, vehSlots, vehSlotAccept, vehSlotPut, vehSlotTake, vehicleById, vehicleTarget, removeVehicle, depotCommand } from './transport.js';
+import { fishTarget, catchFish, fishTick } from './fish.js';
+export { sameFac };
 const isClient = () => S.net.role === 'client';
 
 export const SPACING = .25;
@@ -26,7 +30,15 @@ export function createEntity(type, x, y, z, dir = 0, dy = 0) {
     case 'lab': e.inp = {}; e.unit = null; break;
     case 'chest': e.items = null; e.store = new Inventory(def.cap); break;
     case 'transmitter': e.inp = {}; e.charging = false; break;
+    case 'pipe': case 'tank': e.fluid = null; e.fa = []; e.conn = 0; break;
+    case 'upipe': e.fluid = null; e.fa = []; e.role = 'in'; e.pair = null; break;
+    case 'fpump': e.fluid = null; e.fa = []; break;
+    case 'valve': e.fluid = null; e.fa = []; e.mode = 'check'; break;
+    case 'oilpump': case 'fgen': e.fa = []; break;
+    case 'depot': e.store = new Inventory(def.cap); e.fa = []; e.dname = ''; e.prio = 5; e.vlimit = 0; e.rules = []; e.fuelFluid = def.way === 'sea' ? 'heavy_oil' : 'diesel'; break;
+    case 'rail': e.sig = null; e.conn = 0; break;
   }
+  if (def.ports) e.fa = [];
   return e;
 }
 const usesFuel = e => e && e.fuel !== undefined;
@@ -46,7 +58,7 @@ export function canAccept(e, it, manual = false) {
     return (e.fuel === 0 || e.fuelType === it) && e.fuel < cap;
   }
   switch (e.kind) {
-    case 'chest': return e.store.room(it) > 0;
+    case 'chest': case 'depot': return e.store.room(it) > 0;
     case 'furnace': {
       const r = smeltRecipe(it); if (!r) return false;
       if (e.recipe && e.recipe !== r.id && (e.crafting || Object.values(e.inp).some(v => v > 0))) return false;
@@ -64,7 +76,7 @@ export function canAccept(e, it, manual = false) {
 export function insert(e, it) {
   if (usesFuel(e) && ITEMS[it]?.fuel && e.kind !== 'chest') { e.fuelType = it; e.fuel++; return; }
   switch (e.kind) {
-    case 'chest': e.store.add(it, 1); break;
+    case 'chest': case 'depot': e.store.add(it, 1); break;
     case 'furnace': e.recipe = smeltRecipe(it).id; e.inp[it] = (e.inp[it] || 0) + 1; break;
     default: e.inp[it] = (e.inp[it] || 0) + 1;
   }
@@ -79,7 +91,7 @@ export function take(e, ok) {
     return e.items.splice(best, 1)[0].type;
   }
   switch (e.kind) {
-    case 'chest': for (const it of e.store.counts().keys()) if (ok(it)) { e.store.remove(it, 1); e.lastActive = S.T; return it; } break;
+    case 'chest': case 'depot': for (const it of e.store.counts().keys()) if (ok(it)) { e.store.remove(it, 1); e.lastActive = S.T; return it; } break;
     case 'furnace': case 'assembler': for (const it in e.out) if (e.out[it] > 0 && ok(it)) { if (--e.out[it] === 0) delete e.out[it]; return it; } break;
     case 'drill': if (e.buffer && ok(e.buffer)) { const it = e.buffer; e.buffer = null; return it; } break;
   }
@@ -118,7 +130,7 @@ export function primaryNext(b) {
 const splitOuts = b => [b.dir, (b.dir + 3) % 4, (b.dir + 1) % 4];
 // Where an item moving in `moveDir` lands on belt t (-1 = refused).
 function entryFor(t, moveDir, from) {
-  if (!isBeltLike(t)) return -1;
+  if (!isBeltLike(t) || (from && !sameFac(from, t))) return -1;
   if (t.kind === 'underground' && t.role === 'out') return from && from === t.pair ? 0 : -1;
   const rel = (moveDir - t.dir + 4) % 4;
   if (rel === 2) return -1;
@@ -128,14 +140,14 @@ function entryFor(t, moveDir, from) {
   return t.kind === 'underground' ? .25 : t.len / 2;
 }
 function outputsInto(n, b) {
-  if (!isBeltLike(n)) return false;
+  if (!isBeltLike(n) || !sameFac(n, b)) return false;
   if (n.kind === 'splitter') return splitOuts(n).some(d => { const [dx, dz] = DIRS[d]; return world.ents.get(key(n.x + dx, n.y, n.z + dz)) === b; });
   return primaryNext(n) === b;
 }
 function computeCurve(b) {
   const [dx, dz] = DIRS[b.dir];
   if (outputsInto(world.ents.get(key(b.x - dx, b.y, b.z - dz)), b)) return null;
-  for (const ldy of [1, -1]) { const n = world.ents.get(key(b.x - dx, b.y - ldy, b.z - dz)); if (n && n.kind === 'lift' && n.dy === ldy && n.dir === b.dir) return null; }
+  for (const ldy of [1, -1]) { const n = world.ents.get(key(b.x - dx, b.y - ldy, b.z - dz)); if (n && n.kind === 'lift' && n.dy === ldy && n.dir === b.dir && sameFac(n, b)) return null; }
   const side = d => { const [sx, sz] = DIRS[d]; return outputsInto(world.ents.get(key(b.x + sx, b.y, b.z + sz)), b); };
   const L = side((b.dir + 3) % 4), R = side((b.dir + 1) % 4);
   return L && !R ? 'L' : R && !L ? 'R' : null;
@@ -192,7 +204,7 @@ function beltTick(b, dt) {
 export const nets = [];
 export const voltsOf = def => def.volts || [def.volt ?? 0];
 export const autoVolt = def => voltsOf(def)[0];   // the voltage a pole wires itself up on
-const producerKind = e => e.kind === 'generator' || e.kind === 'solar' || e.kind === 'engine';
+const producerKind = e => e.kind === 'generator' || e.kind === 'solar' || e.kind === 'engine' || e.kind === 'fgen';
 export function rebuildPower() {
   const poles = [...world.ents.values()].filter(e => e.kind === 'pole');
   const parent = new Map(poles.map(p => [p, p]));
@@ -201,7 +213,7 @@ export function rebuildPower() {
   const wires = [], seen = new Set();
   for (const a of poles) {
     const da = ENTITIES[a.type], va = autoVolt(da);
-    const same = poles.filter(b => b !== a && autoVolt(ENTITIES[b.type]) === va);
+    const same = poles.filter(b => b !== a && autoVolt(ENTITIES[b.type]) === va && sameFac(a, b));
     const near = same.map(b => [b, Math.hypot(a.x - b.x, a.z - b.z, a.y - b.y)])
       .filter(([b, d]) => d <= Math.min(da.wire, ENTITIES[b.type].wire)).sort((p, q) => p[1] - q[1]).slice(0, 5);
     for (const [b] of near) {
@@ -217,7 +229,7 @@ export function rebuildPower() {
   const cables = [];
   for (const l of world.links) {
     const a = world.ents.get(key(...l.a)), b = world.ents.get(key(...l.b));
-    if (a?.kind !== 'pole' || b?.kind !== 'pole') continue;
+    if (a?.kind !== 'pole' || b?.kind !== 'pole' || !sameFac(a, b)) continue;
     join(a, b); cables.push([a, b, l.kind]);
   }
   const byRoot = new Map();
@@ -233,80 +245,17 @@ export function rebuildPower() {
     if (!(isElectric(e) || producerKind(e))) continue;
     for (const p of poles) {
       const s = ENTITIES[p.type].supply;
-      if (Math.abs(e.x - p.x) <= s && Math.abs(e.z - p.z) <= s && Math.abs(e.y - p.y) <= 1) { e.net = p.net; break; }
+      if (Math.abs(e.x - p.x) <= s && Math.abs(e.z - p.z) <= s && Math.abs(e.y - p.y) <= 1 && sameFac(e, p)) { e.net = p.net; break; }
     }
     if (e.net && isElectric(e)) e.net.consumers++;
   }
-  rebuildFluids();
+  world.fluidDirty = true;
   world.wires = wires; world.cables = cables; world.powerDirty = false;
   bus.emit('power');
 }
 
-// ---------------------------------------------------------------- fluids
-// Buildings that list a fluid in `fluids` pass it to neighbours on the same layer that list it too. Each
-// connected group shares one pool: there is no volume, only how much the group can supply and wants.
-export const fluidNets = [];
-function rebuildFluids() {
-  fluidNets.length = 0;
-  for (const e of world.ents.values()) if (ENTITIES[e.type].fluids) e.fnet = {};
-  for (const fluid of Object.keys(FLUIDS)) {
-    const seen = new Set();
-    for (const e of world.ents.values()) {
-      if (!ENTITIES[e.type].fluids?.[fluid] || seen.has(e)) continue;
-      const f = { fluid, members: [], cap: 0, want: 0, used: 0, ratio: 0 }, q = [e];
-      seen.add(e);
-      while (q.length) {
-        const c = q.pop(); f.members.push(c); c.fnet[fluid] = f;
-        for (const [dx, dz] of DIRS) {
-          const n = world.ents.get(key(c.x + dx, c.y, c.z + dz));
-          if (n && !seen.has(n) && ENTITIES[n.type].fluids?.[fluid]) { seen.add(n); q.push(n); }
-        }
-      }
-      fluidNets.push(f);
-    }
-  }
-}
+// ---------------------------------------------------------------- fluids (see fluids.js)
 const fuelled = e => e.burn > 0 || e.fuel > 0;
-// What the steam chain could deliver this tick, before anything is drawn: pumps cap water, fuelled boilers
-// turn the water they get into steam, and engines can run as hard as the steam allows.
-function steamSupply() {
-  for (const f of fluidNets) { f.cap = 0; f.want = 0; f.used = 0; }
-  for (const f of fluidNets) if (f.fluid === 'water') for (const e of f.members) {
-    const def = ENTITIES[e.type];
-    if (e.kind === 'pump') f.cap += def.rate;
-    else if (e.kind === 'boiler' && fuelled(e)) f.want += def.steam;
-  }
-  for (const f of fluidNets) if (f.fluid === 'steam') {
-    for (const e of f.members) {
-      const def = ENTITIES[e.type];
-      if (e.kind === 'boiler') { const w = e.fnet.water; e.water = fuelled(e) && w && w.want ? Math.min(1, w.cap / w.want) : 0; f.cap += def.steam * e.water; }
-      else if (e.kind === 'engine' && e.net) f.want += def.steam;
-    }
-    f.ratio = f.want ? Math.min(1, f.cap / f.want) : 0;
-  }
-}
-// Boilers make only the steam engines drew, and pumps only the water boilers drew (Factorio's load model).
-function steamTick(dt) {
-  for (const f of fluidNets) if (f.fluid === 'steam') {
-    const boilers = f.members.filter(e => e.kind === 'boiler');
-    const k = f.cap ? Math.min(1, f.used / f.cap) : 0;
-    for (const b of boilers) {
-      const def = ENTITIES[b.type], steam = def.steam * (b.water || 0) * k;
-      b.load = steam / def.steam;
-      burner(b, steam > 0, def.heat * b.load, dt);
-      if (b.fnet.water) b.fnet.water.used += steam;
-      if (!fuelled(b)) b.status = 'out of fuel';
-      else if (!b.water) b.status = b.fnet.water?.cap ? 'not enough water' : 'no water: put a water pump next to it';
-      else if (steam > 0) { b.status = 'making steam'; b.lastActive = S.T; }
-      else b.status = 'idle (no engine needs steam)';
-    }
-  }
-  for (const f of fluidNets) if (f.fluid === 'water') for (const p of f.members) {
-    if (p.kind !== 'pump') continue;
-    p.load = f.cap ? f.used / f.cap : 0;
-    if (p.load > 0) { p.status = 'pumping'; p.lastActive = S.T; } else p.status = f.members.some(e => e.kind === 'boiler') ? 'full (nothing drawing water)' : 'full: put a boiler next to it';
-  }
-}
 function powerTick(dt) {
   for (const n of nets) {
     const used = Math.min(n.nextDemand, n.capacity);
@@ -324,13 +273,13 @@ function powerTick(dt) {
     for (const e of n.engines) {
       const def = ENTITIES[e.type], share = e.cap * k;
       e.load = share / def.out;
-      e.fnet.steam.used += e.load * def.steam;
-      if (share > 0) { e.lastActive = S.T; e.status = 'generating'; } else e.status = e.cap ? 'idle (no demand)' : 'no steam';
+      draw(burnNet(e), e.load * burnRate(e) * dt);
+      if (share > 0) { e.lastActive = S.T; e.status = 'generating'; } else e.status = e.cap ? 'idle (no demand)' : e.kind === 'fgen' ? 'no diesel' : 'no steam';
     }
     n.demand = n.nextDemand; n.produced = used; n.nextDemand = 0;
   }
-  for (const e of world.ents.values()) if (e.kind === 'engine' && !e.net) { e.load = 0; e.status = 'not connected: put it in a pole\'s area'; }
-  steamTick(dt);
+  for (const e of world.ents.values()) if ((e.kind === 'engine' || e.kind === 'fgen') && !e.net) { e.load = 0; e.status = 'not connected: put it in a pole\'s area'; }
+  fluidPost(dt, burner);
 }
 
 // ---------------------------------------------------------------- machines
@@ -344,8 +293,22 @@ function craftTick(e, dt, speed, energy) {
     e.crafting = true; e.prog = 0;
   }
   if (energy <= 0) { e.status = 'no power'; return true; }
-  e.prog += dt * speed * energy / r.time; e.lastActive = S.T; e.status = 'working';
-  if (e.prog >= 1) {
+  let dp = dt * speed * energy / r.time;
+  if (r.fin || r.fout) {   // fluids flow in and out bit by bit, so a slow line slows the machine instead of starving it
+    for (const [f, n] of Object.entries(r.fin || {})) {
+      const net = e.fnet?.[f]; dp = Math.min(dp, avail(net) / n);
+      if (dp <= 1e-9) { e.status = net ? `waiting for ${FLUIDS[f].name.toLowerCase()}` : `no ${FLUIDS[f].name.toLowerCase()}: connect a pipe to its input`; return true; }
+    }
+    for (const [f, n] of Object.entries(r.fout || {})) {
+      const net = e.fnet?.[f]; dp = Math.min(dp, room(net) / n);
+      if (dp <= 1e-9) { e.status = net?.members.length > 1 ? `${FLUIDS[f].name.toLowerCase()} output full` : `${FLUIDS[f].name.toLowerCase()} has nowhere to go: connect a pipe or tank`; return true; }
+    }
+    dp = Math.min(dp, 1 - e.prog);
+    for (const [f, n] of Object.entries(r.fin || {})) draw(e.fnet[f], n * dp);
+    for (const [f, n] of Object.entries(r.fout || {})) push(e.fnet[f], n * dp, f);
+  }
+  e.prog += dp; e.lastActive = S.T; e.status = 'working';
+  if (e.prog >= 1 - 1e-9) {
     for (const [k, n] of Object.entries(r.out)) { e.out[k] = (e.out[k] || 0) + n; bump('made', k, n); }
     e.crafting = false; e.prog = 0;
   }
@@ -353,6 +316,7 @@ function craftTick(e, dt, speed, energy) {
 }
 function drillOutput(e) {
   const [dx, dz] = DIRS[e.dir], t = world.ents.get(key(e.x + dx, e.y, e.z + dz));
+  if (t && !sameFac(e, t)) return;
   if (!t) { if (e.y === 0) { spill(e.buffer, e.x + dx + .5, e.z + dz + .5); e.buffer = null; } return; }   // Factorio drills drop ore on the ground
   if (t.kind === 'inserter') return;
   if (isBeltLike(t) ? dropOnBelt(t, e.buffer) : canAccept(t, e.buffer) && (insert(t, e.buffer), true)) e.buffer = null;
@@ -370,7 +334,7 @@ function tickEntity(e, dt) {
   const demand = kw => { if (net) net.nextDemand += kw; };
   switch (e.kind) {
     case 'drill': {
-      if (e.buffer) { drillOutput(e); if (e.buffer) { e.status = 'output blocked'; break; } }
+      if (e.buffer) { drillOutput(e); if (e.buffer) { const [dx, dz] = DIRS[e.dir], t = world.ents.get(key(e.x + dx, e.y, e.z + dz)); e.status = t && !sameFac(e, t) ? 'output blocked: that belongs to another factory' : 'output blocked'; break; } }
       const ore = world.ores.get(key(e.x, e.y, e.z));
       if (!ore) { e.status = 'deposit exhausted'; break; }
       let energy;
@@ -422,8 +386,8 @@ function tickEntity(e, dt) {
     }
     case 'inserter': {
       const [dx, dz] = DIRS[e.dir], r = e.reach;
-      const src = world.ents.get(key(e.x - dx * r, e.y, e.z - dz * r));
-      const tgt = world.ents.get(key(e.x + dx * r, e.y + e.dy, e.z + dz * r));
+      const src0 = world.ents.get(key(e.x - dx * r, e.y, e.z - dz * r)), tgt0 = world.ents.get(key(e.x + dx * r, e.y + e.dy, e.z + dz * r));
+      const src = src0 && sameFac(e, src0) ? src0 : null, tgt = tgt0 && sameFac(e, tgt0) ? tgt0 : null;
       const moving = !!e.held || e.t > 0;
       let energy;
       if (def.burner) {
@@ -439,7 +403,7 @@ function tickEntity(e, dt) {
       const spd = dt / e.swing * energy;
       if (!e.held) {
         if (e.t > 0) { e.t = Math.max(0, e.t - spd); e.lastActive = S.T; e.status = 'returning'; }
-        else if (!src || !tgt) e.status = !src ? 'nothing behind it' : 'nothing in front of it';
+        else if (!src || !tgt) e.status = (src0 && !src) || (tgt0 && !tgt) ? 'that belongs to another factory' : !src ? 'nothing behind it' : 'nothing in front of it';
         else if (energy <= 0) e.status = def.burner ? 'out of fuel' : noPower(e);
         else if (src.kind !== 'inserter') {
           const it = take(src, it => (!e.filter || it === e.filter) && wants(tgt, it));
@@ -468,6 +432,30 @@ function tickEntity(e, dt) {
       break;
     }
     case 'generator': if (!e.net) e.status = 'not connected: put a pole next to it'; break;
+    case 'oilpump': {
+      const o = world.oil.get(e.x + ',' + e.z), out = e.fb?.[0];
+      e.load = 0;
+      if (!o || e.y !== 0) { e.status = 'no crude oil under it'; break; }
+      if (!out) { e.status = 'connect a pipe or tank to its front'; break; }
+      if (room(out) <= 0) { e.status = 'output full'; break; }
+      demand(def.power); if (sat <= 0) { e.status = noPower(e); break; }
+      const got = push(out, def.rate * o.yield / 100 * sat * dt, 'crude_oil');
+      if (!isClient()) o.yield = Math.max(20, o.yield - got / 2000);   // deposits slow down as you pump them, never below 20%
+      e.load = sat; e.lastActive = S.T; e.status = `pumping ${(def.rate * o.yield / 100).toFixed(1)}/s`;
+      break;
+    }
+    case 'fpump':
+      if (e.fb?.[0]?.fluid && room(e.fb?.[1]) > 0) demand(def.power);
+      passThrough(e, dt, sat);
+      if (!e.net && e.status === 'no power') e.status = 'not connected to power';
+      break;
+    case 'valve': passThrough(e, dt, 1); break;
+    case 'depot': {
+      // fuel barrels in its storage go into its tank, and the empty barrels stay behind for the trip back
+      const n = e.fb?.[0], bar = e.fuelFluid + '_barrel';
+      if (n && e.store.count(bar) && room(n) >= BARREL_SIZE && (e.store.count('barrel') || e.store.room('barrel'))) { e.store.remove(bar, 1); e.store.add('barrel', 1); push(n, BARREL_SIZE, e.fuelFluid); }
+      break;
+    }
     case 'solar': e.status = e.net ? 'generating' : 'not connected: put a pole next to it'; if (e.net) e.lastActive = S.T; break;
     case 'pole': e.status = `network ${e.net ? e.net.id + 1 : '?'} · ${e.net ? Math.round(e.net.produced) : 0} kW used`; break;
   }
@@ -584,10 +572,16 @@ export const playerBlocks = (x, z) => { const r = PLAYER.radius; for (const p of
 // input: { mx, mz } desired direction in world space (unit or zero)
 export function playerTick(dt, input) {
   const p = actor;
+  if (p.veh) {   // driving: the vehicle carries you, and your keys drive it
+    const v = vehicleById(p.veh);
+    if (!v) p.veh = null;
+    else { p.drive = { t: input.fz || 0, s: input.fx || 0 }; p.x = v.x; p.z = v.z; p.vx = p.vz = 0; p.moving = false; p.face = v.ang; if (!isClient()) { mineTick(dt); pickupTick(dt); } return; }
+  }
   // quick acceleration and braking: responsive, but not a teleporting box
   const a = 1 - Math.exp(-dt * (input.mx || input.mz ? 22 : 30));
-  p.vx = (p.vx || 0) + (input.mx * PLAYER.speed - (p.vx || 0)) * a;
-  p.vz = (p.vz || 0) + (input.mz * PLAYER.speed - (p.vz || 0)) * a;
+  const spd = PLAYER.speed * (isWalkway(Math.floor(p.x), Math.floor(p.z)) ? SIDEWALK_SPEED : 1) * (p.fed > S.T ? 1.25 : 1);
+  p.vx = (p.vx || 0) + (input.mx * spd - (p.vx || 0)) * a;
+  p.vz = (p.vz || 0) + (input.mz * spd - (p.vz || 0)) * a;
   let vx = p.vx, vz = p.vz;
   const under = world.ents.get(key(Math.floor(p.x), 0, Math.floor(p.z)));
   if (under && under.items && under.kind !== 'lift') { const [dx, dz] = DIRS[under.dir]; vx += dx * under.speed; vz += dz * under.speed; }
@@ -599,6 +593,7 @@ export function playerTick(dt, input) {
   if (input.mx || input.mz) p.face = Math.atan2(input.mx, input.mz);
   else if (p.mining && p.mineCell) p.face = Math.atan2(p.mineCell.x + .5 - p.x, p.mineCell.z + .5 - p.z);
   p.walk += dt * 10 * Math.min(1, sp / PLAYER.speed);
+  if (p.veh) return;
   p.moving = sp > .4;
   if (!isClient()) { mineTick(dt); pickupTick(dt); }
 }
@@ -606,10 +601,14 @@ export function playerTick(dt, input) {
 // What right-click would mine at a cell, in Factorio's priority: buildings, then trees/rocks, then ore.
 export function mineTargetAt(c) {
   if (!c) return null;
+  if (c.veh) { const v = vehicleById(c.veh); return v ? vehicleTarget(v, c) : null; }
   const k = key(c.x, c.y, c.z), e = world.ents.get(k);
+  if (e?.kind === 'rail' && e.sig !== null && e.sig !== undefined) return { kind: 'sig', k, c, time: .2, reach: PLAYER.reach, name: 'Rail signal' };
   if (e) return { kind: 'ent', k, c, time: e.items ? .15 : e.kind === 'inserter' || e.kind === 'pole' ? .2 : .4, reach: PLAYER.reach, name: ENTITIES[e.type].name };
   if (world.frames.has(k)) return { kind: 'frame', k, c, time: .3, reach: PLAYER.reach, name: 'Hollow frame' };
   if (c.y === 0) { const f = world.feats.get(k); if (f) return { kind: 'feat', k, c, time: FEATURES[f.type].time, reach: PLAYER.reach, name: FEATURES[f.type].name }; }
+  if (c.y === 0 && isWater(c.x, c.z)) { const f = fishTarget(c); return f ? { kind: 'fish', k: 'fish' + f.id, c, fish: f.id, time: .35, reach: PLAYER.reach, name: 'Fish' } : null; }
+  if (c.y === 0) { const r = roadAt(c.x, c.z); if (r) return { kind: 'road', k: 'road' + k, c, time: .25, reach: PLAYER.reach, name: ITEMS[r.s]?.name ?? 'Road' }; }
   const o = world.ores.get(k);
   if (o) return { kind: 'ore', k, c, time: c.y < 0 ? 1.4 : 1, reach: PLAYER.mineReach + (c.y < 0 ? 1 : 0), name: ITEMS[o.type].name, ore: o.type };
   return null;
@@ -617,16 +616,20 @@ export function mineTargetAt(c) {
 function mineTick(dt) {
   const p = actor, t = mineTargetAt(p.mineCell);
   if (!t) { p.mining = null; return; }
-  if (!p.mining || p.mining.k !== t.k) p.mining = { k: t.k, prog: 0, name: t.name, kind: t.kind === 'feat' ? world.feats.get(t.k).type : t.kind };
+  if (!p.mining || p.mining.k !== t.k) p.mining = { k: t.k, prog: 0, name: t.name, kind: t.kind === 'feat' ? world.feats.get(t.k).type : t.kind === 'ore' || t.kind === 'feat' ? t.kind : t.kind === 'fish' ? 'ore' : 'ent' };
   const m = p.mining;
   if (distTo(t.c.x, t.c.z) > t.reach) { m.blocked = 'out of reach'; return; }
   if (t.kind === 'ore' && invRoom(t.ore) < 1) { m.blocked = 'inventory full'; return; }
   m.blocked = null;
-  m.prog += dt / t.time;
+  m.prog += dt / t.time * (p.fed > S.T ? 1.5 : 1);
   if (m.prog < 1) return;
   m.prog = 0;
   const { x, y, z } = t.c;
-  if (t.kind === 'ore') { const it = depleteOre(x, y, z); invGive(it); bump('mined', it); notify('mined', 'ore'); notify('float', `+1 ${ITEMS[it].name}`, x + .5, y + .6, z + .5); }
+  if (t.kind === 'fish') { if (catchFish(t.fish)) { invGive('raw_fish'); bump('mined', 'raw_fish'); notify('mined', 'ore'); notify('float', '+1 Raw fish', x + .5, .4, z + .5); } }
+  else if (t.kind === 'road') removeRoad(x, z);
+  else if (t.kind === 'sig') { const e = world.ents.get(t.k); if (e) { e.sig = null; invGive('rail_signal'); world.railDirty = true; bus.emit('remesh', e); } }
+  else if (t.kind === 'veh') { const r = removeVehicle(t.veh); if (r) notify('toast', r); }
+  else if (t.kind === 'ore') { const it = depleteOre(x, y, z); invGive(it); bump('mined', it); notify('mined', 'ore'); notify('float', `+1 ${ITEMS[it].name}`, x + .5, y + .6, z + .5); }
   else if (t.kind === 'feat') {
     const f = world.feats.get(t.k); world.feats.delete(t.k);
     for (const [it, n] of Object.entries(FEATURES[f.type].gives)) { invGive(it, n); bump('mined', it, n); }
@@ -684,20 +687,25 @@ export function simulate(dt, input = { mx: 0, mz: 0 }) {
   S.T += dt;
   if (world.beltDirty) rebuildBelts();
   if (world.powerDirty !== false) rebuildPower();
+  if (world.fluidDirty !== false) rebuildFluids();
   for (const n of nets) { n.gens = []; n.engines = []; n.solar = 0; }
-  steamSupply();
+  fluidPre(dt);
+  producerCaps(dt);
   for (const e of world.ents.values()) {
     if (!e.net) continue;
     if (e.kind === 'generator') e.net.gens.push(e); else if (e.kind === 'solar') e.net.solar++;
-    else if (e.kind === 'engine') { e.cap = ENTITIES[e.type].out * (e.fnet?.steam?.ratio || 0); e.net.engines.push(e); }
+    else if (e.kind === 'engine' || e.kind === 'fgen') e.net.engines.push(e);
   }
   for (const n of nets) {
     n.capacity = n.solar * ENTITIES.solar.out + n.gens.filter(fuelled).length * ENTITIES.generator.out + n.engines.reduce((s, e) => s + e.cap, 0);
     n.sat = n.demand > 0 ? Math.min(1, n.capacity / n.demand) : (n.capacity > 0 ? 1 : 0);
   }
+  if (world.railDirty !== false) rebuildRails();
   for (const b of world.beltOrder) beltTick(b, dt);
   for (const e of world.ents.values()) if (!e.items) tickEntity(e, dt);
   powerTick(dt);
+  transportTick(dt);
+  fishTick(dt);
   // If this throws, the actor must not stay a friend, or the host's own clicks would use their inventory.
   try {
     for (const p of S.players.values()) {
@@ -734,14 +742,21 @@ export function canPlace(type, x, y, z, dir = S.dir, dy = S.dy, opts = {}) {
     if (FAST_REPLACE.has(def.kind) && ex.kind === def.kind && (ex.type !== type || ex.dir !== dir || (def.kind === 'inserter' && ex.dy !== dy))) return null;
     return 'occupied';
   }
-  if (def.kind === 'drill' && !world.ores.has(k)) return 'drills need a deposit underneath';
+  if (def.kind === 'drill' && !world.ores.has(k)) return world.oil.has(x + ',' + z) && y === 0 ? 'that is crude oil: it needs a pumpjack' : 'drills need a deposit underneath';
+  if (def.kind === 'oilpump' && (y !== 0 || !world.oil.has(x + ',' + z))) return 'pumpjacks go on crude oil (dark patches)';
+  if (def.kind === 'rail' && y !== 0) return 'rails only go on the ground';
+  if (y === 0 && roadBlocks(x, z) && !def.onRoad) return 'keep roads clear: build beside them, or pass under with an underground belt or pipe';
+  if (def.kind === 'depot' && !wayNear(def.way, x, y, z)) return def.way === 'sea' ? 'ports go on the shore, next to water' : def.way === 'rail' ? 'train stations go right beside a rail' : 'truck depots go right beside a road';
+  if (def.cap || def.fluids || def.ports) { const f = fluidConflict(type, x, y, z, dir, opts.fac ?? actorFac(), ex?.recipe); if (f) return f; }
   if (def.kind === 'lift') { const ty = y + (dy || 1); if (ty < lo || ty > hi) return 'the lift would lead to a locked layer'; }
   if (y === 0 && opts.reach && !BELTISH.has(def.kind) && def.kind !== 'pole' && playerBlocks(x, z)) return 'you are standing there';
   return null;
 }
 const BELTISH = new Set(['belt', 'underground', 'splitter', 'lift']);
-export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false) {
-  if (!free) { const err = canPlace(type, x, y, z, dir, dy); if (err) return err; invAdd(type, -1); }
+// Which factory the acting engineer is building for (see Factories in state.js).
+export const actorFac = () => factoryOf(actor.fac)?.id ?? 1;
+export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false, fac = null) {
+  if (!free) { const err = canPlace(type, x, y, z, dir, dy, { fac }); if (err) return err; invAdd(type, -1); }
   const k = key(x, y, z);
   if (type === 'frame') {
     const f = { id: nextId++, type: 'frame', kind: 'frame', x, y, z, dir: 0 };
@@ -750,6 +765,7 @@ export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false) {
   const ent = ENTITIES[type];
   const old = world.ents.get(k);
   const e = createEntity(type, x, y, z, dir, ent.kind === 'lift' ? (dy || 1) : ent.kind === 'inserter' ? dy : 0);
+  if (!ent.shared) e.fac = factoryOf(fac ?? actorFac())?.id ?? 1;
   if (old) {   // fast replace keeps what was on it
     if (old.items && e.items) e.items = old.items;
     if (old.held) e.held = old.held;
@@ -758,16 +774,17 @@ export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false) {
     else if (old.fuel) invGive(old.fuelType, old.fuel);
     world.ents.delete(k); bus.emit('removed', old);
   }
-  if (e.kind === 'underground') {
+  if (e.kind === 'underground' || e.kind === 'upipe') {   // pair with the nearest open entrance of the same type behind it
     const [dx, dz] = DIRS[dir];
-    for (let i = 1; i < ENTITIES.underground.range; i++) {
+    for (let i = 1; i < ent.range; i++) {
       const u = world.ents.get(key(x - dx * i, y, z - dz * i));
-      if (u && u.kind === 'underground' && u.dir === dir) { if (u.role === 'in' && !u.pair) { e.role = 'out'; e.pair = u; u.pair = e; } break; }
+      if (u && u.type === type && u.dir === dir && sameFac(u, e)) { if (u.role === 'in' && !u.pair) { e.role = 'out'; e.pair = u; u.pair = e; bus.emit('remesh', u); } break; }
     }
   }
   world.ents.set(k, e);
   if (e.items) world.beltDirty = true;
-  world.powerDirty = true;
+  if (e.kind === 'rail') world.railDirty = true;
+  world.powerDirty = true; world.fluidDirty = true;
   bus.emit('placed', e);
   return e;
 }
@@ -776,6 +793,7 @@ export function refundContents(e) {
   if (e.items) e.items.forEach(it => invGive(it.type));
   if (e.store) for (const [k, v] of e.store.counts()) invGive(k, v);
   add(e.inp); add(e.out);
+  if (e.sig !== null && e.sig !== undefined) invGive('rail_signal');
   if (e.fuel) invGive(e.fuelType, e.fuel);
   if (e.held) invGive(e.held);
   if (e.buffer) invGive(e.buffer);
@@ -784,13 +802,15 @@ export function refundContents(e) {
 }
 export function removeAt(x, y, z) {
   const k = key(x, y, z), e = world.ents.get(k);
+  if (e?.kind === 'rail' && world.vehicles.some(v => v.tile === x + ',' + z)) return 'a train stands on it';
   if (e) {
     world.ents.delete(k);
     refundContents(e); invGive(e.type);
     if (e.kind === 'pole') dropLinksAt(x, y, z, true);
-    if (e.pair) { e.pair.pair = null; }
+    if (e.pair) { e.pair.pair = null; bus.emit('remesh', e.pair); }
     if (e.items) world.beltDirty = true;
-    world.powerDirty = true;
+    if (e.kind === 'rail') world.railDirty = true;
+    world.powerDirty = true; world.fluidDirty = true;
     bus.emit('removed', e); return 'removed';
   }
   const f = world.frames.get(k);
@@ -849,15 +869,21 @@ export function editMarks(op) {
 
 export function rotateEntity(e, by = 1) {
   if (!e || e.kind === 'frame') return;
+  if (e.kind === 'rail') return;
   e.dir = (e.dir + by + 4) % 4;
-  if (e.kind === 'underground' && e.pair) { e.pair.pair = null; e.pair = null; }
+  if ((e.kind === 'underground' || e.kind === 'upipe') && e.pair) { e.pair.pair = null; bus.emit('remesh', e.pair); e.pair = null; }
   if (e.items) world.beltDirty = true;
+  if (e.fb || e.fa) world.fluidDirty = true;
   bus.emit('remesh', e);
 }
 export function setRecipe(e, rid) {
   if (e.kind !== 'assembler' || e.recipe === rid) return;
+  const r = RECIPE[rid];
+  if (rid && (!r || !(ENTITIES[e.type].cats || ['craft']).includes(r.cat) || !recipeUnlocked(r))) return;
+  if (r && (r.fin || r.fout)) { const f = fluidConflict(e.type, e.x, e.y, e.z, e.dir, e.fac, rid); if (f) { notify('toast', f); return; } }
   refundContents({ inp: e.inp, out: e.out, crafting: e.crafting, recipe: e.recipe });
-  e.inp = {}; e.out = {}; e.crafting = false; e.prog = 0; e.recipe = rid;
+  e.inp = {}; e.out = {}; e.crafting = false; e.prog = 0; e.recipe = rid; e.fa = [];
+  world.fluidDirty = true;
   bus.emit('remesh', e);
 }
 
@@ -877,7 +903,22 @@ export function entityCommand(e, cmd, arg) {
     case 'filter': e.filter = e.filter === arg ? null : arg; break;
     case 'pitch': e.dy = e.dy === 0 ? 1 : e.dy === 1 ? -1 : 0; bus.emit('remesh', e); break;
     case 'rotate': rotateEntity(e); break;
+    case 'flush': flush(e); notify('toast', 'line flushed'); break;
+    case 'valve': if (e.kind === 'valve' && ['check', 'overflow', 'topup'].includes(arg)) e.mode = arg; break;
+    case 'fac': setFactory([e], +arg); break;
+    default: if (e.kind === 'depot') depotCommand(e, cmd, arg);
   }
+}
+// Move buildings to another factory. Their links to the old one (belts, power, pipes) fall apart.
+export function setFactory(list, fac) {
+  if (!factoryOf(fac)) return;
+  for (const e of list) {
+    if (!e || ENTITIES[e.type]?.shared || e.fac === fac || e.kind === 'frame') continue;
+    e.fac = fac;
+    if ((e.kind === 'underground' || e.kind === 'upipe') && e.pair) { e.pair.pair = null; bus.emit('remesh', e.pair); e.pair = null; }
+    bus.emit('remesh', e);
+  }
+  world.beltDirty = true; world.powerDirty = true; world.fluidDirty = true;
 }
 
 // ---------------------------------------------------------------- slots: drag and drop between inventories
@@ -907,10 +948,12 @@ export function entSlots(e) {
     case 'lab': for (const k of PACKS) out.push({ id: 'in:' + k, group: 'Science packs', it: e.inp[k] ? k : null, n: e.inp[k] || 0, hint: k }); break;
     case 'transmitter': out.push({ id: 'in:resonance_pack', group: 'Resonance packs', it: e.inp.resonance_pack ? 'resonance_pack' : null, n: e.inp.resonance_pack || 0, hint: 'resonance_pack' }); break;
     case 'drill': out.push({ id: 'buf', group: 'Output', it: e.buffer, n: e.buffer ? 1 : 0 }); break;
-    case 'chest': e.store.slots.forEach((s, i) => out.push({ id: 'c:' + i, group: 'Storage', it: s?.it || null, n: s?.n || 0 })); break;
+    case 'chest': case 'depot': e.store.slots.forEach((s, i) => out.push({ id: 'c:' + i, group: 'Storage', it: s?.it || null, n: s?.n || 0 })); break;
   }
   return out;
 }
+// The slots of whatever a panel shows: a machine or a vehicle.
+export const slotsOf = t => !t ? [] : t.isVeh ? vehSlots(t) : entSlots(t);
 function entSlotAccept(e, id, it) {
   if (!it) return 0;
   const st = stackOf(it);
@@ -946,20 +989,22 @@ function entSlotTake(e, id, n) {
   const k = Math.min(n, obj[k2]); obj[k2] -= k; if (!obj[k2]) delete obj[k2];
   return [k2, k];
 }
-const refEnt = r => r.e ? world.ents.get(key(r.e[0], r.e[1], r.e[2])) : null;
+const refEnt = r => r.e ? world.ents.get(key(r.e[0], r.e[1], r.e[2])) : r.v ? vehicleById(r.v) : null;
 function refGet(r) {
   if (r.p !== undefined) { const s = actor.inv.slots[r.p]; return { it: s?.it || null, n: s?.n || 0 }; }
-  const e = refEnt(r), s = e && entSlots(e).find(x => x.id === r.s);
+  const e = refEnt(r), s = e && slotsOf(e).find(x => x.id === r.s);
   return s ? { it: s.it, n: s.n } : { it: null, n: 0 };
 }
-const refAccept = (r, it) => r.p !== undefined ? actor.inv.slotAccept(r.p, it) : refEnt(r) ? entSlotAccept(refEnt(r), r.s, it) : 0;
-const refPut = (r, it, n) => r.p !== undefined ? actor.inv.slotPut(r.p, it, n) : refEnt(r) ? entSlotPut(refEnt(r), r.s, it, n) : 0;
+const slotAccept = (e, id, it) => e.isVeh ? vehSlotAccept(e, id, it) : entSlotAccept(e, id, it);
+const slotPut = (e, id, it, n) => e.isVeh ? vehSlotPut(e, id, it, n) : entSlotPut(e, id, it, n);
+const refAccept = (r, it) => r.p !== undefined ? actor.inv.slotAccept(r.p, it) : refEnt(r) ? slotAccept(refEnt(r), r.s, it) : 0;
+const refPut = (r, it, n) => r.p !== undefined ? actor.inv.slotPut(r.p, it, n) : refEnt(r) ? slotPut(refEnt(r), r.s, it, n) : 0;
 function refTake(r, n) {
   if (r.p !== undefined) { const it = actor.inv.slots[r.p]?.it; return [it, actor.inv.slotTake(r.p, n)]; }
-  const e = refEnt(r); return e ? entSlotTake(e, r.s, n) : [null, 0];
+  const e = refEnt(r); return !e ? [null, 0] : e.isVeh ? vehSlotTake(e, r.s, n) : entSlotTake(e, r.s, n);
 }
 const isStorage = r => r.p !== undefined || (r.s && r.s.startsWith('c:'));
-const nearEnough = r => !r.e || distTo(r.e[0], r.e[2]) <= PLAYER.reach + 1;
+const nearEnough = r => { const e = r.e || r.v ? refEnt(r) : null; return !e || distTo(Math.floor(e.x), Math.floor(e.z)) <= PLAYER.reach + 1 + (e.isVeh ? 1 : 0); };
 // Move up to n items from one slot to another. Storage slots swap if they hold different things.
 export function moveItems(from, to, n) {
   if (!nearEnough(from) || !nearEnough(to)) { notify('toast', 'out of reach'); return 0; }
@@ -988,12 +1033,12 @@ export function shiftMove(from, entPos) {
   const a = refGet(from); if (!a.it) return 0;
   let moved = 0;
   if (from.p !== undefined) {
-    const e = entPos ? world.ents.get(key(entPos[0], entPos[1], entPos[2])) : null;
+    const e = entPos?.v ? vehicleById(entPos.v) : entPos ? world.ents.get(key(entPos[0], entPos[1], entPos[2])) : null;
     if (!e) return 0;
     if (e.store) { const left = e.store.add(a.it, a.n); moved = a.n - left; actor.inv.slotTake(from.p, moved); }
-    else for (const s of entSlots(e)) {
-      const k = Math.min(a.n - moved, entSlotAccept(e, s.id, a.it));
-      if (k > 0) { actor.inv.slotTake(from.p, k); entSlotPut(e, s.id, a.it, k); moved += k; }
+    else for (const s of slotsOf(e)) {
+      const k = Math.min(a.n - moved, slotAccept(e, s.id, a.it));
+      if (k > 0) { actor.inv.slotTake(from.p, k); slotPut(e, s.id, a.it, k); moved += k; }
       if (moved >= a.n) break;
     }
     if (!moved) notify('toast', `it won't take ${ITEMS[a.it].name.toLowerCase()}`);

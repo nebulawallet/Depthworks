@@ -1,11 +1,16 @@
 // Save / load to localStorage, and the entity format shared with co-op sync.
 // Saves are per-browser and can disappear, so every storage access is guarded.
-import { S, world, inv, bus, key, GRID, generateWater, dryAround, loadBars, WATER_GEN } from './state.js';
+import { S, world, inv, bus, key, GRID, generateWater, generateOil, dryAround, loadBars, WATER_GEN } from './state.js';
 import { place } from './sim.js';
 import { ENTITIES, TILE } from './data.js';
+import { loadTransport, vehToJSON, unitToJSON } from './transport.js';
+import { stockFish, findBodies, fishToList, fishFromList } from './fish.js';
 
 const SLOT = 'depthworks.save.v3';
-const FIELDS = ['recipe', 'filter', 'inp', 'out', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit'];
+const FIELDS = ['recipe', 'filter', 'inp', 'out', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit',
+  'fac', 'fa', 'fluid', 'mode', 'dname', 'prio', 'vlimit', 'rules', 'fuelFluid', 'sig'];
+// Objects and arrays in FIELDS are copied one level deep (rules are a list of small objects).
+const copy = v => Array.isArray(v) ? v.map(x => x && typeof x === 'object' ? { ...x } : x) : v && typeof v === 'object' ? { ...v } : v;
 
 export function hasSave() { try { return !!localStorage.getItem(SLOT); } catch { return false; } }
 export function wipeSave() { try { localStorage.removeItem(SLOT); } catch { /* storage unavailable */ } }
@@ -15,6 +20,7 @@ export function entToJSON(e) {
   if (e.kind === 'frame') return { t: 'frame', x: e.x, y: e.y, z: e.z };
   const o = { t: e.type, x: e.x, y: e.y, z: e.z, d: e.dir, dy: e.dy };
   for (const f of FIELDS) if (e[f] !== undefined) o[f] = e[f];
+  if (e.fa) o.fa = Array.from(e.fa, v => Math.round(v || 0));
   if (e.items) o.items = e.items.map(i => [i.type, +i.p.toFixed(3)]);
   if (e.store) o.store = e.store.toList();
   if (e.pair) o.pair = [e.pair.x, e.pair.z];
@@ -27,8 +33,11 @@ function loadStore(e, s) {
 }
 // Copy state onto an existing entity. Rebuilds its model if something visible changed.
 export function applyEntJSON(e, o, forceRemesh = false) {
-  const visual = forceRemesh || o.d !== e.dir || (o.dy ?? 0) !== (e.dy ?? 0) || (o.recipe ?? null) !== (e.recipe ?? null) || (o.role ?? null) !== (e.role ?? null);
-  for (const f of FIELDS) if (o[f] !== undefined) e[f] = o[f] && typeof o[f] === 'object' ? { ...o[f] } : o[f];
+  const visual = forceRemesh || o.d !== e.dir || (o.dy ?? 0) !== (e.dy ?? 0) || (o.recipe ?? null) !== (e.recipe ?? null) || (o.role ?? null) !== (e.role ?? null)
+    || (o.fac ?? 1) !== (e.fac ?? 1) || (o.fluid ?? null) !== (e.fluid ?? null) || (o.sig ?? null) !== (e.sig ?? null);
+  if ((o.recipe ?? null) !== (e.recipe ?? null) || (o.fac ?? 1) !== (e.fac ?? 1) || (o.fuelFluid ?? null) !== (e.fuelFluid ?? null)) world.fluidDirty = true;
+  if ((o.sig ?? null) !== (e.sig ?? null)) world.railDirty = true;
+  for (const f of FIELDS) if (o[f] !== undefined) e[f] = copy(o[f]);
   if (o.items && e.items) e.items = o.items.map(([type, p]) => ({ type, p }));
   loadStore(e, o.store);
   if (o.st !== undefined) e.status = o.st;
@@ -45,7 +54,7 @@ export function entFromJSON(o) {
   if (o.t === 'frame') return place('frame', o.x, o.y, o.z, 0, 0, true);
   const e = place(o.t, o.x, o.y, o.z, o.d, o.dy, true);
   if (typeof e !== 'object' || !e) return e;
-  for (const f of FIELDS) if (o[f] !== undefined) e[f] = o[f] && typeof o[f] === 'object' ? { ...o[f] } : o[f];
+  for (const f of FIELDS) if (o[f] !== undefined) e[f] = copy(o[f]);
   if (o.items) e.items = o.items.map(([type, p]) => ({ type, p }));
   loadStore(e, o.store);
   e.dy = o.dy;
@@ -77,7 +86,7 @@ function unpackTiles(s) {
 // ---------------------------------------------------------------- whole world
 export function serialize() {
   return JSON.stringify({
-    v: 3, T: S.T, player: { x: S.player.x, z: S.player.z, face: S.player.face }, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam, pix: S.pix,
+    v: 3, T: S.T, player: { x: S.player.x, z: S.player.z, face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam, pix: S.pix,
     seed: S.seed, tiles: packTiles(), waterGen: WATER_GEN, links: world.links, marks: world.marks,
     research: { done: [...S.research.done], current: S.research.current, progress: S.research.progress },
     signal: { stage: S.signal.stage, pulses: S.signal.pulses, taught: [...S.signal.taught], seen: [...S.signal.seen], log: S.signal.log },
@@ -85,6 +94,8 @@ export function serialize() {
     invSlots: inv.toList(), ores: [...world.ores].map(([k, o]) => [k, o.type, o.amount]),
     frames: [...world.frames.values()].map(f => [f.x, f.y, f.z]), ents: [...world.ents.values()].map(entToJSON),
     feats: [...world.feats].map(([k, f]) => [k, f.type, +f.v.toFixed(3)]), ground: world.ground,
+    oil: [...world.oil].map(([k, o]) => [k, +o.yield.toFixed(2)]), roads: [...world.roads], factories: world.factories, facNext: world.facNext,
+    vehicles: world.vehicles.map(vehToJSON), units: world.units.map(u => unitToJSON(u)), routes: world.routes, nextId: world.nextId, fish: fishToList(),
   });
 }
 
@@ -105,7 +116,7 @@ export function loadData(d, asGuest = false) {
   if (!d || d.v !== 3) return false;
   S.T = d.T; S.maxTier = d.maxTier;
   if (!asGuest) {
-    Object.assign(S.player, d.player); loadBars(d.bars, d.hotbar, d.bar); S.hotbarSeen = new Set(d.hotbarSeen || []); Object.assign(S.cam, d.cam); S.pix = d.pix || 3;
+    Object.assign(S.player, d.player); loadBars(d.bars, d.hotbar, d.bar); if (d.roadCfg) S.roadCfg = { ...S.roadCfg, ...d.roadCfg }; S.hotbarSeen = new Set(d.hotbarSeen || []); Object.assign(S.cam, d.cam); S.pix = d.pix || 3;
     S.player.craft = d.craft || []; S.goalsDone = new Set(d.goalsDone || []); S.remoteInv = d.remoteInv || {};
     if (d.invSlots) inv.loadList(d.invSlots); else { inv.clear(); for (const [k, v] of d.inv || []) inv.add(k, v); }
   }
@@ -126,6 +137,15 @@ export function loadData(d, asGuest = false) {
     for (const g of world.ground) dryAround(g.x, g.z);
     for (const p of [d.player, ...Object.values(d.remoteInv || {})]) if (p) dryAround(p.x, p.z, 2);
   }
+  world.factories = Array.isArray(d.factories) && d.factories.length ? d.factories : [{ id: 1, name: 'Main factory', color: '#7ef6ff' }];
+  world.facNext = d.facNext || Math.max(...world.factories.map(f => f.id)) + 1;
+  if (!world.factories.some(f => f.id === S.player.fac)) S.player.fac = world.factories[0].id;
+  loadTransport(d);
+  if (d.oil) { world.oil.clear(); for (const [k, y] of d.oil) world.oil.set(k, { yield: y }); }
+  else {   // saved before oil existed: put the wells where nothing stands
+    const taken = new Set([...d.ents.map(o => o.x + ',' + o.z), ...(d.frames || []).map(([x, , z]) => x + ',' + z)]);
+    generateOil(S.seed, (x, z) => taken.has(x + ',' + z));
+  }
   world.links = (d.links || []).filter(l => Array.isArray(l.a) && Array.isArray(l.b));
   world.marks = d.marks?.markers ? d.marks : { markers: [], areas: [], next: 1 };
   for (const [x, y, z] of d.frames) place('frame', x, y, z, 0, 0, true);
@@ -134,11 +154,14 @@ export function loadData(d, asGuest = false) {
     const e = entFromJSON(o);
     if (typeof e === 'object' && e) byPos.set(o.x + ',' + o.y + ',' + o.z, [e, o]);
   }
-  for (const [, [e]] of byPos) if (e.kind === 'underground') e.pair = null;
+  for (const [, [e]] of byPos) if (e.kind === 'underground' || e.kind === 'upipe') e.pair = null;
   for (const [, [e, o]] of byPos) {
     if (o.pair) { e.pair = byPos.get(o.pair[0] + ',' + o.y + ',' + o.pair[1])?.[0] ?? null; e.pair && (e.pair.pair = e); }
     bus.emit('remesh', e);
   }
-  world.beltDirty = true; world.powerDirty = true;
+  findBodies();
+  if (d.fish) fishFromList(d.fish); else stockFish();
+  if (S.player.veh && !world.vehicles.some(v => v.id === S.player.veh)) S.player.veh = null;
+  world.beltDirty = true; world.powerDirty = true; world.fluidDirty = true; world.railDirty = true;
   return true;
 }

@@ -11,6 +11,8 @@ export const ACTIONS = [
   ['signal', 'Signal panel', ['KeyG']], ['help', 'Help and settings', ['F1']], ['chat', 'Chat', ['Enter', 'NumpadEnter']],
   ['depthMode', 'Depth mode', ['Tab']], ['layerUp', 'Layer up', ['PageUp']], ['layerDown', 'Layer down', ['PageDown']],
   ['orbitLeft', 'Orbit left', ['BracketLeft']], ['orbitRight', 'Orbit right', ['BracketRight']], ['pitch', 'Inserter pitch / lift direction', ['KeyV']],
+  ['board', 'Get in or out of a vehicle', ['KeyB']], ['logistics', 'Routes for trains, trucks and boats', ['KeyL']],
+  ['factories', 'Factories', ['KeyK']], ['nextFactory', 'Next factory to build for', ['KeyJ']],
 ];
 const DEFAULTS = Object.fromEntries(ACTIONS.map(([id, , keys]) => [id, keys]));
 let binds = load();
