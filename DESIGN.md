@@ -93,6 +93,12 @@ Built:
 - **The signal:** a 9-exchange alien conversation, answered by arranging working machines around
   the transmitter.
 
+Co-op: peer to peer over WebRTC (PeerJS broker for the handshake), with 6-character invite codes and
+nicknames. The host is authoritative. Friends send inputs and actions, which the host runs with the same
+rules (through an `actor` binding, so every rule knows whose inventory and position to use). The host streams
+world changes as they happen, plus snapshots of changed machines at about 7 Hz and a full correction every 3 s.
+Friends simulate locally between snapshots so belts and arms move smoothly.
+
 Not yet built: enemies and turrets, fluids (pumps, pipes, oil), two-lane belts, blueprints and
 copy-paste, a map view, a larger or infinite map, music, rotational precision, and richer alien grammar.
 

@@ -97,6 +97,23 @@
   #title .tag2 { color: var(--dim); margin: 8px 0 18px; }
   #titleBtns { display: flex; flex-direction: column; gap: 8px; align-items: center; } #titleBtns button { width: 240px; font-size: 22px; }
   body:not(.ingame) .hud { display: none !important; }
+  .nickrow { margin: 0 0 14px; color: var(--dim); }
+  .nickrow input, #codeIn { font: inherit; font-size: 22px; background: var(--panel2); color: var(--ink); border: 2px solid var(--line2); padding: 2px 8px; width: 220px; text-align: center; }
+  #codeIn { letter-spacing: 6px; text-transform: uppercase; width: 240px; }
+  .nickrow input:focus, #codeIn:focus, #chatin:focus { outline: none; border-color: var(--acc); }
+  #lobbyMsg { margin-top: 10px; min-height: 22px; color: var(--warn); }
+  #coop { left: 12px; top: 340px; width: 220px; font-size: 17px; }
+  #coop .gh { color: var(--acc); font-size: 13px; margin-bottom: 4px; }
+  #coop .code { font-family: 'Silkscreen', monospace; font-size: 22px; letter-spacing: 4px; color: var(--gold); cursor: pointer; margin: 2px 0 4px; }
+  #coop .dot { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 1px solid #000; }
+  .nametag { position: fixed; transform: translate(-50%, -100%); pointer-events: none; z-index: 4; font-size: 16px; color: #fff; padding: 0 5px;
+    background: rgba(10, 12, 18, .7); border-bottom: 2px solid; white-space: nowrap; text-shadow: 1px 1px 0 #000; }
+  #chatlog { position: fixed; left: 12px; bottom: 74px; width: 440px; max-width: calc(100vw - 24px); pointer-events: none; z-index: 6; font-size: 18px; }
+  .chatline { background: rgba(10, 12, 18, .72); padding: 1px 8px; margin-top: 2px; transition: opacity 1s; text-shadow: 1px 1px 0 #000; }
+  .chatline.sys { color: var(--dim); font-style: italic; }
+  .chatline.old { opacity: 0; } #chatlog.open .chatline.old { opacity: 1; }
+  #chatin { display: none; position: fixed; left: 12px; bottom: 40px; width: 440px; max-width: calc(100vw - 24px); z-index: 7; font: inherit; font-size: 18px;
+    background: var(--panel); color: var(--ink); border: 2px solid var(--acc); padding: 3px 8px; }
   #toast { left: 50%; top: 14px; transform: translateX(-50%); display: none; pointer-events: none; color: var(--warn); z-index: 9; text-align: center; max-width: 80vw; }
   #toast.good { color: var(--ok); } #toast.sig { color: var(--acc); }
   #tip { display: none; pointer-events: none; z-index: 20; max-width: 320px; font-size: 17px; }
@@ -118,7 +135,8 @@
 <script type="importmap">
   { "imports": {
       "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.4/+esm"
   } }
 </script>
 </head>
@@ -159,7 +177,8 @@
       <kbd>1</kbd>–<kbd>0</kbd> quickbar · <kbd>Q</kbd> copy hovered / empty hand<br>
       <kbd>R</kbd> rotate · <kbd>Z</kbd> drop · hold <kbd>F</kbd> pick up<br>
       <kbd>Ctrl</kbd>+<kbd>LMB</kbd> move items in or out of a machine<br>
-      <kbd>Esc</kbd> close · <kbd>G</kbd> signal · <kbd>Alt</kbd> recipe icons
+      <kbd>Esc</kbd> close · <kbd>G</kbd> signal · <kbd>Alt</kbd> recipe icons<br>
+      <kbd>Enter</kbd> chat (co-op)
     </div>
     <div>
       <h3>Depth mode (<kbd>Tab</kbd>)</h3>
@@ -189,9 +208,14 @@
 <div id="title" class="panel modal" style="display:none">
   <h1>DEPTHWORKS</h1>
   <div class="tag2">a factory that goes down, up, and out</div>
+  <div class="nickrow">Nickname <input id="nick" maxlength="16" autocomplete="off" spellcheck="false"></div>
   <div id="titleBtns"></div>
+  <div id="lobbyMsg" class="dim"></div>
 </div>
 
+<div id="coop" class="panel hud" style="display:none"></div>
+<div id="chatlog" class="hud"></div>
+<input id="chatin" class="hud" maxlength="200" placeholder="say something, Enter to send" autocomplete="off">
 <div id="toast" class="panel"></div>
 <div id="tip" class="panel"></div>
 

@@ -379,9 +379,10 @@ export function disposeMesh(root) {
 
 // ---------------------------------------------------------------- the engineer
 // Built facing +z; legs and arms pivot at hip and shoulder.
-export function makePlayer() {
+export function makePlayer(color = 0xe07a2e) {
   const g = new THREE.Group(), P = {};
-  const suit = M(0xe07a2e), suitDark = M(0xa8521c), dark = M(0x2b2f36), helm = M(0xd8dde4), visor = M(0x7ef6ff, { emissive: 0x2a8a99, emissiveIntensity: .8 });
+  const darker = c => ((c >> 16 & 255) * .72 << 16) | ((c >> 8 & 255) * .72 << 8) | (c & 255) * .72;
+  const suit = M(color), suitDark = M(darker(color)), dark = M(0x2b2f36), helm = M(0xd8dde4), visor = M(0x7ef6ff, { emissive: 0x2a8a99, emissiveIntensity: .8 });
   const limb = (parent, w, h, d, mat, x, y, z) => { const piv = new THREE.Group(); piv.position.set(x, y, z); parent.add(piv); piv.add(new THREE.Mesh(box(w, h, d).translate(0, -h / 2, 0), mat)); return piv; };
   const body = new THREE.Group(); g.add(body); P.body = body;
   P.legL = limb(g, .12, .34, .14, suitDark, -.085, .36, 0);
@@ -403,7 +404,7 @@ export function makePlayer() {
   pick.add(new THREE.Mesh(box(.26, .045, .045).translate(0, 0, .34), M(C.light)));
   pick.visible = false;
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  g.userData.P = P;
+  g.userData.P = P; g.userData.color = color;
   return g;
 }
 export function animatePlayer(g, p, T, dt = .016) {

@@ -1,10 +1,11 @@
 // HUD and panels. Panels re-render on a timer, so actions use pointerdown delegation via data-act.
 import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER } from './data.js';
-import { S, world, inv, invGet, invAdd, invGive, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, stackOf, slotsUsed } from './state.js';
-import { canAccept, insert, queueCraft, cancelCraft, maxCraftable, techAvailable, setRecipe, rotateEntity, isActive, powerSummary } from './sim.js';
+import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, stackOf, slotsUsed } from './state.js';
+import { canAccept, maxCraftable, techAvailable, isActive, powerSummary } from './sim.js';
 import { iconHTML, iconURL, fmtN } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
 import { project } from './scene.js';
+import { doAction, chat, netInfo } from './net.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -255,34 +256,22 @@ function act(a, ev) {
       const r = RECIPE[arg];
       if (!r.hand) { toast('this one can only be made in an assembler'); return; }
       const n = ev.shiftKey ? maxCraftable(arg) : ev.button === 2 ? Math.min(5, maxCraftable(arg)) : 1;
-      if (!n || !queueCraft(arg, n)) toast('missing ingredients for ' + itemName(arg));
-      renderInventory(); return;
+      if (!n) { toast('missing ingredients for ' + itemName(arg)); return; }
+      doAction({ a: 'craft', rid: arg, n }); renderInventory(); return;
     }
-    case 'cancel': cancelCraft(+arg); renderInventory(); return;
+    case 'cancel': doAction({ a: 'cancel', i: +arg }); renderInventory(); return;
     case 'tech': {
       const t = TECH[arg];
       if (S.research.done.has(arg)) return;
       if (!techAvailable(t)) { toast('not available yet'); return; }
-      S.research.current = arg; renderResearch(); toast('researching ' + t.name); return;
+      doAction({ a: 'research', id: arg }); S.research.current = arg; renderResearch(); toast('researching ' + t.name); return;
     }
     case 'close': closeEntity(); return;
+    case 'copycode': return;
   }
   if (!e) return;
-  const takeFrom = (obj, k, all = true) => { const n = all ? obj[k] : 1; invGive(k, n); obj[k] -= n; if (!obj[k]) delete obj[k]; return n; };
-  switch (cmd) {
-    case 'takeinp': takeFrom(e.inp, arg); break;
-    case 'takeout': takeFrom(e.out, arg); break;
-    case 'takestore': e.count -= takeFrom(e.store, arg); break;
-    case 'takeall': for (const k of Object.keys(e.store)) takeFrom(e.store, k); e.count = 0; break;
-    case 'takebuf': invGive(e.buffer); e.buffer = null; break;
-    case 'takefuel': invGive(e.fuelType, e.fuel); e.fuel = 0; e.fuelType = null; break;
-    case 'takebelt': e.items.forEach(i => invGive(i.type)); e.items.length = 0; break;
-    case 'put': { let n = 0; while (invGet(arg) > 0 && canAccept(e, arg, true) && n < 500) { insert(e, arg); invAdd(arg, -1); n++; } if (!n) toast('it will not take that'); break; }
-    case 'recipe': setRecipe(e, arg); break;
-    case 'filter': e.filter = e.filter === arg ? null : arg; break;
-    case 'pitch': e.dy = e.dy === 0 ? 1 : e.dy === 1 ? -1 : 0; bus.emit('remesh', e); break;
-    case 'rotate': rotateEntity(e); break;
-  }
+  // machine panel commands run under the game rules (on the host when playing co-op)
+  doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd, arg });
   renderEntity(); renderHotbar();
 }
 document.addEventListener('pointerdown', ev => {
@@ -403,11 +392,11 @@ export function updateUI(dt, hover) {
   renderMineBar();
   if ((slowT += dt) < .2) return;
   slowT = 0;
-  renderStatus(); renderGoals(); renderHotbar(); updateSignalText();
+  renderStatus(); renderGoals(); renderHotbar(); updateSignalText(); renderCoop();
   if (panelEnt) renderEntity();
   if (S.modal === 'inventory') renderInventory();
   if (S.modal === 'research') renderResearch();
-  setHTML($('craftq'), S.craft.slice(0, 10).map((c, i) => `<div class="cell${c.top ? '' : ' sub'}" data-act="cancel:${i}"${tipAttr(c.top ? `<b>${itemName(c.rid)}</b><div class="dim">click to cancel</div>` : `<b>${itemName(c.rid)}</b><div class="dim">part for the next item</div>`)}>${iconHTML(c.rid, (c.times - c.done) * RECIPE[c.rid].out[c.rid])}<i class="pbar" style="width:${(i === 0 ? c.prog : 0) * 100}%"></i></div>`).join(''));
+  setHTML($('craftq'), S.player.craft.slice(0, 10).map((c, i) => `<div class="cell${c.top ? '' : ' sub'}" data-act="cancel:${i}"${tipAttr(c.top ? `<b>${itemName(c.rid)}</b><div class="dim">click to cancel</div>` : `<b>${itemName(c.rid)}</b><div class="dim">part for the next item</div>`)}>${iconHTML(c.rid, (c.times - c.done) * RECIPE[c.rid].out[c.rid])}<i class="pbar" style="width:${(i === 0 ? c.prog : 0) * 100}%"></i></div>`).join(''));
 }
 bus.on('research', id => { toast(`Research complete: ${TECH[id].name}`, 3500, 'good'); renderModal(); });
 bus.on('tier', t => toast(`PRECISION ${t}: ${TIERS[t].name.toUpperCase()}. Finer models, higher layers.`, 4500, 'good'));
@@ -426,3 +415,58 @@ bus.on('spill', () => { if (S.T - spillT > 3) { spillT = S.T; toast('inventory f
 
 export function initUI() { renderHotbar(); renderSignal(); renderStatus(); renderGoals(); }
 $('sigToggle').addEventListener('pointerdown', () => $('signal').classList.toggle('collapsed'));
+
+// ---------------------------------------------------------------- co-op: name tags, chat, players panel
+const tagEls = new Map();
+export function renderNametags() {
+  const live = new Set();
+  for (const p of S.players.values()) {
+    if (p.local || p.rx === undefined) continue;
+    live.add(p.id);
+    let el = tagEls.get(p.id);
+    if (!el) { el = document.createElement('div'); el.className = 'nametag'; document.body.append(el); tagEls.set(p.id, el); }
+    const [x, y] = project(p.rx, 1.32, p.rz);
+    el.textContent = p.name; el.style.left = x + 'px'; el.style.top = y + 'px';
+    el.style.borderColor = '#' + p.color.toString(16).padStart(6, '0');
+  }
+  for (const [id, el] of tagEls) if (!live.has(id)) { el.remove(); tagEls.delete(id); }
+}
+const hexCol = c => '#' + (c ?? 0x7d8796).toString(16).padStart(6, '0');
+bus.on('chat', m => {
+  const log = $('chatlog'), d = document.createElement('div');
+  d.className = 'chatline';
+  if (m.name) { const n = document.createElement('b'); n.textContent = m.name + ': '; n.style.color = hexCol(m.color); d.append(n); }
+  else d.classList.add('sys');
+  d.append(document.createTextNode(m.text));
+  log.append(d);
+  while (log.children.length > 8) log.firstChild.remove();
+  setTimeout(() => d.classList.add('old'), 9000);
+});
+export function openChat() {
+  const box = $('chatin');
+  if (S.net.role === 'solo') { toast('chat works in co-op: host or join a game from the title screen'); return; }
+  box.style.display = 'block'; box.value = ''; box.focus(); $('chatlog').classList.add('open');
+}
+$('chatin').addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { chat(e.target.value); e.target.blur(); }
+  if (e.key === 'Escape') e.target.blur();
+});
+$('chatin').addEventListener('blur', e => { e.target.style.display = 'none'; $('chatlog').classList.remove('open'); });
+function renderCoop() {
+  const info = netInfo(), el = $('coop');
+  if (info.role === 'solo') { el.style.display = 'none'; return; }
+  el.style.display = '';
+  const g = $('goals').getBoundingClientRect();   // sit just under the goals list, whatever its height
+  el.style.top = (g.height ? g.bottom + 8 : 214) + 'px';
+  const players = info.players.map(p => `<div><i class="dot" style="background:${hexCol(p.color)}"></i>${esc(p.name)}${p.local ? ' <span class="dim">(you)</span>' : ''}</div>`).join('');
+  setHTML(el, info.role === 'host'
+    ? `<div class="gh">CO-OP · HOSTING</div><div class="code" data-act="copycode"${tipAttr('click to copy')}>${info.code || '…'}</div><div class="dim">friends: Join co-op, then this code</div>${players}`
+    : `<div class="gh">CO-OP · CONNECTED</div>${players}<div class="dim">Enter to chat</div>`);
+}
+bus.on('players', renderCoop);
+document.addEventListener('pointerdown', ev => {
+  if (!ev.target.closest?.('[data-act="copycode"]')) return;
+  const code = S.net.code;
+  (navigator.clipboard?.writeText(code) ?? Promise.reject()).then(() => toast('invite code copied', 1500, 'good'), () => toast('invite code: ' + code, 4000));
+});

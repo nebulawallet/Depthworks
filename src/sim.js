@@ -1,6 +1,7 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
 import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER } from './data.js';
-import { S, world, inv, invAdd, invGet, invGive, invRoom, roomFor, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked } from './state.js';
+import { S, world, invAdd, invGet, invGive, invRoom, roomFor, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify } from './state.js';
+const isClient = () => S.net.role === 'client';
 
 export const SPACING = .25;
 const ACTIVE_WINDOW = 8;
@@ -261,7 +262,7 @@ function drillOutput(e) {
 export function depleteOre(x, y, z, n = 1) {
   const k = key(x, y, z), o = world.ores.get(k); if (!o) return null;
   o.amount -= n;
-  if (o.amount <= 0) { world.ores.delete(k); bus.emit('ore', x, y, z); }
+  if (o.amount <= 0 && !isClient()) { world.ores.delete(k); bus.emit('ore', x, y, z); }
   return o.type;
 }
 const noPower = e => !e.net ? 'not connected to power' : 'no power';
@@ -317,7 +318,7 @@ function tickEntity(e, dt) {
       if (e.prog >= 1) {
         e.unit = null; e.prog = 0;
         S.research.progress[tech.id] = (S.research.progress[tech.id] || 0) + 1;
-        if (S.research.progress[tech.id] >= tech.count) completeResearch(tech.id);
+        if (S.research.progress[tech.id] >= tech.count && !isClient()) completeResearch(tech.id);
       }
       break;
     }
@@ -359,7 +360,7 @@ function tickEntity(e, dt) {
       demand(def.power);
       if (sat <= 0) { e.status = noPower(e); break; }
       e.prog += dt * sat / 4; e.lastActive = S.T; e.status = 'charging pulse';
-      if (e.prog >= 1) { e.charging = false; e.prog = 0; bus.emit('pulse', e); }
+      if (e.prog >= 1) { e.charging = false; e.prog = 0; if (!isClient()) bus.emit('pulse', e); }
       break;
     }
     case 'generator': if (!e.net) e.status = 'not connected: put a pole next to it'; break;
@@ -394,7 +395,7 @@ export function computeVolume() {
 
 // ---------------------------------------------------------------- hand crafting
 export function planCraft(rid, times) {
-  const sim = new Map(inv), queue = [];
+  const sim = new Map(actor.inv), queue = [];
   const craftInto = (r, t, internal) => {
     for (const [k, n] of Object.entries(r.in)) if (!need(k, n * t)) return false;
     const giveOut = {};
@@ -424,32 +425,33 @@ export function maxCraftable(rid) {
 export function queueCraft(rid, times = 1) {
   const plan = planCraft(rid, times);
   if (!plan) return false;
+  const inv = actor.inv;
   for (const k of new Set([...inv.keys(), ...plan.sim.keys()])) { const v = plan.sim.get(k) || 0; if (v > 0) inv.set(k, v); else inv.delete(k); }
-  S.craft.push(...plan.queue); bus.emit('inv'); return true;
+  actor.craft.push(...plan.queue); if (actor.local) bus.emit('inv'); return true;
 }
 export function cancelCraft(i) {
-  const c = S.craft[i]; if (!c || !c.top) return;
+  const c = actor.craft[i]; if (!c || !c.top) return;
   const r = RECIPE[c.rid];
   for (const [k, n] of Object.entries(r.in)) invGive(k, n * (c.times - c.done));
-  S.craft.splice(i, 1);
+  actor.craft.splice(i, 1);
 }
 function craftQueueTick(dt) {
-  const c = S.craft[0]; if (!c) return;
+  const c = actor.craft[0]; if (!c) return;
   const r = RECIPE[c.rid];
   c.prog += dt / Math.max(.25, r.time);
   if (c.prog >= 1) {
     c.prog = 0; c.done++;
     if (c.done >= c.times) {
-      S.craft.shift();
+      actor.craft.shift();
       for (const [k, n] of Object.entries(c.give)) { invGive(k, n); bump('made', k, n); }
-      if (c.top) { bus.emit('crafted', c.rid); bus.emit('float', `+${c.give[c.rid] || 1} ${ITEMS[c.rid].name}`, S.player.x, 1.2, S.player.z); }
+      if (c.top) { notify('crafted', c.rid); notify('float', `+${c.give[c.rid] || 1} ${ITEMS[c.rid].name}`, actor.x, 1.2, actor.z); }
     }
   }
 }
 
 // ---------------------------------------------------------------- the engineer
-export const playerCell = () => ({ x: Math.floor(S.player.x), z: Math.floor(S.player.z) });
-export const distTo = (x, z) => Math.hypot(x + .5 - S.player.x, z + .5 - S.player.z);
+export const playerCell = () => ({ x: Math.floor(actor.x), z: Math.floor(actor.z) });
+export const distTo = (x, z) => Math.hypot(x + .5 - actor.x, z + .5 - actor.z);
 // Solid shapes on the surface: machines are squares, trees and rocks are circles. Belts and hollow frames are walkable.
 function solidShape(cx, cz) {
   if (cx < 0 || cz < 0 || cx >= GRID || cz >= GRID) return { sq: .5 };
@@ -473,11 +475,11 @@ function collides(px, pz) {
   }
   return false;
 }
-export const playerBlocks = (x, z) => { const p = S.player, r = PLAYER.radius; return p.x + r > x + .04 && p.x - r < x + .96 && p.z + r > z + .04 && p.z - r < z + .96; };
+export const playerBlocks = (x, z) => { const r = PLAYER.radius; for (const p of S.players.values()) if (p.x + r > x + .04 && p.x - r < x + .96 && p.z + r > z + .04 && p.z - r < z + .96) return true; return false; };
 
 // input: { mx, mz } desired direction in world space (unit or zero)
 export function playerTick(dt, input) {
-  const p = S.player;
+  const p = actor;
   // quick acceleration and braking: responsive, but not a teleporting box
   const a = 1 - Math.exp(-dt * (input.mx || input.mz ? 22 : 30));
   p.vx = (p.vx || 0) + (input.mx * PLAYER.speed - (p.vx || 0)) * a;
@@ -494,8 +496,7 @@ export function playerTick(dt, input) {
   else if (p.mining && p.mineCell) p.face = Math.atan2(p.mineCell.x + .5 - p.x, p.mineCell.z + .5 - p.z);
   p.walk += dt * 10 * Math.min(1, sp / PLAYER.speed);
   p.moving = sp > .4;
-  mineTick(dt);
-  pickupTick(dt);
+  if (!isClient()) { mineTick(dt); pickupTick(dt); }
 }
 
 // What right-click would mine at a cell, in Factorio's priority: buildings, then trees/rocks, then ore.
@@ -510,7 +511,7 @@ export function mineTargetAt(c) {
   return null;
 }
 function mineTick(dt) {
-  const p = S.player, t = mineTargetAt(p.mineCell);
+  const p = actor, t = mineTargetAt(p.mineCell);
   if (!t) { p.mining = null; return; }
   if (!p.mining || p.mining.k !== t.k) p.mining = { k: t.k, prog: 0, name: t.name, kind: t.kind === 'feat' ? world.feats.get(t.k).type : t.kind };
   const m = p.mining;
@@ -521,37 +522,36 @@ function mineTick(dt) {
   if (m.prog < 1) return;
   m.prog = 0;
   const { x, y, z } = t.c;
-  if (t.kind === 'ore') { const it = depleteOre(x, y, z); invGive(it); bump('mined', it); bus.emit('mined', 'ore'); bus.emit('float', `+1 ${ITEMS[it].name}`, x + .5, y + .6, z + .5); }
+  if (t.kind === 'ore') { const it = depleteOre(x, y, z); invGive(it); bump('mined', it); notify('mined', 'ore'); notify('float', `+1 ${ITEMS[it].name}`, x + .5, y + .6, z + .5); }
   else if (t.kind === 'feat') {
     const f = world.feats.get(t.k); world.feats.delete(t.k);
     for (const [it, n] of Object.entries(FEATURES[f.type].gives)) { invGive(it, n); bump('mined', it, n); }
-    bus.emit('float', Object.entries(FEATURES[f.type].gives).map(([it, n]) => `+${n} ${ITEMS[it].name}`).join('  '), x + .5, .9, z + .5);
-    bus.emit('feat', x, z); bus.emit('mined', f.type);
+    notify('float', Object.entries(FEATURES[f.type].gives).map(([it, n]) => `+${n} ${ITEMS[it].name}`).join('  '), x + .5, .9, z + .5);
+    bus.emit('feat', x, z); notify('mined', f.type);
   } else {
     const r = removeAt(x, y, z);
-    if (r && r !== 'removed') bus.emit('toast', r);
+    if (r && r !== 'removed') notify('toast', r);
   }
 }
-let pickT = 0;
 function pickupTick(dt) {
-  const p = S.player;
-  if (!p.pickup || (pickT += dt) < .06) return;
-  pickT = 0;
+  const p = actor;
+  if (!p.pickup || (p.pickT = (p.pickT || 0) + dt) < .06) return;
+  p.pickT = 0;
   let best = -1, bd = 1.6;
   world.ground.forEach((g, i) => { const d = Math.hypot(g.x - p.x, g.z - p.z); if (d < bd && invRoom(g.type) > 0) { bd = d; best = i; } });
-  if (best >= 0) { const g = world.ground.splice(best, 1)[0]; invAdd(g.type); bus.emit('pickup'); return; }
+  if (best >= 0) { const g = world.ground.splice(best, 1)[0]; invAdd(g.type); notify('pickup'); return; }
   const pc = playerCell();
   for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
     const b = world.ents.get(key(pc.x + dx, 0, pc.z + dz));
     if (!isBeltLike(b) || distTo(b.x, b.z) > 1.6) continue;
     const it = take(b, t => invRoom(t) > 0);
-    if (it) { invAdd(it); bus.emit('pickup'); return; }
+    if (it) { invAdd(it); notify('pickup'); return; }
   }
 }
 // Z: drop one of the held item at the cursor, onto a belt if there is one.
-export function dropAt(c) {
-  const it = S.sel; if (!it || !invGet(it) || !c) return false;
-  if (distTo(c.x, c.z) > PLAYER.reach) { bus.emit('toast', 'out of reach'); return false; }
+export function dropAt(c, it) {
+  if (!it || !invGet(it) || !c) return false;
+  if (distTo(c.x, c.z) > PLAYER.reach) { notify('toast', 'out of reach'); return false; }
   const b = world.ents.get(key(c.x, c.y, c.z));
   if (isBeltLike(b)) { if (!dropOnBelt(b, it)) return false; }
   else if (c.y === 0) world.ground.push({ type: it, x: c.x + .3 + Math.random() * .4, z: c.z + .3 + Math.random() * .4 });
@@ -559,11 +559,11 @@ export function dropAt(c) {
   invAdd(it, -1); return true;
 }
 // Ctrl+click: put the held stack into a machine, or empty its outputs into the inventory.
-export function fastTransfer(e) {
+export function fastTransfer(e, sel) {
   if (!e || e.kind === 'frame') return 0;
   let n = 0;
-  if (S.sel && invGet(S.sel)) {
-    while (invGet(S.sel) > 0 && canAccept(e, S.sel, true) && n < 500) { insert(e, S.sel); invAdd(S.sel, -1); n++; }
+  if (sel && invGet(sel)) {
+    while (invGet(sel) > 0 && canAccept(e, sel, true) && n < 500) { insert(e, sel); invAdd(sel, -1); n++; }
     return n;
   }
   const grab = (obj, it) => { const k = Math.min(obj[it], invRoom(it)); if (k > 0) { invAdd(it, k); obj[it] -= k; n += k; if (!obj[it]) delete obj[it]; } };
@@ -591,8 +591,13 @@ export function simulate(dt, input = { mx: 0, mz: 0 }) {
   for (const b of world.beltOrder) beltTick(b, dt);
   for (const e of world.ents.values()) if (!e.items) tickEntity(e, dt);
   powerTick(dt);
-  craftQueueTick(dt);
-  playerTick(dt, input);
+  for (const p of S.players.values()) {
+    setActor(p);
+    if (p.local) playerTick(dt, input);
+    else if (!isClient()) { mineTick(dt); pickupTick(dt); }
+    if (!isClient()) craftQueueTick(dt);
+  }
+  setActor(S.player);
   if ((volTimer += dt) > .5) { volTimer = 0; computeVolume(); }
 }
 export function powerSummary() {
@@ -633,7 +638,7 @@ export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false) {
   }
   const ent = ENTITIES[type];
   const old = world.ents.get(k);
-  const e = createEntity(type, x, y, z, dir, ent.kind === 'lift' ? (dy || 1) : ent.kind === 'inserter' ? (S.mode === 'depth' || free ? dy : 0) : 0);
+  const e = createEntity(type, x, y, z, dir, ent.kind === 'lift' ? (dy || 1) : ent.kind === 'inserter' ? dy : 0);
   if (old) {   // fast replace keeps what was on it
     if (old.items && e.items) e.items = old.items;
     if (old.held) e.held = old.held;
@@ -694,4 +699,24 @@ export function setRecipe(e, rid) {
   refundContents({ inp: e.inp, out: e.out, crafting: e.crafting, recipe: e.recipe });
   e.inp = {}; e.out = {}; e.crafting = false; e.prog = 0; e.recipe = rid;
   bus.emit('remesh', e);
+}
+
+// Commands from a machine's panel, run on behalf of `actor` (the local player or a friend).
+export function entityCommand(e, cmd, arg) {
+  if (!e) return;
+  const takeFrom = (obj, k) => { const n = obj?.[k] || 0; if (n) { invGive(k, n); delete obj[k]; } return n; };
+  switch (cmd) {
+    case 'takeinp': takeFrom(e.inp, arg); break;
+    case 'takeout': takeFrom(e.out, arg); break;
+    case 'takestore': if (e.store) e.count -= takeFrom(e.store, arg); break;
+    case 'takeall': if (e.store) { for (const k of Object.keys(e.store)) takeFrom(e.store, k); e.count = 0; } break;
+    case 'takebuf': if (e.buffer) { invGive(e.buffer); e.buffer = null; } break;
+    case 'takefuel': if (e.fuel) { invGive(e.fuelType, e.fuel); e.fuel = 0; e.fuelType = null; } break;
+    case 'takebelt': if (e.items) { e.items.forEach(i => invGive(i.type)); e.items.length = 0; } break;
+    case 'put': { let n = 0; while (invGet(arg) > 0 && canAccept(e, arg, true) && n < 500) { insert(e, arg); invAdd(arg, -1); n++; } if (!n) notify('toast', 'it will not take that'); break; }
+    case 'recipe': setRecipe(e, arg); break;
+    case 'filter': e.filter = e.filter === arg ? null : arg; break;
+    case 'pitch': e.dy = e.dy === 0 ? 1 : e.dy === 1 ? -1 : 0; bus.emit('remesh', e); break;
+    case 'rotate': rotateEntity(e); break;
+  }
 }

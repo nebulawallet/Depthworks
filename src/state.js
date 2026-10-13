@@ -16,12 +16,29 @@ export const S = {
   hotbar: [], hotbarSeen: new Set(),
   research: { done: new Set(), current: null, progress: {} },
   power: { demand: 0, nextDemand: 0, capacity: 0, sat: 1, produced: 0 },
-  craft: [],
   stats: { made: {} },
   signal: { started: false, stage: -1, pulses: 0, taught: new Set(), seen: new Set(), log: [] },
   altMode: true,
-  player: { x: 48.5, z: 52.5, vx: 0, vz: 0, face: 0, walk: 0, mining: null, pickup: 0 },
+  net: { role: 'solo' },        // 'solo' | 'host' | 'client'
 };
+
+// ---------------------------------------------------------------- players
+// Every engineer has their own body, inventory and crafting queue. S.player is the one on this screen.
+export function newPlayer(id, name = 'Engineer', color = 0xe07a2e, local = false) {
+  return { id, name, color, local, x: 48.5, z: 52.5, vx: 0, vz: 0, face: 0, walk: 0, moving: false,
+    mining: null, mineCell: null, pickup: false, inv: local ? null : new Map(), craft: [] };
+}
+export const inv = new Map();
+S.player = newPlayer('local', 'Engineer', 0xe07a2e, true);
+S.player.inv = inv;
+S.players = new Map([[S.player.id, S.player]]);
+// `actor` is whoever is acting right now. Game rules read inventories and positions through it,
+// so the host can run a friend's action with exactly the same code as its own.
+export let actor = S.player;
+export function setActor(p) { actor = p || S.player; }
+export function asActor(p, fn) { const prev = actor; actor = p; try { return fn(); } finally { actor = prev; } }
+// Feedback (toasts, floating text, pickup sounds) goes to whoever caused it.
+export function notify(ev, ...a) { if (actor.local) bus.emit(ev, ...a); else bus.emit('remote', actor, ev, a); }
 
 export const world = {
   ents: new Map(),    // key -> entity (one per cell)
@@ -32,9 +49,8 @@ export const world = {
   beltOrder: [], beltDirty: true,
 };
 
-export const inv = new Map();
-export const invGet = it => inv.get(it) || 0;
-export function invAdd(it, n = 1) { inv.set(it, invGet(it) + n); if (inv.get(it) <= 0) inv.delete(it); bus.emit('inv'); }
+export const invGet = it => actor.inv.get(it) || 0;
+export function invAdd(it, n = 1) { const m = actor.inv; m.set(it, (m.get(it) || 0) + n); if (m.get(it) <= 0) m.delete(it); if (actor.local) bus.emit('inv'); }
 export function invTake(it, n = 1) { if (invGet(it) < n) return false; invAdd(it, -n); return true; }
 
 // Slot accounting, shared by the character and by chests.
@@ -45,14 +61,14 @@ export function roomFor(map, it, slots) {
   const free = slots - slotsUsed(map);
   return free * st + (have % st ? st - have % st : 0);
 }
-export const invRoom = it => roomFor(inv, it, PLAYER.inventory);
+export const invRoom = it => roomFor(actor.inv, it, PLAYER.inventory);
 // Give items to the player. Whatever does not fit spills onto the ground at their feet.
 export function invGive(it, n = 1) {
   if (n <= 0) return 0;
   const fit = Math.min(n, invRoom(it));
   if (fit > 0) invAdd(it, fit);
-  for (let i = fit; i < n; i++) spill(it, S.player.x, S.player.z);
-  if (fit < n) bus.emit('spill', n - fit);
+  for (let i = fit; i < n; i++) spill(it, actor.x, actor.z);
+  if (fit < n) notify('spill', n - fit);
   return fit;
 }
 export function spill(type, x, z) {

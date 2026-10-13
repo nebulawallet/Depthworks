@@ -41,6 +41,7 @@ function receive(msg, kind) {
 }
 
 bus.on('pulse', tx => {
+  if (S.net.role === 'client') return;   // the host decides what the aliens hear and say
   const sig = S.signal;
   sig.pulses++;
   const words = sentenceFor(tx);

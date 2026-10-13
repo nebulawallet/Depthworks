@@ -398,9 +398,25 @@ bus.on('power', () => {
   supplyMesh.count = poles.length; supplyMesh.visible = false; supplyMesh.layers.set(1); scene.add(supplyMesh);
 });
 
-// ---------------------------------------------------------------- the engineer
-export const playerMesh = makePlayer();
+// ---------------------------------------------------------------- the engineers
+export let playerMesh = makePlayer(S.player.color);
 scene.add(playerMesh);
+const others = new Map();   // id -> mesh for every other engineer
+function animateOthers(dt) {
+  const k = 1 - Math.pow(.0001, dt);
+  for (const p of S.players.values()) {
+    if (p.local) continue;
+    let m = others.get(p.id);
+    if (!m || m.userData.color !== p.color) { if (m) scene.remove(m); m = makePlayer(p.color); scene.add(m); others.set(p.id, m); p.rx ??= p.x; p.rz ??= p.z; }
+    // friends' positions arrive a few times a second: glide between them
+    if (Math.hypot(p.x - p.rx, p.z - p.rz) > 4) { p.rx = p.x; p.rz = p.z; }
+    p.rx += (p.x - p.rx) * k; p.rz += (p.z - p.rz) * k;
+    animatePlayer(m, { ...p, x: p.rx, z: p.rz }, S.T, dt);
+    const g = S.mode === 'depth' && S.layer < 0;
+    if (m.userData.ghost !== g) { m.userData.ghost = g; setGhost(m, g); }
+  }
+  for (const [id, m] of others) if (!S.players.has(id)) { scene.remove(m); others.delete(id); }
+}
 
 // ---------------------------------------------------------------- animation
 const rings = [];
@@ -458,7 +474,9 @@ function animate(dt) {
       burst(c.x + .5, c.y + .25, c.z + .5, 6, color, 1.3, .055);
     }
   } else chipT = .3;
+  if (playerMesh.userData.color !== S.player.color) { scene.remove(playerMesh); playerMesh = makePlayer(S.player.color); scene.add(playerMesh); playerMesh.userData.ghost = undefined; }
   animatePlayer(playerMesh, S.player, S.T, dt);
+  animateOthers(dt);
   const pg = S.mode === 'depth' && S.layer < 0;
   if (playerMesh.userData.ghost !== pg) { playerMesh.userData.ghost = pg; setGhost(playerMesh, pg); }
   playerMesh.visible = !!S.started;
