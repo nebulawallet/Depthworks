@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Depthworks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Silkscreen&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0d12; --panel: rgba(15, 18, 25, .92); --panel2: #12161f; --line: #2a3140; --line2: #3a4456;
+    --ink: #d8e0ea; --dim: #7d8796; --acc: #7ef6ff; --warn: #ff8a3d; --ok: #9be37a; --gold: #ffd23f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden;
+    font-family: 'VT323', ui-monospace, monospace; font-size: 19px; color: var(--ink); user-select: none; }
+  canvas#view { position: fixed; display: block; image-rendering: pixelated; cursor: crosshair; will-change: transform; }
+  .float { position: fixed; pointer-events: none; z-index: 15; color: #fff; font-size: 18px; white-space: nowrap; text-shadow: 1px 1px 0 #000, -1px 0 0 #000, 0 -1px 0 #000, 1px 0 0 #000; transform: translate(-50%, -100%); animation: floatUp 1s ease-out forwards; }
+  @keyframes floatUp { 0% { opacity: 0; margin-top: 6px; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; margin-top: -34px; } }
+  .panel { position: fixed; background: var(--panel); border: 2px solid var(--line); box-shadow: 0 0 0 1px #000, 4px 4px 0 rgba(0,0,0,.35); padding: 8px 10px; }
+  .dim { color: var(--dim); } .warn { color: var(--warn); } .okc { color: var(--ok); }
+  .logo, h2, h3, .gh, .tn { font-family: 'Silkscreen', 'VT323', monospace; font-weight: normal; letter-spacing: 1px; }
+  .logo { color: var(--acc); font-size: 16px; }
+  h3 { margin: 0 0 6px; font-size: 14px; color: var(--acc); } h4 { margin: 8px 0 3px; font-weight: normal; color: var(--dim); font-size: 16px; }
+  .badge { display: inline-block; padding: 0 5px; margin-left: 6px; border: 1px solid var(--line2); font-size: 16px; }
+  .badge.depth { color: #111; background: var(--acc); border-color: var(--acc); }
+  .bar { height: 7px; background: #1a1f2a; border: 1px solid var(--line); margin: 2px 0 5px; position: relative; }
+  .bar i { display: block; height: 100%; background: var(--ok); width: 0; }
+  .bar.pw i { background: var(--gold); } .bar.rs i { background: #4a8ae0; }
+  .row { margin-top: 4px; }
+  button { font: inherit; color: var(--ink); background: var(--panel2); border: 2px solid var(--line2); padding: 2px 8px; cursor: pointer; }
+  button:hover { border-color: var(--acc); }
+
+  .icon { position: relative; display: inline-block; width: 32px; height: 32px; vertical-align: middle; }
+  .icon img { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+  .icon b { position: absolute; right: -2px; bottom: -4px; font-weight: normal; font-size: 16px; text-shadow: 1px 1px 0 #000, -1px 0 0 #000, 0 -1px 0 #000; }
+  #hand .icon, .btns .icon, #info .icon, #tip .icon, .tu .icon, .tc .icon, #craftq .icon, .eph img { width: 20px; height: 20px; }
+  .eph img { image-rendering: pixelated; vertical-align: middle; }
+  .grid { display: flex; flex-wrap: wrap; gap: 4px; }
+  .cell { width: 42px; height: 42px; background: var(--panel2); border: 2px solid var(--line); display: grid; place-items: center; cursor: pointer; position: relative; }
+  .cell:hover { border-color: var(--acc); }
+  .cell.no { opacity: .4; } .cell.on { border-color: var(--gold); background: #2a2610; } .cell.sub { opacity: .6; }
+  .cell.placeable { border-color: #3a4a3a; }
+  .grid.small .cell { width: 36px; height: 36px; } .grid.small .icon { width: 26px; height: 26px; }
+  .pbar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--ok); }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .cat { color: var(--dim); margin: 6px 0 3px; }
+
+  #status { left: 12px; top: 12px; width: 310px; pointer-events: auto; }
+  #goals { left: 12px; top: 214px; width: 310px; font-size: 17px; line-height: 1.15; }
+  #goals .gh { color: var(--acc); font-size: 13px; margin-bottom: 4px; }
+  #goals div + div { margin-top: 3px; }
+  #hotbar { left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 4px; padding: 5px; }
+  .slot { width: 50px; height: 50px; border: 2px solid var(--line); background: var(--panel2); display: grid; place-items: center; position: relative; cursor: pointer; }
+  .slot .k { position: absolute; left: 3px; top: -1px; font-size: 14px; color: var(--dim); }
+  .slot.sel { border-color: var(--acc); background: #15303a; } .slot.empty .icon { opacity: .35; }
+  #hand { left: 50%; bottom: 78px; transform: translateX(-50%); padding: 3px 10px; white-space: nowrap; pointer-events: none; }
+  #craftq:empty { display: none; } #craftq { left: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 3px; max-width: 470px; padding: 4px; }
+  #info:empty { display: none; } #info { right: 12px; bottom: 10px; max-width: 320px; pointer-events: none; }
+  #minebar { display: none; pointer-events: none; padding: 3px 8px; min-width: 120px; z-index: 8; font-size: 17px; }
+  #minebar .hintline { display: block; max-width: 260px; white-space: normal; line-height: 1.1; }
+  .slots { display: grid; grid-template-columns: repeat(10, 42px); gap: 3px; }
+  .slotc.emptyc { cursor: default; background: #0e1118; border-color: #1c222e; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 6px; }
+  .tab { padding: 2px 10px; border: 2px solid var(--line); cursor: pointer; background: var(--panel2); }
+  .tab.on { border-color: var(--acc); color: var(--acc); }
+
+  #signal { right: 12px; top: 12px; width: 380px; max-height: 46vh; overflow: auto; }
+  #signal.collapsed { max-height: none; width: auto; } #signal.collapsed #sigBody { display: none; }
+  #sigToggle { cursor: pointer; color: var(--acc); font-family: 'Silkscreen', monospace; font-size: 14px; letter-spacing: 3px; }
+  .msg { border-top: 1px dashed var(--line); padding: 6px 0; }
+  .msg canvas { image-rendering: pixelated; display: block; max-width: 100%; }
+  .msg .tr { color: var(--acc); margin-top: 3px; } .msg .ask { color: var(--gold); margin-top: 3px; }
+  .msg.out { font-size: 16px; }
+  .ask { color: var(--gold); }
+
+  #entity { right: 12px; bottom: 80px; width: 360px; max-height: calc(54vh - 90px); overflow: auto; }
+  .eph { display: flex; align-items: center; gap: 6px; } .eph .x { margin-left: auto; cursor: pointer; color: var(--dim); padding: 0 4px; }
+  .eph .x:hover { color: var(--warn); }
+  .status.ok { color: var(--ok); } .status.idle { color: var(--warn); }
+  #epCanvas { image-rendering: pixelated; max-width: 100%; margin-top: 6px; }
+
+  .modal { left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); overflow: auto; z-index: 5; }
+  #inventory { width: 980px; } .cols2 { display: grid; grid-template-columns: auto 1fr; gap: 18px; }
+  #research { width: 1000px; }
+  .techs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; }
+  .tech { border: 2px solid var(--line); background: var(--panel2); padding: 5px 7px; cursor: pointer; }
+  .tech:hover { border-color: var(--acc); } .tech.done { border-color: #2f5a2f; opacity: .65; } .tech.locked { opacity: .45; }
+  .tech.active { border-color: var(--gold); background: #22200f; }
+  .tn { font-size: 12px; color: var(--ink); margin-bottom: 3px; } .tc, .tu { min-height: 22px; } .tag { color: var(--acc); }
+  .tech .warn { font-size: 15px; }
+  #help { width: 760px; } #help .cols2 { grid-template-columns: 1fr 1fr; }
+  #help kbd { color: #111; background: var(--ink); padding: 0 4px; font-family: inherit; }
+  #help p { margin: 6px 0; }
+  #title { width: 560px; text-align: center; background: rgba(11,13,18,.82); padding: 26px; }
+  #title h1 { font-family: 'Silkscreen', monospace; font-weight: normal; color: var(--acc); font-size: 46px; margin: 0; letter-spacing: 4px; }
+  #title .tag2 { color: var(--dim); margin: 8px 0 18px; }
+  #titleBtns { display: flex; flex-direction: column; gap: 8px; align-items: center; } #titleBtns button { width: 240px; font-size: 22px; }
+  body:not(.ingame) .hud { display: none !important; }
+  #toast { left: 50%; top: 14px; transform: translateX(-50%); display: none; pointer-events: none; color: var(--warn); z-index: 9; text-align: center; max-width: 80vw; }
+  #toast.good { color: var(--ok); } #toast.sig { color: var(--acc); }
+  #tip { display: none; pointer-events: none; z-index: 20; max-width: 320px; font-size: 17px; }
+
+  @media (max-width: 1100px) {
+    body { font-size: 16px; }
+    #goals { display: none; } #status { width: 260px; }
+    #signal { width: 300px; } #entity { width: 300px; }
+    .slot { width: 40px; height: 40px; } .slot .icon { width: 26px; height: 26px; }
+    #inventory .cols2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 700px) {
+    #signal { display: none; } #info { display: none; } #craftq { display: none; }
+    #hotbar { left: 8px; right: 8px; transform: none; overflow-x: auto; }
+    #hand { bottom: 64px; max-width: calc(100vw - 16px); overflow: hidden; }
+    #entity { left: 8px; right: 8px; width: auto; bottom: 64px; }
+  }
+</style>
+<script type="importmap">
+  { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  } }
+</script>
+</head>
+<body>
+<div id="status" class="panel hud"></div>
+<div id="goals" class="panel hud"></div>
+<div id="info" class="panel hud"></div>
+<div id="hand" class="panel hud"></div>
+<div id="hotbar" class="panel hud"></div>
+<div id="craftq" class="panel hud"></div>
+<div id="minebar" class="panel"></div>
+
+<div id="signal" class="panel hud collapsed">
+  <div id="sigToggle">SIGNAL ▾</div>
+  <div id="sigBody"><div id="sigHead"></div><div id="sigLog"></div></div>
+</div>
+
+<div id="entity" class="panel" style="display:none">
+  <div id="epBody"></div>
+  <div id="epCanvasWrap"><canvas id="epCanvas"></canvas></div>
+</div>
+
+<div id="inventory" class="panel modal" style="display:none"><div id="invBody"></div></div>
+<div id="research" class="panel modal" style="display:none"><h3>Research</h3><div id="resBody"></div></div>
+
+<div id="help" class="panel modal" style="display:none">
+  <h2 style="color:var(--acc);margin:0 0 4px">HOW TO PLAY</h2>
+  <p class="dim">Build a factory that runs, then build it deeper. Working machines add up to <span class="okc">active engineering volume</span>,
+    and volume buys <b>precision</b>: higher layers, finer models, deeper research. At the bottom of the world is the material for a transmitter.
+    Something out there answers, but only with the mechanisms it has heard you use.</p>
+  <div class="cols2">
+    <div>
+      <h3>Engineer</h3>
+      <kbd>WASD</kbd> walk · <kbd>Wheel</kbd> zoom<br>
+      <kbd>LMB</kbd> build (drag belts) · open machines<br>
+      hold <kbd>RMB</kbd> mine ore, trees, rocks, buildings<br>
+      <kbd>E</kbd> inventory &amp; crafting · <kbd>T</kbd> research<br>
+      <kbd>1</kbd>–<kbd>0</kbd> quickbar · <kbd>Q</kbd> copy hovered / empty hand<br>
+      <kbd>R</kbd> rotate · <kbd>Z</kbd> drop · hold <kbd>F</kbd> pick up<br>
+      <kbd>Ctrl</kbd>+<kbd>LMB</kbd> move items in or out of a machine<br>
+      <kbd>Esc</kbd> close · <kbd>G</kbd> signal · <kbd>Alt</kbd> recipe icons
+    </div>
+    <div>
+      <h3>Depth mode (<kbd>Tab</kbd>)</h3>
+      <kbd>PgUp</kbd>/<kbd>PgDn</kbd> or <kbd>Shift</kbd>+wheel: working layer<br>
+      <kbd>[</kbd>/<kbd>]</kbd> orbit 90°<br>
+      <kbd>V</kbd> inserter pitch (level / lift / drop), or lift up/down<br>
+      Layers above yours turn to ghosts. Anything above layer 0 stands on a <b>hollow frame</b>; you can also build inside frames and walk under them.
+    </div>
+  </div>
+  <h3 style="margin-top:10px">Getting started</h3>
+  <p class="dim">You land with 8 iron plates, a burner drill and a stone furnace. Mine coal and stone by hand, put the drill on iron ore facing the furnace, and fuel both.
+    Craft from there (E). Electricity needs a steam generator plus small poles; machines only run inside a pole's blue supply area.</p>
+  <h3 style="margin-top:10px">Reading the arrows</h3>
+  <p class="dim">Hover or hold a building to see where things go. <b style="color:#4aa3ff">Blue</b>: where an inserter picks up, or where one can feed a machine.
+    <b style="color:#ffa53d">Orange</b>: where things come out. <b style="color:#7be37a">Green</b>: something is feeding it. <b style="color:#ff4a4a">Red ✕</b>: that won't work.
+    Belts never load furnaces or assemblers directly: put an inserter between them. Drills push straight into whatever is in front. <kbd>Alt</kbd> hides the small arrows.</p>
+  <h3 style="margin-top:10px">Logistics</h3>
+  <p class="dim">Belts carry four items per tile and compress. Feeding a belt into the side of another merges onto it; a single side feed turns it into a curve.
+    Inserters only take what the machine in front of them needs. Drills push straight into whatever is in front of them, or drop ore on the ground. Electric machines need a pole nearby; drag a belt over another to change it.</p>
+  <div class="btns" style="justify-content:space-between">
+    <div>Pixel size: <button data-pix="2">fine</button> <button data-pix="3">normal</button> <button data-pix="4">chunky</button>
+      &nbsp; Volume <input id="volume" type="range" min="0" max="100" style="vertical-align:middle;width:110px"></div>
+    <div><button id="saveBtn">Save</button> <button id="quitBtn">Save &amp; title</button> <button id="helpClose">Close</button></div>
+  </div>
+</div>
+
+<div id="title" class="panel modal" style="display:none">
+  <h1>DEPTHWORKS</h1>
+  <div class="tag2">a factory that goes down, up, and out</div>
+  <div id="titleBtns"></div>
+</div>
+
+<div id="toast" class="panel"></div>
+<div id="tip" class="panel"></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
