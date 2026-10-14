@@ -13,6 +13,15 @@ two rock layers, and "precision" (machinery that is actually working) unlocks mo
 endgame is not a rocket but **a conversation**: a transmitter sends the mechanisms working around it as
 glyphs, and something answers using only the mechanisms it has heard.
 
+## Where the last session left off
+
+Everything is committed and pushed (`main` at "Warmer biome colours, a 24-hour clock and a smooth daylight curve").
+That session added generated chunked worlds with biomes, multi-tile objects, tools, farming, the medical lab, dams,
+nuclear power, advanced fluids and copy/paste (see the status table and "Judgment calls" below), then tuned looks on
+the owner's feedback: bigger biomes and ore patches, borders that fade into whatever is across them (`groundColors`
+in worldgen.js), warmer palettes, a 24-hour clock in the status panel and daylight that follows the sun's height all
+day. The owner tests by serving the folder (`python -m http.server 5173`) and playing; nothing they reported is open.
+
 ## Status
 
 | Area | State |
@@ -230,18 +239,21 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 
 ## Suggested next steps (in rough priority)
 
-1. **Turn on GitHub Pages and test co-op with a friend on another network.** This is the biggest unknown.
-2. **Performance pass:** build a 1000-plus entity factory and profile it. Likely wins are instancing belts and inserters,
+1. **Play the big-world systems by hand** (see "Not verified"): dam drags, copy/paste in the logistics window,
+   greenhouse doors and roof, a long drive across a huge world (memory), and balance of everything new.
+2. **Test co-op with a friend on another network** on a generated world. Two local tabs agree chunk for chunk.
+3. **Performance pass:** (also: scene.js finds a chunk's buildings by scanning every building, `entsInChunk`;
+   index buildings by chunk if big factories make chunk loads slow) build a 1000-plus entity factory and profile it. Likely wins are instancing belts and inserters,
    spatial lookup for picking, and limiting snapshot scans to changed entities (dirty flags).
-3. **Accumulators**, now that solar stops at night.
-4. **Blueprints / copy-paste.**
-5. **Enemies and turrets**, if the game should have pressure. Health exists now, but only vehicles hurt.
-6. **Play the new systems end to end** from a fresh world: oil → engines → a truck route between two factories, then
+4. **Accumulators**, now that solar stops at night.
+5. **Blueprints.** Copying settings exists (copypaste.js); copying layouts doesn't.
+6. **Enemies and turrets**, if the game should have pressure. Health exists now, but only vehicles hurt.
+7. **Play the new systems end to end** from a fresh world: oil → engines → a truck route between two factories, then
    rails and a sea lane, and tune costs, speeds and fuel use.
-7. **One-way and chain signals**, and double-headed trains, if rail networks get busy. Rivers could push boats along
+8. **One-way and chain signals**, and double-headed trains, if rail networks get busy. Rivers could push boats along
    `world.flow`.
-8. Sync the host's clock to guests in snapshots, so day and night can't drift.
-9. Richer alien grammar (glyph parameters carrying meaning) and music.
+9. Sync the host's clock to guests in snapshots, so day and night can't drift.
+10. Richer alien grammar (glyph parameters carrying meaning) and music.
 
 ## How the owner likes to work
 
@@ -249,7 +261,9 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 - They are blunt about jank: smoothness, readability and polish matter as much as features.
 - **Don't push until they say "push".** Commit only when asked or when they say push. Pushing to `main` deploys live.
 - They test on localhost and with a friend over the internet, and report bugs with console screenshots.
-- They give fast visual feedback ("the river is ugly"): check screenshots of anything visual before calling it done.
+- They give fast visual feedback ("the river is ugly", "the colours look weird", "transitions should look smooth"):
+  check screenshots of anything visual before calling it done. They like big, natural-looking features and smooth,
+  gradual changes (biome borders, daylight).
 
 ## Testing tips
 
