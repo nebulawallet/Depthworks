@@ -34,6 +34,7 @@ export function copyBuilding(e) {
   if (def.augSlots && e.aug?.some(Boolean)) { d.aug = [...e.aug]; what.push('augments'); }
   if (e.kind === 'splitter' && e.sf?.some(Boolean)) { d.sf = [...e.sf]; what.push('splitter filters'); }
   if (isBus(e)) { d.bus = { chL: e.chL ?? null, chR: e.chR ?? null, midOff: !!e.midOff, sort: !!e.sort }; what.push('bus channels'); }
+  if (e.bout) { d.bout = { L: e.bout.L ?? null, R: e.bout.R ?? null }; what.push('outputs'); }
   if (e.line) { d.line = copyLine(e.line); if (d.line.filter.length || d.line.augs.length) what.push('line filter and speed'); }
   if (e.kind === 'depot') { d.depot = { dname: e.dname, prio: e.prio, vlimit: e.vlimit, rules: e.rules.map(r => ({ ...r })), fuelFluid: e.fuelFluid }; what.push('name, priority, limit and rules'); }
   if (e.kind === 'greenhouse' && e.seed) { d.seed = e.seed; what.push('crop'); }
@@ -58,6 +59,7 @@ export function applyToBuilding(e, clip, cmd) {
   if (d.aug && def.augSlots && pasteAugs(e, d.aug)) done.push('augments');
   if (d.sf && e.kind === 'splitter') { e.sf = [...d.sf]; bus.emit('remesh', e); world.beltDirty = true; done.push('splitter filters'); }
   if (d.bus && isBus(e)) { Object.assign(e, d.bus); world.beltDirty = true; bus.emit('remesh', e); done.push('bus channels'); }
+  if (d.bout && e.kind === 'belt' && !isBus(e)) { e.bout = d.bout.L || d.bout.R ? { ...d.bout } : null; world.beltDirty = true; done.push('outputs'); }
   if (e.line && (d.line || d.items || d.filter)) { applyLine(e.line, d.line || { filter: d.items || [d.filter] }); done.push('line filter'); }
   if (d.depot && e.kind === 'depot') {
     Object.assign(e, { dname: d.depot.dname, prio: d.depot.prio, vlimit: d.depot.vlimit, rules: d.depot.rules.map(r => ({ ...r })) });

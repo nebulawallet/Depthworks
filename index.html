@@ -127,7 +127,34 @@
 
   .modal { left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); overflow: auto; z-index: 5; }
   #inventory { width: 980px; } .cols2 { display: grid; grid-template-columns: auto 1fr; gap: 18px; }
-  #research { width: 1000px; }
+  #research { width: min(1320px, calc(100vw - 24px)); height: min(860px, calc(100vh - 24px)); display: flex; flex-direction: column; overflow: hidden; }
+  #resBody { flex: 1; min-height: 0; display: flex; flex-direction: column; } #resBody > .techs, #resBody > h4 { overflow: auto; }
+  .rhead { margin-bottom: 6px; }
+  /* the research tree: sections left to right, the queue at the side */
+  .rt { display: flex; gap: 8px; flex: 1; min-height: 0; }
+  .rtq { width: 250px; flex: none; overflow: auto; font-size: 17px; padding-right: 4px; }
+  .rq { border: 2px solid var(--line); background: var(--panel2); padding: 3px 6px; margin: 4px 0; } .rq.cur { border-color: var(--gold); background: #22200f; }
+  .rqh { font-size: 17px; } .rqc { display: flex; align-items: center; gap: 2px; } .rqc .grow { flex: 1; } .rqc button { padding: 0 5px; font-size: 15px; } .rq .icon { width: 18px; height: 18px; }
+  .rtv { flex: 1; position: relative; overflow: hidden; border: 2px solid var(--line); background: #0d1017; cursor: grab; touch-action: none; }
+  .rtbar { position: absolute; left: 6px; top: 6px; z-index: 2; display: flex; gap: 4px; } .rtbar input { font: inherit; width: 280px; background: var(--panel2); color: var(--ink); border: 2px solid var(--line2); padding: 0 6px; }
+  .rtbar input:focus { outline: none; border-color: var(--acc); }
+  .rti { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .rband { position: absolute; left: 0; border-top: 1px dashed; opacity: .9; pointer-events: none; } .rband span { font-family: 'Silkscreen', monospace; font-size: 12px; letter-spacing: 1px; padding: 4px 8px; display: inline-block; }
+  .rte { position: absolute; left: 0; top: 0; pointer-events: none; } .rte path { fill: none; stroke: #2d3442; stroke-width: 2; } .rte path.open { stroke: #5a7a5a; } .rte path.done { stroke: #3a6a3a; }
+  .rte path.queued { stroke: #4a7ae0; } .rte path.hl { stroke: var(--gold); stroke-width: 3; }
+  .rn { position: absolute; width: 172px; height: 60px; border: 2px solid var(--line2); background: var(--panel2); padding: 2px 6px; cursor: pointer; overflow: hidden; }
+  .rn:hover { border-color: var(--acc); } .rn .rnh { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1; }
+  .rn .rnc, .rn .rnu { display: flex; align-items: center; gap: 1px; height: 19px; } .rn .icon { width: 18px; height: 18px; } .rn .icon b { display: none; } .rn .rnc .dim { font-size: 15px; margin-left: 3px; }
+  .rn .rnb { position: absolute; left: 0; bottom: 0; height: 3px; background: #4a8ae0; } .rn .rnq { position: absolute; right: 3px; top: 1px; color: #7aa8ff; font-weight: normal; font-size: 16px; }
+  .rn.done { border-color: #2f5a2f; background: #142014; } .rn.done .rnb { background: var(--ok); } .rn.done .rnh { color: #9be37a; }
+  .rn.current { border-color: var(--gold); background: #2a2610; } .rn.current .rnb { background: var(--gold); }
+  .rn.queued { border-color: #4a7ae0; background: #121a2c; } .rn.available .rnh { color: #fff; }
+  .rn.locked { opacity: .5; } .rn.dimmed { opacity: .18; } .rn.hit { box-shadow: 0 0 0 2px var(--gold); }
+  .rn.mini { position: relative; display: inline-block; width: 16px; height: 11px; padding: 0; vertical-align: middle; margin-right: 6px; cursor: default; } .rlegend { line-height: 1.5; }
+  /* Shift + click selection (transfer modes) and an engineer's details */
+  #pickbar { display: flex; gap: 4px; align-items: center; padding: 3px 8px; z-index: 6; font-size: 17px; white-space: nowrap; } #pickbar button { padding: 0 6px; } #pickbar button.on { border-color: var(--gold); color: var(--gold); }
+  #pickbar .x, #playerInfo .x { cursor: pointer; color: var(--dim); margin-left: 4px; } #pickbar .x:hover, #playerInfo .x:hover { color: var(--warn); }
+  #playerInfo { right: 12px; top: 210px; width: 290px; font-size: 17px; z-index: 6; } #playerInfo .icon { width: 20px; height: 20px; } #playerInfo .dot { display: inline-block; width: 10px; height: 10px; border: 1px solid #000; }
   .techs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; }
   .tech { border: 2px solid var(--line); background: var(--panel2); padding: 5px 7px; cursor: pointer; }
   .tech:hover { border-color: var(--acc); } .tech.done { border-color: #2f5a2f; opacity: .65; } .tech.locked { opacity: .45; }
@@ -309,6 +336,8 @@
         <div class="setrow">Volume <input id="volume" type="range" min="0" max="100"> <span id="volumeN" class="dim"></span></div>
         <h3>Interface</h3>
         <label class="setrow"><input type="checkbox" data-set="altMode"> Machine icons and arrows on buildings <span class="dim">(alt mode, also its key)</span></label>
+        <label class="setrow"><input type="checkbox" data-set="altInserters"> Inserter arrows in alt mode</label>
+        <label class="setrow"><input type="checkbox" data-set="camFree"> Free camera <span class="dim">(hold the middle mouse button and drag to turn and tilt; also its key)</span></label>
         <label class="setrow"><input type="checkbox" data-set="goals"> Goals list</label>
         <label class="setrow"><input type="checkbox" data-set="minimap"> Minimap</label>
         <h3>Game</h3>
@@ -322,11 +351,14 @@
       <kbd>LMB</kbd> build (drag belts) · open machines<br>
       hold <kbd>RMB</kbd> mine: the axe fells trees, the pickaxe breaks ore and rock, the shovel digs weeds<br>
       <kbd>Ctrl</kbd> + hold <kbd>RMB</kbd> take one tile off a greenhouse (or a path)<br>
-      <kbd>Shift</kbd>+<kbd>RMB</kbd> copy settings · <kbd>Shift</kbd>+<kbd>LMB</kbd> paste them (buildings, belt lines, routes, stops)<br>
+      <kbd>Shift</kbd>+<kbd>RMB</kbd> copy settings · <kbd>Shift</kbd>+<kbd>LMB</kbd> paste them (buildings, belt lines, routes, stops); <kbd>Esc</kbd> clears what is copied<br>
+      <kbd>Shift</kbd>+<kbd>LMB</kbd> with a building in hand: plan it as a blueprint (drag for many); click a blueprint with an empty hand to build it<br>
+      <kbd>Shift</kbd>+<kbd>LMB</kbd> with an empty hand (nothing copied): select a building, then pick a mode (fuel, input, store, augment) for <kbd>Ctrl</kbd>+click<br>
       <kbd>E</kbd> inventory &amp; crafting · <kbd>T</kbd> research<br>
-      <kbd>1</kbd>–<kbd>0</kbd> quickbar · <kbd>Q</kbd> copy hovered / empty hand<br>
+      <kbd>1</kbd>–<kbd>0</kbd> quickbar · <kbd>Q</kbd> copy hovered (over ore: the best drill) / empty hand<br>
       <kbd>R</kbd> rotate · <kbd>Z</kbd> drop · hold <kbd>F</kbd> pick up<br>
-      <kbd>Ctrl</kbd>+<kbd>LMB</kbd> move items in or out of a machine<br>
+      <kbd>Ctrl</kbd>+<kbd>LMB</kbd> move items in or out of a machine: ingredients to its input, fuel to its fuel slot<br>
+      <kbd>C</kbd> fixed or free camera · free: hold <kbd>MMB</kbd> and drag to turn and tilt<br>
       In inventories: drag stacks between slots · right-drag: half · <kbd>Shift</kbd>+click: send across<br>
       <kbd>Esc</kbd> close, then menu · <kbd>G</kbd> signal · <kbd>Alt</kbd> recipe icons<br>
       <kbd>X</kbd> next quickbar · <kbd>M</kbd> map · <kbd>H</kbd> hide interface · <kbd>F1</kbd> menu<br>
@@ -350,7 +382,7 @@
     Something out there answers, but only with the mechanisms it has heard you use.</p>
   <h3 style="margin-top:10px">Getting started</h3>
   <p class="dim">You land with 8 iron plates, a burner drill and a stone furnace. Mine coal and stone by hand, put the drill on iron ore facing the furnace, and fuel both.
-    Craft from there (E). Electricity comes from steam: a water pump on water, boilers burning fuel beside it, steam engines beside those, and small poles; machines only run inside a pole's blue supply area. Belts have two lanes (bus belts three); click any belt for its line and its network (also under L, Belt lines).</p>
+    Craft from there (E). Electricity comes from steam: a water pump on water, a boiler burning fuel beside it, steam engines beside that, a generator pole by the engines, and a step-up station linked with a step-up cable to a small pole; machines only run inside a low voltage pole's blue supply area. Belts have two lanes (bus belts three); click any belt for its line and its network (also under L, Belt lines).</p>
   <h3 style="margin-top:10px">Reading the arrows</h3>
   <p class="dim">Hover or hold a building to see where things go. <b style="color:#4aa3ff">Blue</b>: where an inserter picks up, or where one can feed a machine.
     <b style="color:#ffa53d">Orange</b>: where things come out. <b style="color:#7be37a">Green</b>: something is feeding it. <b style="color:#ff4a4a">Red ✕</b>: that won't work.
@@ -361,10 +393,12 @@
     Drills, furnaces, assemblers, labs and pumpjacks take augments (speed, efficiency, productivity; depth for drills). Deposits never run out: they go deeper (surface, depth, bedrock), and a drill needs to reach the layer.
     Inserters only take what the machine in front of them needs. Drills push straight into whatever is in front of them, or drop ore on the ground. Electric machines need a pole nearby; drag a belt over another to change it.</p>
   <h3 style="margin-top:10px">Power</h3>
-  <p class="dim">Put a water pump on water, boilers against it, and steam engines against the boilers: one pump feeds 20 boilers, one boiler feeds 2 engines.
-    Water and steam pass between buildings that touch. Engines only work as hard as the network needs; when it needs more than they give, every machine slows down.
-    Poles of one voltage wire up by themselves. Hold a power cable and click two poles to link them from further away. High voltage power lines cover a 21×21 area;
-    step down to low voltage with a transformer station and a transformer cable. A flashing plug means a machine has no power (red) or too little (yellow).
+  <p class="dim">Put a water pump on water, boilers (two tiles wide) against it, and steam engines (2×2) against the boilers: one pump feeds 20 boilers, one boiler feeds 2 engines.
+    Water and steam pass between buildings that touch; pipes join boilers at their ends (water) and back (steam), engines at their front and back. Hover one for its arrows: a blue and an orange pair where a fluid passes through.
+    Engines only work as hard as the network needs; when it needs more than they give, every machine slows down.
+    Generators feed <b>extra-low voltage</b>: put a generator pole by them, a step-up station near that, and link the station to a low voltage pole with a step-up cable.
+    Poles of one voltage wire up by themselves. Hold a power cable and click two poles to link them from further away. Drag poles to lay a line, spaced to their coverage. High voltage power lines cover a 21×21 area;
+    step down to low voltage with a transformer station and a transformer cable. Powered roads carry low voltage in road conduits to machines beside the road. A flashing plug means a machine has no power (red) or too little (yellow).
     Days turn to night: solar panels give nothing in the dark, so keep steam or diesel going. Lamps (powered) and braziers (burning coal or wood) light the ground, and working machines glow.</p>
   <h3 style="margin-top:10px">Oil and fluids</h3>
   <p class="dim">Pipes join every pipe and fluid port next to them; one line carries one fluid, and long lines carry less per second. Pumps push a line one way and restore full flow;
@@ -406,6 +440,8 @@
 </div>
 
 <div id="coop" class="panel hud" style="display:none"></div>
+<div id="pickbar" class="panel hud" style="display:none"></div>
+<div id="playerInfo" class="panel hud" style="display:none"></div>
 <div id="chatlog" class="hud"></div>
 <input id="chatin" class="hud" maxlength="200" placeholder="say something, Enter to send" autocomplete="off">
 <div id="toast" class="panel"></div>

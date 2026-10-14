@@ -100,6 +100,7 @@ function drawMachine(px, ent, col) {
   const def = ENTITIES[ent], kind = def.model || def.kind;
   switch (kind) {
     case 'pipe': px(1, 6, 1, 14, 4); px(1, 6, 1.3, 14, 1); px(0, 5, '#5c6470', 2, 6); px(14, 5, '#5c6470', 2, 6); px(7, 5, '#3a8ad8', 2, 2); break;
+    case 'station': px(1, 8, 1, 14, 5); px(1, 7, '#8a5a2c', 14, 2); px(2, 13, '#5e3b1a', 2, 3); px(12, 13, '#5e3b1a', 2, 3); px(3, 2, '#e5ad2e', 2, 6); px(3, 2, '#e5ad2e', 8, 2); px(10, 3, '#2c3038', 3, 2); break;
     case 'upipe': px(1, 6, 1, 7, 4); px(1, 6, 1.3, 7, 1); px(7, 4, '#2c3038', 8, 9); px(8, 5, '#5c6470', 6, 2); px(10, 9, '#9be37a', 2, 2); break;
     case 'fpump': px(0, 6, '#939ca8', 16, 4); px(4, 3, 1, 8, 10); px(4, 3, 1.3, 8, 1); px(7, 5, '#ffffff', 2, 5); px(6, 6, '#ffffff', 4, 1); break;
     case 'valve': px(0, 7, '#939ca8', 16, 3); px(5, 5, 1, 6, 7); px(7, 1, '#2c3038', 2, 5); px(4, 1, '#d84a3a', 8, 2); break;
@@ -132,6 +133,8 @@ function drawMachine(px, ent, col) {
     case 'frame': px(2, 2, 1, 12, 2); px(2, 2, 1, 2, 12); px(12, 2, 1, 2, 12); px(2, 12, .7, 12, 2); px(4, 4, .5, 1, 8); px(4, 4, .5, 8, 1); break;
     case 'pole':
       if (ent === 'power_line') { for (let y = 3; y < 16; y++) { const w = 2 + Math.floor((y - 3) / 3); px(8 - w, y, 1, 1, 1); px(7 + w, y, 1, 1, 1); if (y % 3 === 0) px(8 - w, y, .7, w * 2, 1); } px(2, 3, '#2c3038', 12, 1); px(2, 4, '#9fd0ff', 1, 2); px(13, 4, '#9fd0ff', 1, 2); break; }
+      if (ent === 'step_up') { px(4, 7, 1, 8, 8); for (let x = 5; x < 12; x += 2) px(x, 8, .7, 1, 6); px(5, 2, '#e5c83a', 2, 5); px(9, 2, '#d88a4a', 2, 5); px(7, 4, '#ffffff', 2, 1); px(4, 14, '#2c3038', 8, 1); break; }
+      if (ent === 'generator_pole') { px(7, 3, '#5e3b1a', 2, 12); px(3, 3, 1, 10, 2); px(3, 2, '#e5c83a', 2, 1); px(11, 2, '#e5c83a', 2, 1); px(6, 14, '#e5c83a', 4, 1); break; }
       if (ent === 'transformer') { px(3, 6, 1, 10, 9); for (let x = 4; x < 13; x += 2) px(x, 7, .7, 1, 7); px(4, 2, '#9fd0ff', 2, 4); px(7, 1, '#9fd0ff', 2, 5); px(10, 2, '#9fd0ff', 2, 4); px(3, 14, '#2c3038', 10, 1); break; }
       px(7, 2, 1, 2, 13); px(3, 3, 1, 10, 2); px(3, 2, '#c8d0da', 2, 1); px(11, 2, '#c8d0da', 2, 1); px(6, 14, .6, 4, 1); break;
     case 'pump': px(2, 13, '#3a8ad8', 12, 2); px(3, 6, '#2c3038', 1, 7); px(12, 6, '#2c3038', 1, 7); px(2, 5, '#5c6470', 12, 2); px(4, 2, 1, 6, 4); px(8, 3, 1, 6, 2); px(13, 2, '#939ca8', 2, 4); break;

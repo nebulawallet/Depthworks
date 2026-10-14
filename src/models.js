@@ -3,7 +3,7 @@
 // Everything is toon-shaded so the pixel-outline post pass reads cleanly.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ENTITIES, ITEMS, TIERS, FLUIDS, FRAMES, VEHICLES, ENGINES, RECIPE, CROPS, recipeIcon } from './data.js';
+import { ENTITIES, ITEMS, TIERS, FLUIDS, FRAMES, VEHICLES, ENGINES, RECIPE, CROPS, DITHER, recipeIcon } from './data.js';
 import { S, DIRS, factoryOf } from './state.js';
 import { iconCanvas } from './icons.js';
 
@@ -39,9 +39,46 @@ export const facet = geo => { const g = geo.index ? geo.toNonIndexed() : geo; g.
 // Hide UI (H) simply stops rendering it, so anything put on it hides with the rest of the interface.
 export const UI_LAYER = 2;
 
-const ghostCache = new WeakMap(), previewCache = new WeakMap();
+// ---------------------------------------------------------------- stippled see-through (one path for everything)
+// Anything see-through is drawn like stained glass in newer pixel games: each pixel is either drawn whole or skipped,
+// by a 4×4 ordered (Bayer) pattern scaled to the opacity, never blended. Pixel art stays crisp, and overlapping
+// see-through things need no sorting. The pattern is pinned to the world (it steps with the camera's whole pixels, see
+// scene.js), so it doesn't crawl while you walk. `dither(m)` patches a material in place: at opacity 1 it draws solid,
+// below that it stipples. `ditherClone(m, opacity)` is a stippled copy for ghosts, previews and blueprints.
+export const DITHER_OFF = { value: new THREE.Vector2() };
+const DITHER_GLSL = `uniform vec2 ditherOff;
+float bayer4(vec2 p) {
+  vec2 q = mod(floor(p), 4.0);
+  int i = int(q.x) + int(q.y) * 4;
+  float m = i == 0 ? 0. : i == 1 ? 8. : i == 2 ? 2. : i == 3 ? 10. : i == 4 ? 12. : i == 5 ? 4. : i == 6 ? 14. : i == 7 ? 6.
+    : i == 8 ? 3. : i == 9 ? 11. : i == 10 ? 1. : i == 11 ? 9. : i == 12 ? 15. : i == 13 ? 7. : i == 14 ? 13. : 5.;
+  return (m + .5) / 16.;
+}`;
+export function dither(m) {
+  if (m.userData.dither) return m;
+  m.userData.dither = true;
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    prev?.call(m, sh, r);
+    sh.uniforms.ditherOff = DITHER_OFF;
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\n' + DITHER_GLSL)
+      .replace('#include <fog_fragment>', '#include <fog_fragment>\n  if (gl_FragColor.a < bayer4(gl_FragCoord.xy + ditherOff)) discard;\n  gl_FragColor.a = 1.0;');
+  };
+  m.customProgramCacheKey = () => 'dither' + (m.type || '');
+  return m;
+}
+// A stippled copy: drawn after solid things (so it never hides what is behind it), and never writing depth (so the
+// outline pass doesn't trace the gaps in its pattern).
+export function ditherClone(m, opacity) {
+  const c = m.clone(); c.transparent = true; c.opacity = opacity; c.depthWrite = false; delete c.userData.dither;   // a clone loses the patch: put it back
+  return dither(c);
+}
+// A stippled material that isn't a copy of anything (glass, roofs): solid colour at `opacity`.
+export const ditherMat = (opts, opacity) => { const m = new THREE.MeshToonMaterial({ gradientMap: toonRamp, ...opts, transparent: true, opacity, depthWrite: false }); return dither(m); };
+
+const ghostCache = new WeakMap(), previewCache = new WeakMap(), bpCache = new WeakMap();
 function variant(cache, m, opacity) {
-  if (!cache.has(m)) { const c = m.clone(); c.transparent = true; c.opacity = opacity; c.depthWrite = false; cache.set(m, c); }
+  if (!cache.has(m)) cache.set(m, ditherClone(m, opacity));
   return cache.get(m);
 }
 // Ghosts (above the working layer) move to render layer 1, which the outline pass ignores.
@@ -49,13 +86,17 @@ export function setGhost(root, ghost) {
   root.traverse(o => {
     if (!o.isMesh && !o.isSprite) return;
     if (!o.userData.base) o.userData.base = o.material;
-    o.material = ghost ? variant(ghostCache, o.userData.base, .1) : o.userData.base;
+    o.material = ghost ? variant(ghostCache, o.userData.base, DITHER.ghost) : o.userData.base;
     o.castShadow = !ghost && o.isMesh;
     o.layers.set(o.isSprite ? UI_LAYER : ghost || o.userData.overlay ? 1 : 0);   // glass and roofs never get outlines
   });
 }
 export function setPreview(root) {
-  root.traverse(o => { if (o.isMesh || o.isSprite) { o.material = variant(previewCache, o.material, .5); o.castShadow = false; o.receiveShadow = false; o.layers.set(UI_LAYER); } });
+  root.traverse(o => { if (o.isMesh || o.isSprite) { o.material = variant(previewCache, o.material, DITHER.preview); o.castShadow = false; o.receiveShadow = false; o.layers.set(UI_LAYER); } });
+}
+// Blueprints: the building, stippled, in the world (layer 1: no outlines, not clickable through the raycast of layer 0).
+export function setBlueprint(root) {
+  root.traverse(o => { if (o.isMesh) { o.material = variant(bpCache, o.material, DITHER.blueprint); o.castShadow = false; o.receiveShadow = false; o.layers.set(1); } else if (o.isSprite) o.visible = false; });
 }
 
 // ---------------------------------------------------------------- belt tread textures
@@ -147,6 +188,8 @@ export function makeMesh(e) {
   const grp = (parent, x = 0, y = 0, z = 0) => { const n = new THREE.Group(); n.position.set(x, y, z); parent.add(n); return n; };
   const col = M(def.color), dark = M(C.dark), mid = M(C.mid), steel = M(C.steel), black = M(C.black);
   const seg = Math.max(6, res);
+  // a hidden alt-mode icon over the building; the scene picks what it shows
+  const altSprite = y => { const sp = new THREE.Sprite(iconSpriteMat('chest')); sp.scale.set(.42, .42, 1); sp.position.set(0, y, 0); sp.visible = false; sp.renderOrder = 10; sp.layers.set(UI_LAYER); g.add(sp); return sp; };
 
   // pipe stubs with a flange, from the middle of the tile out to side l (local), at pipe height
   const PIPE_Y = .22;
@@ -164,6 +207,22 @@ export function makeMesh(e) {
       st(along, M(C.steel), dx * .44, PIPE_Y, dz * .44);
       const fl = dx ? cyl(.11, .11, .04, seg).rotateZ(Math.PI / 2) : cyl(.11, .11, .04, seg).rotateX(Math.PI / 2);
       st(fl, col2, dx * .49, PIPE_Y, dz * .49);
+    }
+  };
+  // Big fluid buildings: a stub with a coloured collar at every tile edge of their pipe sides (w × h tiles as built,
+  // facing north). A connection fluid passes straight through gets a double collar.
+  const portStubs = (w, h) => {
+    for (const [f, sides] of Object.entries(def.pipeSides || {})) for (const l of sides) {
+      const [dx, dz] = DIRS[l], along = dx ? h : w, collar = M(FLUIDS[f].color), thru = def.through?.includes(f);
+      for (let i = 0; i < along; i++) {
+        const o = i - (along - 1) / 2, px = dx ? dx * w / 2 : o, pz = dz ? dz * h / 2 : o;
+        const pipe = dx ? cyl(.09, .09, .16, seg).rotateZ(Math.PI / 2) : cyl(.09, .09, .16, seg).rotateX(Math.PI / 2);
+        st(pipe, M(C.steel), px - dx * .08, PIPE_Y, pz - dz * .08);
+        for (let k = 0; k < (thru ? 2 : 1); k++) {
+          const c = dx ? cyl(.12, .12, .035, seg).rotateZ(Math.PI / 2) : cyl(.12, .12, .035, seg).rotateX(Math.PI / 2);
+          st(c, collar, px - dx * (.02 + k * .07), PIPE_Y, pz - dz * (.02 + k * .07));
+        }
+      }
     }
   };
   switch (def.model || def.kind) {
@@ -406,6 +465,12 @@ export function makeMesh(e) {
         st(new THREE.TorusGeometry(.94, .045, 4, seg, Math.PI / 2).rotateX(-Math.PI / 2).rotateY(L ? -Math.PI / 2 : Math.PI), col, cx, .13, -.5);
         st(cyl(.08, .08, .16, 6), col, cx + (L ? .06 : -.06), .08, -.44);
       }
+      for (const [f, sx] of [[e.bout?.L, -1], [e.bout?.R, 1]]) {   // outputs: a chute on the side that lane goes out of
+        if (!f) continue;
+        st(box(.12, .05, .36), M(0xffa53d), sx * .5, .15, 0);
+        st(new THREE.ConeGeometry(.07, .14, 4).rotateZ(-sx * Math.PI / 2), M(0xffa53d), sx * .58, .15, 0);
+        if (f !== '*') { const sp = new THREE.Sprite(iconSpriteMat(f)); sp.scale.set(.3, .3, 1); sp.position.set(sx * .55, .5, 0); sp.renderOrder = 10; sp.layers.set(UI_LAYER); g.add(sp); }
+      }
       break;
     }
     case 'underground': {
@@ -507,6 +572,14 @@ export function makeMesh(e) {
         st(cyl(.16, .16, .06, 8), black, 0, .8, 0);
         st(box(.34, .26, .1), M(C.stoneDark), 0, .2, -.42);
         P.smoke = [0, .86, 0];
+      } else if (def.speed >= 3) {   // steel electric furnace: taller, steel clad, a row of five slits
+        st(box(.94, .74, .94), M(C.steel), 0, .37, 0);
+        st(box(.98, .08, .98), M(C.light), 0, .78, 0);
+        st(box(.5, .14, .5), M(C.dark), 0, .88, 0);
+        for (const [x, z] of [[-.44, -.44], [.44, -.44], [-.44, .44], [.44, .44]]) st(box(.12, .8, .12), M(C.mid), x, .4, z);
+        st(box(.7, .04, .02), M(C.yellow), 0, .66, -.475);
+        P.slits = glowMat(0xffa04a);
+        for (const x of [-.28, -.14, 0, .14, .28]) dyn(g, box(.06, .34, .02), P.slits, x, .42, -.475);
       } else {
         st(box(.92, .62, .92), M(C.mid), 0, .31, 0);
         st(box(.96, .08, .96), M(C.steel), 0, .66, 0);
@@ -517,6 +590,7 @@ export function makeMesh(e) {
       }
       P.glow = glowMat(0xff6a1a);
       dyn(g, box(.24, .14, .06), P.glow, 0, .19, def.burner ? -.46 : -.47);
+      P.sprite = altSprite(def.speed >= 3 ? 1.25 : 1.1);   // alt mode: what it is smelting into (scene.js)
       break;
     }
     case 'assembler': {
@@ -537,30 +611,53 @@ export function makeMesh(e) {
       P.sprite.visible = !!e.recipe && S.altMode; P.sprite.renderOrder = 10; P.sprite.layers.set(UI_LAYER); g.add(P.sprite);
       break;
     }
+    case 'station': {   // a workbench with a turntable arm that reaches out to the chests around it
+      st(box(.94, .1, .94), dark, 0, .05, 0);
+      st(box(.84, .36, .74), col, 0, .28, .06);
+      st(box(.9, .06, .8), M(C.wood), 0, .49, .06);
+      for (const [x, z] of [[-.4, -.3], [.4, -.3], [-.4, .42], [.4, .42]]) st(box(.07, .46, .07), M(C.woodDark), x, .23, z);
+      st(box(.3, .12, .2), M(C.steel), .22, .58, .2); st(cyl(.06, .06, .2, 6).rotateZ(Math.PI / 2), M(C.dark), -.2, .57, .25);
+      // the arm: a turret at the bench's front corner, an upper arm and a forearm that stretch to the chest
+      P.arm = grp(g, -.3, .54, -.3);
+      dyn(P.arm, cyl(.1, .12, .1, seg), dark);
+      P.arm1 = dyn(P.arm, box(.06, .06, 1), M(C.yellow)); P.arm2 = dyn(P.arm, box(.05, .05, 1), M(C.light));
+      P.hand = grp(P.arm); dyn(P.hand, box(.12, .04, .1), dark);
+      P.item = dyn(P.arm, itemGeo('iron_plate'), itemMat('iron_plate')); P.item.visible = false;
+      P.sprite = new THREE.Sprite(iconSpriteMat(e.recipe || 'gear')); P.sprite.scale.set(.5, .5, 1); P.sprite.position.set(0, 1.1, 0);
+      P.sprite.visible = !!e.recipe && S.altMode; P.sprite.renderOrder = 10; P.sprite.layers.set(UI_LAYER); g.add(P.sprite);
+      P.glow = glowMat(0xffd88a, .1); dyn(g, box(.3, .08, .02), P.glow, 0, .3, -.32);
+      break;
+    }
     case 'lab': {
       st(box(.94, .26, .94), dark, 0, .13, 0);
       for (const [x, z] of [[-.4, -.4], [.4, -.4], [-.4, .4], [.4, .4]]) st(box(.14, .3, .14), col, x, .15, z);
       st(cyl(.42, .44, .08, seg), M(C.steel), 0, .3, 0);
       P.glow = glowMat(0x58c8d8, .2);
       dyn(g, new THREE.IcosahedronGeometry(.16, 0), P.glow, 0, .52, 0);
-      dyn(g, new THREE.SphereGeometry(.36, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshToonMaterial({ color: C.glass, transparent: true, opacity: .35, gradientMap: toonRamp, depthWrite: false }), 0, .33, 0).layers.set(1);
+      dyn(g, new THREE.SphereGeometry(.36, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2), ditherMat({ color: C.glass }, DITHER.glass), 0, .33, 0).layers.set(1);
       const ring = grp(g, 0, .52, 0); P.ring = ring;
       dyn(ring, new THREE.TorusGeometry(.42, .03, 4, seg * 2).rotateX(Math.PI / 2), M(C.brass));
       break;
     }
     case 'chest': {
-      if (e.type === 'wooden_chest') {
-        st(box(.68, .44, .62), M(C.wood), 0, .22, 0);
+      // Chests have no front: they are drawn unturned. The lid swings open while a belt output feeds the chest, and the
+      // goods inside show (an animated texture, drawn by the scene at P.inside).
+      const wood = e.type === 'wooden_chest', lidM = M(wood ? C.woodDark : C.mid), h = wood ? .44 : .46, d = wood ? .62 : .66;
+      if (wood) {
+        st(box(.68, .4, .62), M(C.wood), 0, .2, 0);
         for (const y of [.12, .26]) st(box(.7, .025, .64), M(C.woodDark), 0, y, 0);
-        st(box(.72, .07, .66), M(C.woodDark), 0, .45, 0);
-        for (const [x, z] of [[-.33, -.3], [.33, -.3], [-.33, .3], [.33, .3]]) st(box(.06, .48, .06), M(C.mid), x, .24, z);
-        st(box(.1, .1, .04), M(C.light), 0, .36, -.33);
-        break;
+        for (const [x, z] of [[-.33, -.3], [.33, -.3], [-.33, .3], [.33, .3]]) st(box(.06, .44, .06), M(C.mid), x, .22, z);
+        st(box(.1, .1, .04), M(C.light), 0, .32, -.33);
+      } else {
+        st(box(.74, .44, .66), M(C.steel), 0, .22, 0);
+        for (const y of [.1, .34]) st(box(.78, .05, .7), M(C.mid), 0, y, 0);
+        st(box(.12, .12, .04), M(C.yellow), 0, .32, -.36);
       }
-      st(box(.74, .48, .66), M(C.steel), 0, .24, 0);
-      st(box(.78, .08, .7), M(C.mid), 0, .48, 0);
-      for (const y of [.1, .34]) st(box(.78, .05, .7), M(C.mid), 0, y, 0);
-      st(box(.12, .12, .04), M(C.yellow), 0, .36, -.36);
+      st(box(wood ? .62 : .68, .01, d - .06), M(0x1a1612), 0, h + .005, 0);   // the dark inside, seen with the lid open
+      P.lid = grp(g, 0, h, -d / 2 - .02);   // hinged at the north edge, so it opens away from the usual view
+      dyn(P.lid, box(wood ? .72 : .78, .07, d + .04), lidM, 0, .035, d / 2 + .02);
+      P.inside = [0, h + .012, 0, wood ? .56 : .62, d - .1];   // x, y, z, width, depth of the contents' surface
+      P.sprite = altSprite(.95);   // alt mode: its commonest item (scene.js)
       break;
     }
     case 'frame': {
@@ -597,6 +694,23 @@ export function makeMesh(e) {
         for (let i = -1; i <= 1; i++) st(box(.1, .06, .02), M(i ? C.hazard : C.yellow), i * .12, .3, -.32);
         break;
       }
+      if (e.type === 'generator_pole') {   // a stout post with yellow insulators: extra-low voltage
+        st(cyl(.07, .09, 1.12, 6), M(C.woodDark), 0, .56, 0);
+        st(box(.5, .08, .1), M(def.color), 0, 1.02, 0);
+        for (const x of [-.2, .2]) st(cyl(.045, .055, .12, 6), M(0xe5c83a), x, 1.1, 0);
+        st(box(.3, .02, .3), M(0xe5c83a), 0, .03, 0);
+        break;
+      }
+      if (e.type === 'step_up') {   // a small transformer with one yellow and one copper bushing
+        st(box(.7, .1, .7), dark, 0, .05, 0);
+        st(box(.46, .5, .46), col, 0, .35, 0);
+        for (const s of [-1, 1]) for (let i = -1; i <= 1; i++) st(box(.07, .38, .03), M(C.mid), i * .1, .35, s * .245);
+        st(box(.5, .05, .5), M(C.steel), 0, .62, 0);
+        st(cyl(.04, .06, .3, 6), M(0xe5c83a), -.12, .8, 0); st(cyl(.04, .06, .3, 6), M(0xd88a4a), .12, .8, 0);
+        st(cyl(.06, .06, .03, 6), M(0xe5c83a), -.12, .96, 0); st(cyl(.06, .06, .03, 6), M(0xd88a4a), .12, .96, 0);
+        st(new THREE.ConeGeometry(.06, .12, 4), M(0xf2f2f2), 0, .7, -.18);
+        break;
+      }
       if (e.type === 'small_pole') {
         st(cyl(.06, .08, 1.3, 6), M(C.wood), 0, .65, 0);
         st(box(.6, .07, .08), M(C.woodDark), 0, 1.18, 0);
@@ -623,6 +737,20 @@ export function makeMesh(e) {
       break;
     }
     case 'boiler': {   // brick firebox with a glowing door, a steam drum across the top and a chimney
+      if (e.foot) {   // two tiles wide: a long drum, a firebox under each half, water collars at the ends, steam at the back
+        st(box(1.92, .34, .8), M(C.stone), 0, .17, 0);
+        st(box(1.96, .05, .84), M(C.stoneDark), 0, .36, 0);
+        st(cyl(.3, .3, 1.84, seg).rotateZ(Math.PI / 2), col, 0, .62, .02);
+        for (const x of [-.8, -.4, 0, .4, .8]) st(cyl(.32, .32, .05, seg).rotateZ(Math.PI / 2), M(C.rust), x, .62, .02);
+        st(cyl(.08, .1, .8, seg), M(C.stoneDark), .62, 1.1, .2);
+        st(cyl(.11, .11, .05, seg), black, .62, 1.5, .2);
+        for (const x of [-.5, .5]) st(box(.38, .22, .06), M(C.stoneDark), x, .17, -.42);
+        P.glow = glowMat(0xff6a1a);
+        for (const x of [-.5, .5]) dyn(g, box(.28, .12, .03), P.glow, x, .15, -.46);
+        portStubs(2, 1);
+        P.smoke = [.62, 1.55, .2];
+        break;
+      }
       st(box(.9, .34, .76), M(C.stone), 0, .17, 0);
       st(box(.94, .05, .8), M(C.stoneDark), 0, .36, 0);
       st(cyl(.3, .3, .9, seg).rotateZ(Math.PI / 2), col, 0, .62, .04);
@@ -636,6 +764,20 @@ export function makeMesh(e) {
       break;
     }
     case 'engine': {   // a long cylinder on a bed, piston rod and a big flywheel on the side
+      if (e.foot) {   // 2×2: the cylinder runs front to back, steam collars at both ends, a big flywheel on the right
+        st(box(1.94, .18, 1.94), dark, 0, .09, 0);
+        st(cyl(.42, .42, 1.7, seg).rotateX(Math.PI / 2), col, -.3, .62, 0);
+        for (const z of [-.8, -.4, 0, .4, .8]) st(cyl(.46, .46, .06, seg).rotateX(Math.PI / 2), M(C.steel), -.3, .62, z);
+        for (const z of [-.45, .45]) st(cyl(.08, .08, .5, seg), M(C.steel), -.3, 1.12, z);
+        st(box(.14, .5, 1.1), M(C.mid), .42, .42, 0);
+        st(box(.5, .1, .1), M(C.steel), .2, .9, 0);
+        const fly = grp(g, .66, .7, 0); P.fly = fly;
+        dyn(fly, cyl(.6, .6, .1, seg).rotateZ(Math.PI / 2), M(C.light));
+        dyn(fly, box(.12, 1.1, .12), dark); dyn(fly, box(.12, .12, 1.1), dark);
+        P.glow = glowMat(0x7ef6ff); dyn(g, box(.04, .14, .3), P.glow, .5, .38, -.6);
+        portStubs(2, 2);
+        break;
+      }
       st(box(.94, .16, .96), dark, 0, .08, 0);
       st(cyl(.26, .26, .86, seg).rotateX(Math.PI / 2), col, -.12, .44, 0);
       for (const z of [-.4, 0, .4]) st(cyl(.29, .29, .05, seg).rotateX(Math.PI / 2), M(C.steel), -.12, .44, z);
@@ -672,7 +814,7 @@ export function makeMesh(e) {
     }
     case 'greenhouse': {   // a room of glass: soil beds, walls with doors on the outside edges, a glass roof seen in depth mode
       const foot = e.foot || [[e.x, e.z]], crop = e.seed ? CROPS[e.seed] : null, has = (x, z) => foot.some(([a, b]) => a === x && b === z);
-      const glass = new THREE.MeshToonMaterial({ color: 0xc8f8e0, transparent: true, opacity: .26, gradientMap: toonRamp, depthWrite: false });
+      const glass = ditherMat({ color: 0xc8f8e0 }, DITHER.glass * .75);
       const frameM = M(0xd8dde4), soil = M(0x4a3424), rim = M(0x7a6a52), sprouts = [];
       for (const [x, z] of foot) {
         const lx = x - e.x, lz = z - e.z;
@@ -691,7 +833,7 @@ export function makeMesh(e) {
       if (sprouts.length) { P.plants = grp(g); dyn(P.plants, mergeGeometries(sprouts.map(q => q.toNonIndexed())), M(crop.color, crop.glow ? { emissive: crop.glow, emissiveIntensity: .6 } : {})); }
       // the roof: one glass pyramid over a rectangular room, a small one over every tile of any other shape
       const xs = foot.map(f => f[0]), zs = foot.map(f => f[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
-      const roofM = new THREE.MeshToonMaterial({ color: 0x6ad88a, transparent: true, opacity: .45, gradientMap: toonRamp, depthWrite: false, side: THREE.DoubleSide });
+      const roofM = ditherMat({ color: 0x6ad88a, side: THREE.DoubleSide }, DITHER.roof);
       P.roof = grp(g); P.roof.visible = false;
       const pyr = (cx, cz, w, d, h) => { const m = dyn(P.roof, new THREE.ConeGeometry(Math.SQRT1_2, 1, 4).rotateY(Math.PI / 4).scale(w, h, d), roofM, cx, .95 + h / 2, cz); m.userData.overlay = true; };
       if (foot.length === (x1 - x0 + 1) * (z1 - z0 + 1)) pyr((x0 + x1) / 2 - e.x, (z0 + z1) / 2 - e.z, x1 - x0 + 1, z1 - z0 + 1, Math.min(1.6, .25 + Math.min(x1 - x0, z1 - z0) * .12));
@@ -722,7 +864,7 @@ export function makeMesh(e) {
       P.glow = glowMat(0x9fe8f2, .4);
       P.ring = grp(g, 0, .38, .08);
       for (let i = 0; i < 8; i++) { const a = i * .8; dyn(P.ring, new THREE.SphereGeometry(.045, 6, 4), P.glow, Math.cos(a) * .12, i * .055, Math.sin(a) * .12); dyn(P.ring, new THREE.SphereGeometry(.04, 6, 4), M(0xd84a8a), -Math.cos(a) * .12, i * .055, -Math.sin(a) * .12); }
-      const dome = dyn(g, new THREE.SphereGeometry(.3, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshToonMaterial({ color: C.glass, transparent: true, opacity: .3, gradientMap: toonRamp, depthWrite: false }), 0, .34, .08);
+      const dome = dyn(g, new THREE.SphereGeometry(.3, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2), ditherMat({ color: C.glass }, DITHER.glass), 0, .34, .08);
       dome.userData.overlay = true;
       break;
     }
@@ -774,8 +916,14 @@ export function makeMesh(e) {
     g.add(new THREE.Mesh(merged, withAO(mat)));
     if (list.length > 1) list.forEach(x => x.dispose());
   }
-  g.rotation.y = e.foot ? 0 : -e.dir * Math.PI / 2;
-  g.position.set(e.x + .5, e.y, e.z + .5);
+  if (def.big && e.foot) {   // built facing north around its middle
+    const xs = e.foot.map(t => t[0]), zs = e.foot.map(t => t[1]);
+    g.rotation.y = -e.dir * Math.PI / 2;
+    g.position.set((Math.min(...xs) + Math.max(...xs) + 1) / 2, e.y, (Math.min(...zs) + Math.max(...zs) + 1) / 2);
+  } else {
+    g.rotation.y = e.foot || def.kind === 'chest' ? 0 : -e.dir * Math.PI / 2;
+    g.position.set(e.x + .5, e.y, e.z + .5);
+  }
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   g.userData.ent = e;
   e.parts = P;
@@ -919,5 +1067,27 @@ export function poseInserter(e, ghost) {
   if (e.held) {
     P.item.position.set(0, hh - .2, -hf);
     if (P.item.userData.type !== e.held) { P.item.geometry = itemGeo(e.held); P.item.material = P.item.userData.base = itemMat(e.held); P.item.userData.type = e.held; }
+  }
+}
+
+// The crafting station's arm: it swings toward the chest it is fetching from and stretches out to it, then comes home
+// with the item. Worked out in the bench's own frame (it is built facing north and turned with the building).
+export function poseStation(e, ghost) {
+  const P = e.parts, A = e.arm; if (!P?.arm) return;
+  let lx = .3, lz = .3, k = 0;   // at rest it folds over the bench
+  if (A?.at && (A.t > 0 || A.it)) {
+    const wx = A.at[0] + .5 - (e.x + .5), wz = A.at[2] + .5 - (e.z + .5), th = e.dir * Math.PI / 2;
+    lx = wx * Math.cos(th) + wz * Math.sin(th) + .3; lz = -wx * Math.sin(th) + wz * Math.cos(th) + .3;   // from the turret
+    k = A.t < .5 ? A.t * 2 : 2 - A.t * 2;
+  }
+  const len = Math.max(.25, Math.hypot(lx, lz) * (k || .45));
+  P.arm.rotation.y = Math.atan2(-lx, -lz);
+  P.arm1.scale.z = len * .55; P.arm1.position.set(0, .12, -len * .275);
+  P.arm2.scale.z = len * .5; P.arm2.position.set(0, .1, -len * .75);
+  P.hand.position.set(0, .06, -len);
+  P.item.visible = !!(A?.it && A.got && !ghost);
+  if (P.item.visible) {
+    P.item.position.set(0, -.02, -len);
+    if (P.item.userData.type !== A.it) { P.item.geometry = itemGeo(A.it); P.item.material = P.item.userData.base = itemMat(A.it); P.item.userData.type = A.it; }
   }
 }

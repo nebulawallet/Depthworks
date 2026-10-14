@@ -1,7 +1,8 @@
 // Save / load to localStorage, and the entity format shared with co-op sync.
 // Saves are per-browser and can disappear, so every storage access is guarded.
 import { S, world, inv, bus, key, GRID, generateWater, generateOil, generateOres, dryAround, loadBars, WATER_GEN, layerSize, spill, setWorldSize, legacyArrays, SPAWN, chunkOf, underOf } from './state.js';
-import { place, placeMulti } from './sim.js';
+import { place, placeMulti, placeCompact, nextResearch } from './sim.js';
+import { bpsToJSON, bpsFromJSON } from './blueprint.js';
 import { rekey, setFoot } from './multi.js';
 import { ENTITIES, TILE, RETIRED, ITEMS, BARREL_SIZE, OLD_BARREL_SIZE, RECIPES } from './data.js';
 import { segItems, setSegItems } from './belts.js';
@@ -21,9 +22,9 @@ const writeMeta = m => { try { localStorage.setItem(META, JSON.stringify(m)); } 
 const rawSlot = n => { try { return localStorage.getItem(slotKey(n)); } catch { return null; } };
 const FIELDS = ['recipe', 'filter', 'inp', 'out', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'bufN', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit',
   'fac', 'fa', 'fluid', 'mode', 'dname', 'prio', 'vlimit', 'rules', 'fuelFluid', 'sig', 'aug', 'pbar', 'sf', 'chL', 'chR', 'midOff',
-  'seed', 'seeds', 'grow', 'water', 'running', 'output', 'heat', 'broken', 'sort'];
+  'seed', 'seeds', 'grow', 'water', 'running', 'output', 'heat', 'broken', 'sort', 'compact', 'arm', 'bout'];
 // Belt settings that change how lines are put together: when a friend's copy changes, their lines get rebuilt.
-const BELT_SHAPE = ['aug', 'sf', 'chL', 'chR', 'midOff', 'sort'];
+const BELT_SHAPE = ['aug', 'sf', 'chL', 'chR', 'midOff', 'sort', 'bout'];
 const ORE_V = 2;   // ores as [key, type, amount, layer, base] (see newDeposit); older saves had [key, type, amount]
 // Objects and arrays in FIELDS are copied one level deep (rules are a list of small objects).
 const copy = v => Array.isArray(v) ? v.map(x => x && typeof x === 'object' ? { ...x } : x) : v && typeof v === 'object' ? { ...v } : v;
@@ -92,7 +93,9 @@ export function applyEntJSON(e, o, forceRemesh = false) {
 }
 export function entFromJSON(o) {
   if (o.t === 'frame') return place('frame', o.x, o.y, o.z, 0, 0, true);
-  const e = ENTITIES[o.t]?.multi && o.foot ? placeMulti(o.t, o.foot, o.y, o.d, true, o.fac) : place(o.t, o.x, o.y, o.z, o.d, o.dy, true);
+  // boilers and steam engines saved before they were big (no footprint) stay one tile: nothing overlaps or moves
+  const def = ENTITIES[o.t];
+  const e = def?.big && !o.foot ? placeCompact(o.t, o.x, o.y, o.z, o.d, o.fac) : def?.multi && o.foot ? placeMulti(o.t, o.foot, o.y, o.d, true, o.fac) : place(o.t, o.x, o.y, o.z, o.d, o.dy, true);
   if (typeof e !== 'object' || !e) return e;
   for (const f of FIELDS) if (o[f] !== undefined) e[f] = copy(o[f]);
   if (o.items && e.belt) e.buf = o.items.map(([type, p, lane]) => [type, p, lane ?? 1]);   // older saves had one lane: those items go on the right
@@ -135,7 +138,7 @@ export function serialize() {
     v: 3, T: S.T, sandbox: S.sandbox, player: { x: S.player.x, z: S.player.z, face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed, hp: Math.round(S.player.hp) }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam,
     seed: S.seed, med: medToJSON(), gen: world.gen, edits: gen ? editsToJSON() : undefined, barrel: BARREL_SIZE,
     tiles: gen ? undefined : packTiles(), waterGen: WATER_GEN, links: world.links, marks: world.marks,
-    research: { done: [...S.research.done], current: S.research.current, progress: S.research.progress, extra: [...(S.research.extra || [])] },
+    research: { done: [...S.research.done], current: S.research.current, queue: S.research.queue || [], progress: S.research.progress, extra: [...(S.research.extra || [])] }, bps: bpsToJSON(),
     signal: { stage: S.signal.stage, pulses: S.signal.pulses, taught: [...S.signal.taught], seen: [...S.signal.seen], log: S.signal.log },
     stats: S.stats, craft: S.player.craft, goalsDone: [...(S.goalsDone || [])], remoteInv: S.remoteInv || {},
     invSlots: inv.toList(), oreV: ORE_V, ores: gen ? [] : [...world.ores].map(([k, o]) => [k, o.type, Math.round(o.amount), o.layer, o.base]),
@@ -197,6 +200,9 @@ export function loadData(d, asGuest = false) {
     if (d.invSlots) inv.loadList(d.invSlots); else { inv.clear(); for (const [k, v] of d.inv || []) inv.add(k, v); }
   }
   S.research.done = new Set(d.research.done); S.research.current = d.research.current; S.research.progress = d.research.progress;
+  // saves from before the queue had one current tech: it becomes the queue
+  S.research.queue = Array.isArray(d.research.queue) ? d.research.queue : d.research.current ? [d.research.current] : [];
+  nextResearch();
   // Storage tanks and barreling moved from Fluid handling to Advanced fluids: worlds that had them keep them.
   S.research.extra = new Set(d.research.extra || (S.research.done.has('fluid_handling') ? ['storage_tank', 'barrel', 'barreler', ...RECIPES.filter(r => r.cat === 'barrel').map(r => r.id)] : []));
   Object.assign(S.signal, { stage: d.signal.stage, pulses: d.signal.pulses, taught: new Set(d.signal.taught), seen: new Set(d.signal.seen), log: d.signal.log });
@@ -249,6 +255,7 @@ export function loadData(d, asGuest = false) {
     if (o.pair) { e.pair = byPos.get(o.pair[0] + ',' + o.y + ',' + o.pair[1])?.[0] ?? null; e.pair && (e.pair.pair = e); }
     bus.emit('remesh', e);
   }
+  bpsFromJSON(d.bps);
   stockFish();
   if (d.fish) { fishFromList(d.fish); findBodies(); }
   poolsFromList(d.fishPools, true);

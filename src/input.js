@@ -15,9 +15,10 @@ export const ACTIONS = [
   ['board', 'Get in or out of a vehicle', ['KeyB']], ['logistics', 'Routes for trains, trucks and boats', ['KeyL']],
   ['factories', 'Factories', ['KeyK']], ['nextFactory', 'Next factory to build for', ['KeyJ']],
   ['copySettings', 'Copy settings', ['Shift+Mouse2']], ['pasteSettings', 'Paste settings', ['Shift+Mouse0']],
+  ['cameraMode', 'Camera: fixed or free turning', ['KeyC']], ['freeRotate', 'Turn and tilt the free camera (drag)', ['Mouse1']],
 ];
 // Actions that a mouse button (with modifiers) can do, so the key screen listens for clicks too.
-export const MOUSE_ACTIONS = new Set(['copySettings', 'pasteSettings']);
+export const MOUSE_ACTIONS = new Set(['copySettings', 'pasteSettings', 'freeRotate']);
 // A mouse button with the modifiers held, as written in bindings: 'Shift+Mouse0' is Shift + left-click.
 export const combo = e => (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + 'Mouse' + e.button;
 const DEFAULTS = Object.fromEntries(ACTIONS.map(([id, , keys]) => [id, keys]));

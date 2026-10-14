@@ -10,10 +10,16 @@ import { ENTITIES } from './data.js';
 import { world, key, DIRS, bus } from './state.js';
 
 // ---------------------------------------------------------------- footprints
-export const isMulti = e => !!e && !!ENTITIES[e.type]?.multi;
-// The tiles a building of `type` placed at (x, z) covers: its size, centred on the cursor tile.
-export function footprint(type, x, z) {
-  const [w, h] = ENTITIES[type]?.size || [1, 1], x0 = x - Math.floor((w - 1) / 2), z0 = z - Math.floor((h - 1) / 2), out = [];
+// Big buildings (boilers, steam engines) are fixed-size multi-tile objects with a direction: they never join others.
+// A big building from an old save that is still one tile (`compact`) has no footprint and is just a tile.
+export const isMulti = e => !!e && !!ENTITIES[e.type]?.multi && (!ENTITIES[e.type].big || !!e.foot);
+export const isBig = e => !!e && !!ENTITIES[e.type]?.big && !!e.foot;
+// The size of a building facing `dir`: [width along x, depth along z] (turned a quarter, they swap).
+export const sizeOf = (type, dir = 0) => { const [w, h] = ENTITIES[type]?.size || [1, 1]; return dir % 2 ? [h, w] : [w, h]; };
+// The tiles a building of `type` placed at (x, z) covers: its size, centred on the cursor tile (the cursor tile is the
+// north-west of the middle two on an even side).
+export function footprint(type, x, z, dir = 0) {
+  const [w, h] = sizeOf(type, ENTITIES[type]?.big ? dir : 0), x0 = x - Math.floor((w - 1) / 2), z0 = z - Math.floor((h - 1) / 2), out = [];
   for (let dz = 0; dz < h; dz++) for (let dx = 0; dx < w; dx++) out.push([x0 + dx, z0 + dz]);
   return out;
 }

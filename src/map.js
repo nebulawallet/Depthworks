@@ -1,11 +1,15 @@
-// The map. The surface is drawn one pixel per tile into cached 16x16-tile chunks, and only chunks whose tiles
-// changed get redrawn (a few per frame at most), so even a big world never hitches. The minimap shows the
-// area around you; the big map (M, or click the minimap) zooms and pans over everything, holds markers and
-// labelled areas, and switches views: terrain, resources, production and power.
+// The map. The surface is drawn one pixel per tile into a cached canvas per world chunk, and only chunks that changed
+// are redrawn, from a set of dirty chunks (never a sweep over the whole world), nearest the view first, within a time
+// budget each frame. Detail follows the zoom (lodAt, shared with alt mode): zoomed far out it draws whole regions of
+// 8×8 chunks at a quarter of the resolution, made from the chunk pictures; zoomed far in it shows a rendered close-up
+// of the real scene (where the world is loaded). Buildings are indexed by chunk, so a chunk's picture only looks at
+// its own buildings. The minimap shows the area around you (wheel zooms it); the big map (M, or click the minimap)
+// zooms and pans over everything, holds markers and labelled areas, and switches views: terrain, resources,
+// production, power and factories.
 import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, BIOMES } from './data.js';
-import { S, world, bus, key, GRID, LAYER_MAX, factoryOf, CHUNK, chunkKey, tileAt, tilesOf } from './state.js';
+import { S, world, bus, key, GRID, LAYER_MAX, factoryOf, CHUNK, chunkKey, tileAt, tilesOf, lodAt } from './state.js';
 import { nets, voltsOf } from './sim.js';
-import { powerProblem } from './scene.js';
+import { powerProblem, renderGlimpse, glimpseReady } from './scene.js';
 import { doAction } from './net.js';
 import { iconHTML, fmtN } from './icons.js';
 import { FEATURES } from './data.js';
@@ -16,7 +20,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const setHTML = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
 const MODES = [['terrain', 'Terrain'], ['resources', 'Resources'], ['production', 'Production'], ['power', 'Power'], ['factories', 'Factories']];
 const TOOLS = [['pan', 'Move'], ['marker', 'Marker'], ['area', 'Area'], ['assign', 'Assign']];
-const ZOOM = [.25, .5, 1, 2, 3, 4, 6, 8, 12, 16, 24];
+const ZOOM = [.25, .5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
 const COLORS = ['#ffd23f', '#7ef6ff', '#9be37a', '#ff8a3d', '#ff5a7a', '#b07ad8', '#e8ecf2'];
 const view = { cx: 48, cz: 48, ppt: 6 };
 let mode = 'terrain', tool = 'pan', selected = null;
@@ -29,11 +33,8 @@ const hashT = (x, z) => { let h = Math.imul(x, 374761393) + Math.imul(z, 6682652
 const LEGACY_GROUND = rgb(TILES[0].map), TREE = rgb(0x2f5a2a), ROCK = rgb(0x7a7066), FRAME = rgb(0x8f9aa6);
 const STATUS = { ok: rgb(0x6ac46a), idle: rgb(0xd8b84a), bad: rgb(0xe0503a), none: rgb(0x5c6470) };
 const PROBLEM = /no power|out of fuel|not connected|no water|no steam|missing|exhausted|blocked|full|nothing/;
-function topThing(x, z) {
-  for (let y = LAYER_MAX; y >= 0; y--) { const e = world.ents.get(key(x, y, z)); if (e) return e; }
-  for (let y = LAYER_MAX; y >= 0; y--) { const f = world.frames.get(key(x, y, z)); if (f) return f; }
-  return null;
-}
+// The building drawn for a tile: the highest one standing there (above ground), from the chunk's own index.
+function topThing(x, z, tops) { return tops?.get(x + ',' + z) || null; }
 function entColor(e) {
   if (e.kind === 'frame') return FRAME;
   const c = rgb(ENTITIES[e.type].color);
@@ -41,10 +42,10 @@ function entColor(e) {
 }
 const OIL = rgb(0x231c2a), RAIL = rgb(0x9a8a76);
 const hexRgb = h => rgb(parseInt((h || '#888888').slice(1), 16));
-function tileColor(x, z, ch) {
+function tileColor(x, z, ch, tops) {
   const i = (z - ch.z0) * CHUNK + (x - ch.x0), k = key(x, 0, z), t = TILES[ch.tiles[i]], v = .92 + hashT(x, z) * .14;
   const gc = world.gen && groundColors(ch), GROUND = gc ? [gc[i * 12 + 3], gc[i * 12 + 4], gc[i * 12 + 5]] : LEGACY_GROUND;   // blended like the ground
-  const ore = world.ores.get(k), feat = world.feats.get(k), e = topThing(x, z), road = world.roads.get(x + ',' + z), oil = world.oil.get(x + ',' + z);
+  const ore = world.ores.get(k), feat = world.feats.get(k), e = topThing(x, z, tops), road = world.roads.get(x + ',' + z), oil = world.oil.get(x + ',' + z);
   let c = t.liquid ? rgb(t.map) : shade(GROUND, v);
   if (road) c = shade(ROADS[road.s]?.paint ?? GROUND, ROADS[road.s]?.walk ? 1.05 : 1.15);
   if (mode === 'factories') {
@@ -88,55 +89,116 @@ function powerColor(e) {
 
 // ---------------------------------------------------------------- chunk cache
 // One small canvas per world chunk, made only for chunks that exist (where someone has been: the charted area).
-const CH = CHUNK, chunks = new Map();
+const CH = CHUNK, REG = 8, chunks = new Map(), dirty = new Set(), regions = new Map(), regDirty = new Set();
 function mapChunk(k) {
   let c = chunks.get(k);
-  if (!c) { const cv = document.createElement('canvas'); cv.width = cv.height = CH; c = { cv, ctx: cv.getContext('2d'), dirty: true, built: false }; chunks.set(k, c); }
+  if (!c) { const cv = document.createElement('canvas'); cv.width = cv.height = CH; c = { cv, ctx: cv.getContext('2d'), built: false }; chunks.set(k, c); }
   return c;
 }
-const dirtyAt = (x, z) => { const c = chunks.get(chunkKey(Math.floor(x / CH), Math.floor(z / CH))); if (c) c.dirty = true; };
-const dirtyAll = () => { for (const c of chunks.values()) c.dirty = true; };
+const markDirty = k => { if (world.chunks.has(k)) dirty.add(k); };
+const dirtyAt = (x, z) => markDirty(chunkKey(Math.floor(x / CH), Math.floor(z / CH)));
+const dirtyAll = () => { for (const k of world.chunks.keys()) dirty.add(k); };
+// buildings by chunk: chunkKey -> Set of buildings (and frames) with a tile in it
+const byChunk = new Map();
+const chunksOf = e => new Set(tilesOf(e).map(([x, z]) => chunkKey(Math.floor(x / CH), Math.floor(z / CH))));
+function indexEnt(e, on) {
+  for (const k of chunksOf(e)) { let set = byChunk.get(k); if (on) { if (!set) byChunk.set(k, set = new Set()); set.add(e); } else set?.delete(e); markDirty(k); }
+}
+let indexed = false;
+function reindex() { byChunk.clear(); for (const e of world.ents.values()) indexEnt(e, true); for (const f of world.frames.values()) indexEnt(f, true); indexed = true; }
+// newly made world chunks get drawn too: they are found when the world's chunk count changes, not by sweeping it
+let seenVersion = -1;
+function noticeNewChunks() {
+  if (seenVersion === world.chunkVersion) return;
+  seenVersion = world.chunkVersion;
+  for (const k of world.chunks.keys()) if (!chunks.get(k)?.built) dirty.add(k);
+}
 function buildChunk(k, c) {
   const wc = world.chunks.get(k); if (!wc) return;
+  const tops = new Map();   // the highest building on each tile of this chunk
+  for (const e of byChunk.get(k) || []) if (e.y >= 0) for (const [x, z] of tilesOf(e)) { const t = tops.get(x + ',' + z); if (!t || e.y > t.y || (e.y === t.y && t.kind === 'frame')) tops.set(x + ',' + z, e); }
   const img = c.ctx.createImageData(CH, CH), d = img.data;
   for (let dz = 0; dz < CH; dz++) for (let dx = 0; dx < CH; dx++) {
     const x = wc.x0 + dx, z = wc.z0 + dz; if (x >= GRID || z >= GRID) continue;
-    const col = tileColor(x, z, wc), j = (dz * CH + dx) * 4;
+    const col = tileColor(x, z, wc, tops), j = (dz * CH + dx) * 4;
     d[j] = col[0]; d[j + 1] = col[1]; d[j + 2] = col[2]; d[j + 3] = 255;
   }
-  c.ctx.putImageData(img, 0, 0); c.dirty = false; c.built = true;
+  c.ctx.putImageData(img, 0, 0); c.built = true;
+  regDirty.add(regionKey(k));
 }
-// Rebuild at most `budget` stale chunks per call, nearest the view first; never-built chunks always go first.
+// Regions: 8×8 chunks drawn a pixel per 4×4 tiles, for zoomed-out views.
+const regionKey = k => chunkKey(Math.floor((k % 4096) / REG), Math.floor(Math.floor(k / 4096) / REG));
+function buildRegion(rk) {
+  let r = regions.get(rk);
+  if (!r) { const cv = document.createElement('canvas'); cv.width = cv.height = REG * CH / 4; r = { cv, ctx: cv.getContext('2d') }; r.ctx.imageSmoothingEnabled = true; regions.set(rk, r); }
+  const rx = rk % 4096, rz = Math.floor(rk / 4096), s2 = CH / 4;
+  r.ctx.clearRect(0, 0, r.cv.width, r.cv.height);
+  for (let i = 0; i < REG; i++) for (let j = 0; j < REG; j++) { const c = chunks.get(chunkKey(rx * REG + i, rz * REG + j)); if (c?.built) r.ctx.drawImage(c.cv, i * s2, j * s2, s2, s2); }
+  r.built = true;
+}
+// Redraw stale chunks (and then regions) for at most `ms` milliseconds, nearest the view first.
 let wantView = null;
-function refreshChunks(budget) {
-  const list = [];
-  for (const k of world.chunks.keys()) { const c = mapChunk(k); if (c.dirty) list.push([k, c]); }
-  if (!list.length) return;
-  const v = wantView || { cx: S.player.x, cz: S.player.z }, d = k => Math.hypot((k % 4096) * CH + 16 - v.cx, Math.floor(k / 4096) * CH + 16 - v.cz);
-  list.sort((a, b) => (a[1].built - b[1].built) || d(a[0]) - d(b[0]));
-  for (let i = 0; i < Math.min(budget, list.length); i++) buildChunk(list[i][0], list[i][1]);
+function refreshChunks(ms) {
+  if (!indexed) reindex();
+  noticeNewChunks();
+  const t0 = performance.now(), v = wantView || { cx: S.player.x, cz: S.player.z };
+  const dist = k => Math.hypot((k % 4096) * CH + 16 - v.cx, Math.floor(k / 4096) * CH + 16 - v.cz);
+  while (dirty.size && performance.now() - t0 < ms) {
+    let best = null, bd = Infinity, n = 0;   // the nearest few, without sorting the whole set
+    for (const k of dirty) { const d = dist(k) - (chunks.get(k)?.built ? 0 : 1e6); if (d < bd) { bd = d; best = k; } if (++n > 400) break; }
+    dirty.delete(best); buildChunk(best, mapChunk(best));
+  }
+  for (const rk of regDirty) { if (performance.now() - t0 > ms * 1.5) break; regDirty.delete(rk); buildRegion(rk); }
 }
-for (const ev of ['placed', 'removed', 'remesh']) bus.on(ev, e => { for (const [x, z] of tilesOf(e)) dirtyAt(x, z); });
+for (const ev of ['placed', 'removed']) bus.on(ev, e => { if (indexed) indexEnt(e, ev === 'placed'); });
+bus.on('remesh', e => {
+  if (indexed && e.foot) { const now = chunksOf(e); for (const [k, set] of byChunk) if (set.has(e) && !now.has(k)) { set.delete(e); markDirty(k); } indexEnt(e, true); }   // a footprint can move or shrink
+  for (const [x, z] of tilesOf(e)) dirtyAt(x, z);
+});
 bus.on('ore', (x, y, z) => { if (y === 0) dirtyAt(x, z); });
 bus.on('feat', (x, z) => dirtyAt(x, z));
 bus.on('patch', (x, z) => dirtyAt(x, z));
 bus.on('marks', () => { if (S.modal === 'map') renderSide(true); });
 bus.on('roads', list => { for (const [x, z] of list || []) dirtyAt(x, z); });
 bus.on('factories', () => { if (mode === 'factories') dirtyAll(); });
-export function resetMap() { chunks.clear(); hist.length = 0; selected = null; }
+export function resetMap() { chunks.clear(); regions.clear(); dirty.clear(); regDirty.clear(); byChunk.clear(); indexed = false; seenVersion = -1; hist.length = 0; selected = null; }
+// Production and power colours change as machines work: only chunks with buildings in them are redrawn for that.
+const dirtyBuilt = () => { for (const [k, set] of byChunk) if (set.size) markDirty(k); };
 
 // ---------------------------------------------------------------- drawing
 // Also used by the logistics window, which draws its routes on top through `overlay(sx, sz)`.
-export function drawMapView(ctx, W, H, v, big, overlay) { wantView = v; refreshChunks(6); drawWorld(ctx, W, H, v, big, overlay); }
+export function drawMapView(ctx, W, H, v, big, overlay) { wantView = v; refreshChunks(4); drawWorld(ctx, W, H, v, big, overlay); }
+// The close-up: the rendered scene around the view's middle, two screen pixels to a rendered one (as the game draws).
+const glimpse = { yaw: 0, pitch: .82, t: -1, cv: null, key: '' };
+function drawGlimpse(ctx, W, H, v, big) {
+  const size = big ? Math.min(W, H) * .72 : Math.min(W, H), x0 = (W - size) / 2, y0 = (H - size) / 2;
+  if (!glimpseReady(v.cx, v.cz)) {
+    if (big) { ctx.fillStyle = 'rgba(11,13,18,.75)'; ctx.fillRect(x0, y0 + size / 2 - 14, size, 28); ctx.fillStyle = '#7d8796'; ctx.font = '18px VT323, monospace'; ctx.textAlign = 'center'; ctx.fillText('too far away to see up close', W / 2, y0 + size / 2 - 9); ctx.textAlign = 'left'; }
+    return;
+  }
+  const depth = S.mode === 'depth', yaw = depth ? glimpse.yaw : S.cam.yaw, pitch = depth ? glimpse.pitch : .82;
+  const key2 = [v.cx.toFixed(2), v.cz.toFixed(2), v.ppt, size, yaw.toFixed(3), pitch.toFixed(3), S.layer].join();
+  if (key2 !== glimpse.key || S.T - glimpse.t > .12) { glimpse.cv = renderGlimpse(v.cx, v.cz, size / 2, size / 2, v.ppt / 2, yaw, pitch); glimpse.t = S.T; glimpse.key = key2; }
+  ctx.imageSmoothingEnabled = false; ctx.drawImage(glimpse.cv, x0, y0, size, size);
+  if (big) { ctx.strokeStyle = '#7ef6ff'; ctx.lineWidth = 2; ctx.strokeRect(x0 + 1, y0 + 1, size - 2, size - 2); }
+}
 function drawWorld(ctx, W, H, v, big, overlay) {
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#0b0d12'; ctx.fillRect(0, 0, W, H);
-  const sx = x => (x - v.cx) * v.ppt + W / 2, sz = z => (z - v.cz) * v.ppt + H / 2;
+  const sx = x => (x - v.cx) * v.ppt + W / 2, sz = z => (z - v.cz) * v.ppt + H / 2, lod = lodAt(v.ppt);
   ctx.fillStyle = '#12151c'; ctx.fillRect(Math.floor(sx(0)), Math.floor(sz(0)), GRID * v.ppt, GRID * v.ppt);   // the uncharted world
-  const x0 = Math.max(0, Math.floor((v.cx - W / 2 / v.ppt) / CH)), x1 = Math.floor((v.cx + W / 2 / v.ppt) / CH), z0 = Math.max(0, Math.floor((v.cz - H / 2 / v.ppt) / CH)), z1 = Math.floor((v.cz + H / 2 / v.ppt) / CH);
-  for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
-    const c = chunks.get(chunkKey(cx, cz)); if (!c?.built) continue;
-    const size = CH * v.ppt; ctx.drawImage(c.cv, Math.floor(sx(cx * CH)), Math.floor(sz(cz * CH)), Math.ceil(size), Math.ceil(size));
+  if (lod === 'regions') {   // far out: whole regions, a quarter of the detail, far fewer pictures to draw
+    const R = REG * CH, x0 = Math.max(0, Math.floor((v.cx - W / 2 / v.ppt) / R)), x1 = Math.floor((v.cx + W / 2 / v.ppt) / R), z0 = Math.max(0, Math.floor((v.cz - H / 2 / v.ppt) / R)), z1 = Math.floor((v.cz + H / 2 / v.ppt) / R);
+    ctx.imageSmoothingEnabled = true;
+    for (let rx = x0; rx <= x1; rx++) for (let rz = z0; rz <= z1; rz++) { const r = regions.get(chunkKey(rx, rz)); if (r?.built) ctx.drawImage(r.cv, Math.floor(sx(rx * R)), Math.floor(sz(rz * R)), Math.ceil(R * v.ppt), Math.ceil(R * v.ppt)); }
+    ctx.imageSmoothingEnabled = false;
+  } else {
+    const x0 = Math.max(0, Math.floor((v.cx - W / 2 / v.ppt) / CH)), x1 = Math.floor((v.cx + W / 2 / v.ppt) / CH), z0 = Math.max(0, Math.floor((v.cz - H / 2 / v.ppt) / CH)), z1 = Math.floor((v.cz + H / 2 / v.ppt) / CH);
+    for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+      const c = chunks.get(chunkKey(cx, cz)); if (!c?.built) continue;
+      const size = CH * v.ppt; ctx.drawImage(c.cv, Math.floor(sx(cx * CH)), Math.floor(sz(cz * CH)), Math.ceil(size), Math.ceil(size));
+    }
+    if (lod === 'close' && mode === 'terrain' && !overlay) drawGlimpse(ctx, W, H, v, big);
   }
   ctx.strokeStyle = '#2a3140'; ctx.lineWidth = 1; ctx.strokeRect(Math.floor(sx(0)) + .5, Math.floor(sz(0)) + .5, GRID * v.ppt, GRID * v.ppt);
   if (mode === 'power') for (const n of nets) {   // supply areas, one colour per network
@@ -178,19 +240,21 @@ function drawWorld(ctx, W, H, v, big, overlay) {
 }
 
 // ---------------------------------------------------------------- minimap
-const mini = $('minimap'), mctx = mini.getContext('2d');
-let miniT = 0, liveT = 0;
+// Wheel zooms it; zoomed all the way in it shows the rendered close-up around you. A click opens the big map.
+const mini = $('minimap'), mctx = mini.getContext('2d'), MINI_ZOOM = [1, 2, 4, 8, 16, 24];
+let miniT = 0, liveT = 0, miniPpt = 4;
 mini.addEventListener('pointerdown', e => { e.preventDefault(); bus.emit('openmap'); });
+mini.addEventListener('wheel', e => { e.preventDefault(); const i = MINI_ZOOM.indexOf(miniPpt); miniPpt = MINI_ZOOM[Math.max(0, Math.min(MINI_ZOOM.length - 1, i + (e.deltaY < 0 ? 1 : -1)))]; miniT = 1; }, { passive: false });
 export function updateMap(dt) {
   if (!S.started) return;
-  if ((liveT += dt) > 1) { liveT = 0; if (mode === 'production' || mode === 'power') dirtyAll(); sampleStats(); }
+  if ((liveT += dt) > 1) { liveT = 0; if (mode === 'production' || mode === 'power') dirtyBuilt(); sampleStats(); }
   if (S.modal !== 'map') wantView = null;
   const open = S.modal === 'map';
-  refreshChunks(open ? 10 : 3);
+  refreshChunks(open ? 6 : 2);
   if (open) { drawBig(); return; }
-  if (S.hideUI || (miniT += dt) < .2) return;
+  if (S.hideUI || (miniT += dt) < (lodAt(miniPpt) === 'close' ? .1 : .2)) return;
   miniT = 0;
-  drawWorld(mctx, mini.width, mini.height, { cx: S.player.x, cz: S.player.z, ppt: 4 }, false);
+  drawWorld(mctx, mini.width, mini.height, { cx: S.player.x, cz: S.player.z, ppt: miniPpt }, false);
 }
 
 // ---------------------------------------------------------------- the big map
@@ -235,14 +299,17 @@ cv.addEventListener('pointerdown', e => {
   e.preventDefault(); cv.setPointerCapture(e.pointerId);
   const t = tileAtEvent(e);
   if (e.button === 0 && (tool === 'area' || tool === 'assign')) drag = { area: t, cur: t, assign: tool === 'assign' };
-  else drag = { x: e.clientX, y: e.clientY, cx: view.cx, cz: view.cz, moved: false, button: e.button };
+  else drag = { x: e.clientX, y: e.clientY, cx: view.cx, cz: view.cz, moved: false, button: e.button, yaw: glimpse.yaw, pitch: glimpse.pitch };
 });
 cv.addEventListener('pointermove', e => {
   if (!drag) return;
   if (drag.area) { drag.cur = tileAtEvent(e); return; }
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   if (Math.hypot(dx, dy) > 4) drag.moved = true;
-  if (drag.moved) { view.cx = drag.cx - dx / view.ppt; view.cz = drag.cz - dy / view.ppt; clampView(); }
+  if (!drag.moved) return;
+  // in depth mode, dragging with the right button turns the close-up all the way round and tilts it
+  if (drag.button === 2 && S.mode === 'depth' && lodAt(view.ppt) === 'close') { glimpse.yaw = drag.yaw - dx * .01; glimpse.pitch = Math.max(.3, Math.min(1.45, drag.pitch + dy * .006)); return; }
+  view.cx = drag.cx - dx / view.ppt; view.cz = drag.cz - dy / view.ppt; clampView();
 });
 cv.addEventListener('pointerup', e => {
   const d = drag; drag = null; if (!d) return;
@@ -319,7 +386,7 @@ export function renderSide(force) {
   }
   html += tool === 'marker' ? '<div class="hint">Click the map to drop a marker.</div>' : tool === 'area' ? '<div class="hint">Drag across the map to mark an area.</div>'
     : tool === 'assign' ? `<div class="hint">Drag across buildings to move them into ${esc(factoryOf(S.player.fac)?.name ?? '?')}.</div>`
-    : '<div class="dim">Drag to move, wheel to zoom, click a marker or area to edit it.</div>';
+    : `<div class="dim">Drag to move, wheel to zoom, click a marker or area to edit it.${lodAt(view.ppt) === 'close' ? ` Zoomed in this far, the middle shows the world as it looks${S.mode === 'depth' ? ': right-drag to turn and tilt it' : ''}.` : ' Zoom right in for a close-up.'}</div>`;
   html += modeHTML();
   const list = [...world.marks.markers, ...world.marks.areas];
   if (list.length) html += `<h4>Markers and areas</h4>` + list.map(m => `<div class="mrow${m.id === selected ? ' on' : ''}" data-map="goto:${m.id}"><i style="background:${m.color}"></i>${esc(m.name)}</div>`).join('');

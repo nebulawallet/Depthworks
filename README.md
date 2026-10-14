@@ -35,8 +35,10 @@ conversation with something that only understands machines.
 - **Day and night:** solar panels follow the sun; lamps, braziers and working machines light the dark.
 - **Health and stamina:** vehicles hurt, food heals, Shift sprints.
 - **Saves:** five slots, plus export to and load from files.
-- **Power:** steam engines, diesel generators and solar panels on separate pole networks, with
-  visible wires and supply areas, high voltage lines and transformers.
+- **Power:** steam (2-wide boilers, 2×2 steam engines), diesel generators and solar panels on separate pole networks,
+  with visible wires and supply areas. Three voltages: generators feed extra-low voltage, a step-up station lifts it to
+  the low voltage machines use, transformer stations lift that to high voltage lines. Powered roads carry it under
+  roads. Pole lines drag out spaced to their coverage.
 - **Oil and fluids:** pipes that branch wherever they meet, underground pipes, pumps, valves and storage tanks, with
   less flow down long lines. Pumpjacks on crude oil feed refineries and chemical plants that make heavy fuel oil,
   diesel, gasoline and jet fuel. Barrels carry fluids on belts and in vehicles.
@@ -49,7 +51,11 @@ conversation with something that only understands machines.
 - **Factories:** found several separate factories in one world; belts, pipes and power never cross between them,
   so goods move from one to another only by truck, train or ship.
 - **Fish:** catch fish by hand or with a net on a boat. Overfished water recovers slowly.
-- **Research:** 38 technologies across four science packs, plus "precision" tiers earned by keeping machinery busy.
+- **Research:** 48 technologies (plus tool upgrades) across four science packs, in a left-to-right tree with a
+  queue, plus "precision" tiers earned by keeping machinery busy.
+- **Blueprints and hands:** plan buildings as stippled blueprints (Shift + place) and build them later; Q copies what
+  is under the cursor (over ore: the best drill); Ctrl + click sends ingredients, fuel and augments where they belong,
+  and Shift + click picks a transfer mode for a building. Crafting stations fetch their own ingredients from chests.
 - **Depth:** seven buildable layers, from two rock layers below ground to frames stacked above it.
 - **The signal:** the endgame is a nine-step conversation answered by arranging working machines.
 - **Co-op:** free, peer to peer, with invite codes, nicknames and chat.
@@ -60,14 +66,17 @@ conversation with something that only understands machines.
 | Key | Action |
 |---|---|
 | WASD | Walk (hold Shift to sprint) |
-| Left click | Build (drag to lay belts) · open a machine |
+| Left click | Build (drag to lay belts or lines of poles) · open a machine · click an engineer for details |
 | Hold right click | Mine ore, trees, rocks and buildings |
 | E | Inventory and crafting (closes an open machine) |
 | T | Research |
 | 1–0 | Quickbar |
-| Q / R / Z / F | Copy hovered building · rotate · drop · hold to pick up |
-| Ctrl + click | Move items in or out of a machine |
-| Shift + right / left click | Copy settings / paste them |
+| Q / R / Z / F | Copy hovered building (over ore: the best drill) · rotate · drop · hold to pick up |
+| Ctrl + click | Move items in or out of a machine (ingredients to inputs, fuel to fuel) |
+| Shift + click (building in hand) | Plan it as a blueprint |
+| Shift + click (empty hand) | Select a building for a transfer mode (or paste copied settings) |
+| Shift + right click | Copy settings |
+| C · middle drag | Free camera on or off · turn and tilt it |
 | Ctrl + hold right click | Take one tile off a greenhouse or a path |
 | In inventories | Drag stacks · right-drag for half · Shift + click to send across |
 | Tab | Depth mode (PgUp/PgDn or Shift+wheel for layers, [ ] to orbit, V to set inserter pitch) |
@@ -122,17 +131,19 @@ There's no build step; every push to `main` updates the site.
 |---|---|
 | `src/data.js` | Items, machines, recipes, research tree, precision tiers, the alien script |
 | `src/state.js` | Shared state, players and inventories, world generation, layer rules |
-| `src/sim.js` | Inserters, machines and their augments, power, research, precision, crafting, the engineer, building, slots |
+| `src/sim.js` | Inserters, machines and their augments, crafting stations, power and voltages, research and its queue, precision, crafting, the engineer and collision, building, slots and transfer modes |
+| `src/blueprint.js` | Blueprints: planned buildings that never run until built |
+| `src/research.js` | The research window: the tech tree and the queue |
 | `src/belts.js` | Belts as lines of lanes, the nodes where lines end (splitters, bus channels), line settings and networks |
 | `src/fluids.js` | Pipe and fluid networks, pumps, valves, the steam chain, fluid ports on machines |
 | `src/transport.js` | Roads, rails and signals, vehicles and driving, path finding, depots, routes and schedules |
 | `src/fish.js` | Fish, water bodies and their populations, fishing nets |
 | `src/logistics.js` | The logistics window: one route editor for rail, road and sea, plus belt lines and their network diagram |
-| `src/map.js` | Minimap and big map with its views, markers and the factory assign tool |
+| `src/map.js` | Minimap and big map with its views, markers and the factory assign tool; detail by zoom and a rendered close-up |
 | `src/net.js` | Co-op: invite codes, host-authoritative sync, chat (PeerJS / WebRTC) |
 | `src/save.js` | Save / load, and the entity format shared with co-op sync |
-| `src/scene.js` | Pixel-snapped camera, outline post pass, terrain, ore piles and ground cover, particles, picking, arrows |
-| `src/models.js` | Toon-shaded procedural models with baked occlusion, the engineer, inserter IK |
+| `src/scene.js` | Pixel-snapped camera (fixed or free), outline post pass, night, terrain, ore piles and ground cover, particles, picking, arrows, alt mode |
+| `src/models.js` | Toon-shaded procedural models with baked occlusion, stippled see-through, the engineer, inserter IK |
 | `src/ui.js` | HUD, hotbar, inventories and drag and drop, crafting, research, machine windows, chat, goals |
 | `src/signal.js` | What the transmitter hears, the conversation, glyph animations |
 | `src/audio.js` | Synthesised sound effects and ambient machine loops (Web Audio, no sample files) |

@@ -2,12 +2,14 @@
 // sub-pixel offset is applied by sliding the canvas, so motion stays smooth without shimmering), then a
 // post pass draws pixel outlines from depth and normal edges and upscales with hard pixels.
 import * as THREE from 'three';
-import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE, DAY } from './data.js';
-import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, tilesOf } from './state.js';
-import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown } from './terrain.js';
-import { makeMesh, disposeMesh, setGhost, setPreview, poseInserter, itemGeo, itemMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo } from './models.js';
-import { canPlace, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles } from './sim.js';
-import { footprint } from './multi.js';
+import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE, DAY, DITHER, ROAD_POWER, recipeIcon } from './data.js';
+import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, nightDepth, lodAt, tilesOf } from './state.js';
+import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown, oreChanged } from './terrain.js';
+import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat } from './models.js';
+import { canPlace, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats } from './sim.js';
+import { portEdges } from './fluids.js';
+import { bpAt } from './blueprint.js';
+import { footprint, sizeOf } from './multi.js';
 import { playerMods } from './body.js';
 import { visibleOnBelt, laneOffset, lineWarn, lanesOf } from './belts.js';
 import { roadAt, roadCells, roadTiles, signalRed, vehicleById, onWay, dockTiles, vstats } from './transport.js';
@@ -63,8 +65,9 @@ const post = new THREE.ShaderMaterial({
       else if (nSum > 0.35) c = c * 1.35 + 0.012;
       c = (c - 0.5 * c * c) * 1.12;                          // gentle filmic shoulder
       gl_FragColor = vec4(toSRGB(c), 1.0);
+      gl_FragDepthEXT = texture2D(tDepth, vUv).r;             // the world's depth, for the interface drawn after this
     }`,
-  depthTest: false, depthWrite: false,
+  depthTest: true, depthWrite: true, depthFunc: THREE.AlwaysDepth,
 });
 const postScene = new THREE.Scene(), postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), post));
@@ -127,6 +130,7 @@ bus.on('ore', (x, y, z) => {
   const tiles = []; for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) tiles.push([x + dx, z + dz]);
   repaintTiles(tiles, y);
 });
+bus.on('orestage', (x, y, z) => oreChanged(x, y, z));   // a worked tile changes its look (ORE_STAGES)
 bus.on('feat', (x, z) => {
   burst(x + .5, .5, z + .5, 14, 0x6a8a4a, 2.2);
   dropClutter(key(x, 0, z));
@@ -200,6 +204,25 @@ export function remeshAll() {
 }
 bus.on('tier', remeshAll);
 
+// ---------------------------------------------------------------- blueprints
+// A planned building is drawn as the real model, stippled (setBlueprint), from a stand-in entity that never runs.
+const bpMeshes = new Map();
+export function bpStandIn(b) {
+  const def = ENTITIES[b.type];
+  return { type: def.as || b.type, kind: ENTITIES[def.as || b.type].kind, x: b.x, y: b.y, z: b.z, dir: b.dir, dy: b.dy || 0, foot: b.foot, footSet: b.foot && new Set(b.foot.map(t => t[0] + ',' + t[1])),
+    reach: def.reach, t: .5, held: null, curve: null, role: 'in', conn: 0, fac: b.fac, recipe: null, lastActive: -99, bp: true };
+}
+bus.on('bp', (b, on) => {
+  const m = bpMeshes.get(b);
+  if (m) { scene.remove(m); disposeMesh(m); bpMeshes.delete(b); }
+  if (!on) return;
+  const f = bpStandIn(b), mesh = makeMesh(f);
+  if (f.kind === 'inserter') poseInserter(f, true);
+  if (f.kind === 'assembler' && f.parts?.arm) poseStation(f, true);
+  setBlueprint(mesh); mesh.userData.bp = b; scene.add(mesh); bpMeshes.set(b, mesh);
+});
+export function clearBlueprintMeshes() { for (const m of bpMeshes.values()) { scene.remove(m); disposeMesh(m); } bpMeshes.clear(); }
+
 const isGhost = e => S.mode === 'depth' && e.y > S.layer;
 function applyGhost(e) { if (!e.mesh) return; const g = isGhost(e); if (g !== e.ghost) { e.ghost = g; setGhost(e.mesh, g); } }
 export function applyGhostAll() {
@@ -240,6 +263,28 @@ export function beltItemPos(b, p, out, o = 0) {
   return out;
 }
 const _p = new THREE.Vector3(), _q0 = new THREE.Quaternion(), _sc = new THREE.Vector3();
+// Depth mode, looking below an underground belt's layer: what travels through its tunnel shows, under the ground.
+const TUNNEL_Y = .42;
+const tunnelShown = b => b.kind === 'underground' && S.mode === 'depth' && S.layer < b.y;
+function tunnelPos(b, p, out, o) {
+  const [fx, fz] = DIRS[b.dir], along = b.role === 'in' ? p - .5 : p - (b.len - .5);   // from the tile's middle, forward
+  out.set(b.x + .5 + o * -fz + fx * along, b.y - TUNNEL_Y, b.z + .5 + o * fx + fz * along);
+  return out;
+}
+const tunnelMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(.78, .26, 1), ditherMat({ color: 0x6a7080 }, DITHER.tunnel), 512);
+tunnelMesh.layers.set(1); tunnelMesh.frustumCulled = false; tunnelMesh.count = 0; scene.add(tunnelMesh);
+function updateTunnels() {
+  let n = 0;
+  if (S.started && S.mode === 'depth') {
+    const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
+    for (const e of world.ents.values()) {
+      if (n >= 512 || e.kind !== 'underground' || e.role !== 'in' || !e.pair || !tunnelShown(e) || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R) continue;
+      const [fx, fz] = DIRS[e.dir];
+      for (let i = 0; i <= e.len && n < 512; i++) tunnelMesh.setMatrixAt(n++, _m.compose(V(e.x + .5 + fx * i, e.y - TUNNEL_Y - .05, e.z + .5 + fz * i), _q.setFromEuler(_e.set(0, -e.dir * Math.PI / 2, 0)), V(1, 1, 1)));
+    }
+  }
+  tunnelMesh.count = n; tunnelMesh.instanceMatrix.needsUpdate = true;
+}
 // Items sit on lines (belts.js): walk each lane front to back, keeping track of which tile we are on.
 function updateItems() {
   for (const r of Object.values(instItems)) r.count = 0;
@@ -253,9 +298,10 @@ function updateItems() {
       for (const it of L.items) {
         while (j > 0 && it.x < segs[j].off) j--;
         const b = segs[j], p = it.x - b.off;
-        if (isGhost(b) || !visibleOnBelt(b, p)) continue;
+        const hidden = !visibleOnBelt(b, p);
+        if (hidden ? !tunnelShown(b) : isGhost(b)) continue;   // in a tunnel seen from below: shown even though the belt is a ghost
         const r = instFor(it.type);
-        beltItemPos(b, p, _p, o);
+        if (hidden) tunnelPos(b, p, _p, o); else beltItemPos(b, p, _p, o);
         r.im.setMatrixAt(r.count++, _m4.compose(_p, _q0, _sc));
       }
     });
@@ -359,6 +405,7 @@ function animateOthers(dt) {
     if (p.local) continue;
     let m = others.get(p.id);
     if (!m || m.userData.color !== p.color) { if (m) scene.remove(m); m = makePlayer(p.color); scene.add(m); others.set(p.id, m); p.rx ??= p.x; p.rz ??= p.z; }
+    m.userData.player = p.id;
     // friends' positions arrive a few times a second: glide between them
     if (Math.hypot(p.x - p.rx, p.z - p.rz) > 4) { p.rx = p.x; p.rz = p.z; }
     p.rx += (p.x - p.rx) * k; p.rz += (p.z - p.rz) * k;
@@ -453,6 +500,7 @@ function animate(dt) {
     let smoking = false, dark = false;
     switch (e.kind) {
       case 'inserter': poseInserter(e, e.ghost); break;
+      case 'chest': if (P.lid) { const want = e.tapFed ? -1.95 : 0; P.lid.rotation.x += (want - P.lid.rotation.x) * Math.min(1, dt * 5); } break;
       case 'drill':
         if (e.status === 'mining') { P.head.rotation.y += dt * 8; smoking = !!P.smoke; dark = true; }
         if (P.glow) P.glow.emissiveIntensity = e.status === 'mining' ? 1.3 + .4 * Math.sin(S.T * 19) : .05;
@@ -474,6 +522,7 @@ function animate(dt) {
         if (P.crane) P.crane.position.z = on ? Math.sin(S.T * 1.2) * .3 : P.crane.position.z * .95;
         if (P.glow) { P.glow.emissiveIntensity = on ? 1.5 + .4 * Math.sin(S.T * 17 + e.x) : .08; smoking = on && !!P.smoke; dark = true; }
         if (P.sprite) P.sprite.visible = !!e.recipe && S.altMode && !e.ghost;
+        if (P.arm) poseStation(e, e.ghost);
         break;
       }
       case 'oilpump': e.ph = (e.ph || 0) + dt * 2.2 * (e.load || 0); P.beam.rotation.x = Math.sin(e.ph) * .26; P.rod.position.y = .4 + Math.sin(e.ph) * .1; break;
@@ -523,6 +572,7 @@ function animate(dt) {
     }
   } else chipT = .3;
   if (playerMesh.userData.color !== S.player.color) { scene.remove(playerMesh); playerMesh = makePlayer(S.player.color); scene.add(playerMesh); playerMesh.userData.ghost = undefined; }
+  playerMesh.userData.player = S.player.id;
   animatePlayer(playerMesh, S.player, S.T, dt);
   animateOthers(dt);
   const pg = S.mode === 'depth' && S.layer < 0;
@@ -535,6 +585,7 @@ function animate(dt) {
   }
   animateVehicles(dt);
   animateFish();
+  updateGoods(dt);
   updateParticles(dt);
 }
 
@@ -573,6 +624,7 @@ export function updateCamera(dt) {
   const sr = Math.round(tr * ppu) / ppu, su = Math.round(tu * ppu) / ppu;
   camera.position.addScaledVector(_r, sr - tr).addScaledVector(_u, su - tu);
   frac = [(tr - sr) * ppu, (tu - su) * ppu];
+  DITHER_OFF.value.set(((Math.round(sr * ppu) % 4) + 4) % 4, ((Math.round(su * ppu) % 4) + 4) % 4);
   canvas.style.transform = `translate(${-frac[0] * S.pix}px, ${frac[1] * S.pix}px)`;
   camera.left = -lowW / ppu / 2; camera.right = lowW / ppu / 2; camera.top = lowH / ppu / 2; camera.bottom = -lowH / ppu / 2;
   camera.updateProjectionMatrix();
@@ -605,10 +657,12 @@ export function pickTarget() {
   const y = S.mode === 'depth' ? S.layer : 0, list = [];
   for (const e of world.ents.values()) if (e.mesh && e.y === y) list.push(e.mesh);
   if (y === 0) list.push(...featPickList(), ...vehMeshes.values());
+  if (S.mode !== 'depth' || S.layer === 0) { list.push(playerMesh); for (const m of others.values()) list.push(m); }
   const hits = ray.intersectObjects(list, true);
   for (const h of hits) {
     if (h.instanceId !== undefined) { const k = featKeyAt(h.object.uuid, h.instanceId); if (k && world.feats.has(k)) { const [x, , z] = k.split(',').map(Number); return { x, y: 0, z }; } continue; }
-    let o = h.object; while (o && !o.userData.ent && !o.userData.veh) o = o.parent;
+    let o = h.object; while (o && !o.userData.ent && !o.userData.veh && !o.userData.player) o = o.parent;
+    if (o?.userData.player) { const p = S.players.get(o.userData.player); if (p) return { x: Math.floor(p.local ? p.x : p.rx ?? p.x), y: 0, z: Math.floor(p.local ? p.z : p.rz ?? p.z), player: p.id }; continue; }
     if (o?.userData.veh) { const v = vehicleById(o.userData.veh); if (v) return { x: Math.floor(v.x), y: 0, z: Math.floor(v.z), veh: v.id }; continue; }
     if (o) { const e = o.userData.ent; return { x: e.x, y: e.y, z: e.z }; }
   }
@@ -665,6 +719,23 @@ function arrow(tx, y, tz, d, color, s = 1) {
   _m.compose(V(tx + .5, y + .05 + lift, tz + .5), _q.setFromEuler(_e.set(0, -d * Math.PI / 2, 0)), V(s * pulse, 1, s * pulse));
   hintArrows.setMatrixAt(nH, _m); _c.setHex(color); hintArrows.setColorAt(nH++, _c);
 }
+// An arrow at any point (px, pz world), pointing d.
+function arrowAt(px, py, pz, d, color, s = 1) {
+  if (nH >= 64) return;
+  const pulse = 1 + Math.sin(S.T * 7) * .06;
+  _m.compose(V(px, py, pz), _q.setFromEuler(_e.set(0, -d * Math.PI / 2, 0)), V(s * pulse, 1, s * pulse));
+  hintArrows.setMatrixAt(nH, _m); _c.setHex(color); hintArrows.setColorAt(nH++, _c);
+}
+// Where a fluid building connects: just outside each port edge, a pair of arrows (one in, one out) where the fluid
+// passes straight through, and one arrow where it only goes one way. Shared by hover hints and alt mode.
+function portArrows(e, put) {
+  for (const [x, z, d, f, thru] of portEdges(e)) {
+    const [dx, dz] = DIRS[d], [rx, rz] = DIRS[(d + 1) % 4], cx = x + .5 + dx * .78, cz = z + .5 + dz * .78, io = ENTITIES[e.type].fluids[f];
+    if (thru) { put(cx + rx * .17, cz + rz * .17, (d + 2) % 4, COL.IN); put(cx - rx * .17, cz - rz * .17, d, COL.OUT); }
+    else put(cx, cz, io === 'in' ? (d + 2) % 4 : d, io === 'in' ? COL.IN : COL.OUT);
+  }
+}
+const fakeAt = (type, x, y, z, dir) => { const foot = ENTITIES[type].multi ? footprint(type, x, z, dir) : null; return { type, kind: ENTITIES[type].kind, x: foot ? foot[0][0] : x, y, z: foot ? foot[0][1] : z, dir, foot, footSet: foot && new Set(foot.map(t => t[0] + ',' + t[1])) }; };
 function cross(tx, y, tz) {
   if (nX >= 8) return;
   _m.compose(V(tx + .5, y + .06, tz + .5), _q.identity(), V(1, 1, 1));
@@ -715,6 +786,11 @@ function ioHints(type, x, y, z, dir, dy) {
     const b = (dir + 2) % 4; arrow(x + DIRS[b][0], y, z + DIRS[b][1], dir, COL.IN, .8); arrow(x + dx, y, z + dz, dir, COL.OUT, .8);
     return kind === 'fpump' ? 'Pump: takes fluid from the blue arrow and pushes it out at the orange one. Needs power' : 'Valve: fluid passes from the blue arrow to the orange one, never back';
   }
+  if (def.big && (kind === 'boiler' || kind === 'engine')) {
+    portArrows(fakeAt(type, x, y, z, dir), (px, pz, d, c) => arrowAt(px, y + .06, pz, d, c, .55));
+    return kind === 'boiler' ? `Boiler: water goes in and on through either end (blue in, orange out), steam comes out of the back. Fuel it by hand or inserter`
+      : 'Steam engine: steam goes in and on through the front and back, so engines chain end to end. Put a generator pole beside it, and a step-up station to reach your machines';
+  }
   if (def.ports) {
     for (const p of def.ports) { const d = (p.side + dir) % 4; arrow(x + DIRS[d][0], y, z + DIRS[d][1], p.io === 'in' ? (d + 2) % 4 : d, p.io === 'in' ? COL.IN : COL.OUT, .8); }
     if (kind === 'oilpump') return y === 0 && !world.oil.has(x + ',' + z) ? 'Pumpjacks go on crude oil (dark patches on the ground)' : 'Pumpjack: crude oil comes out at the orange arrow: lead a pipe or a tank from there';
@@ -742,8 +818,10 @@ function ioHints(type, x, y, z, dir, dy) {
     fluidHint();
     return y === 0 && !isWater(x, z) ? 'Water pumps go on water, next to the shore' : 'Water pump: boilers touching it get water (one pump is enough for 20)';
   }
-  if (kind === 'engine') { fluidHint(); return 'Steam engine: put it against a boiler or another engine (or pipe steam to it), inside a pole\'s supply area'; }
+  if (kind === 'engine') { fluidHint(); return 'Steam engine (old, one tile): put it against a boiler or another engine (or pipe steam to it), inside a pole\'s supply area'; }
   if (kind === 'fgen') { fluidHint(); return 'Diesel generator: pipe diesel to any side, and put it in a pole\'s supply area'; }
+  if (kind === 'pole' && def.volts?.[0] === 2) return 'Step-up station: wires itself to generator poles. Hold a step-up cable and click it, then a low voltage pole: that is how generator power reaches machines';
+  if (kind === 'pole' && voltsOf(def)[0] === 2) return 'Generator pole: steam engines and diesel generators in its area feed it. Machines can\'t draw from it: wire it to a step-up station';
   if (kind === 'pole' && def.volts) return 'Transformer: wires itself to low voltage poles. Hold a transformer cable and click it, then a power line';
   if (kind === 'pole' && voltsOf(def)[0] > 0) return 'Power line: high voltage, wires to other lines. Step it down with a transformer station';
   if (SINKS.has(kind)) {
@@ -760,7 +838,7 @@ function ioHints(type, x, y, z, dir, dy) {
       else if (!n && !(y === 0 && world.feats.has(key(tx, 0, tz)))) { arrow(tx, y, tz, inward, COL.CAN, .75); free++; }
     }
     if (beltInto) return `Belts can't load machines directly: put an inserter between the belt and the ${def.name.toLowerCase()}`;
-    if (kind === 'boiler') return 'Boiler: fuel it (inserter or by hand), give it a water pump on one side and steam engines on another';
+    if (kind === 'boiler') return 'Boiler (old, one tile): fuel it (inserter or by hand), give it a water pump on one side and steam engines on another';
     if (kind === 'chest') return 'Chest: inserters can load or unload it from any side';
     return feeding ? `${feeding} input${feeding > 1 ? 's' : ''} feeding it (green). Inserters taking out show orange` : `Feed it with an inserter on one of the blue arrows, pointing in`;
   }
@@ -771,8 +849,10 @@ function updateAltArrows() {
   let n = 0;
   if (S.altMode && S.started) {
     const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
+    const ins = S.settings?.altInserters !== false, put = y => (px, pz, d, c) => { if (n >= 2048) return; altArrows.setMatrixAt(n, _m.compose(V(px, y + .05, pz), _q.setFromEuler(_e.set(0, -d * Math.PI / 2, 0)), V(.38, 1, .38))); _c.setHex(c); altArrows.setColorAt(n++, _c); };
     for (const e of world.ents.values()) {
-      if ((e.kind !== 'inserter' && e.kind !== 'drill') || e.ghost || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R || n >= 2048) continue;
+      if (e.foot && ENTITIES[e.type].big && !e.ghost && Math.abs(e.x - cx) <= R && Math.abs(e.z - cz) <= R) { portArrows(e, put(e.y)); continue; }
+      if ((e.kind !== 'inserter' && e.kind !== 'drill') || (e.kind === 'inserter' && !ins) || e.ghost || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R || n >= 2048) continue;
       const [dx, dz] = DIRS[e.dir], off = e.kind === 'drill' ? .62 : .36;
       _m.compose(V(e.x + .5 + dx * off, e.y + (e.kind === 'drill' ? .03 : .13), e.z + .5 + dz * off), _q.setFromEuler(_e.set(0, -e.dir * Math.PI / 2, 0)), V(.42, 1, .42));
       altArrows.setMatrixAt(n, _m); _c.setHex(e.kind === 'drill' ? COL.OUT : 0xffffff); altArrows.setColorAt(n++, _c);
@@ -802,6 +882,112 @@ function updatePreview(hover) {
   updateAltArrows();
   updateBolts();
   updateTags();
+  updateAltInfo();
+  updateConduits(hover);
+  updateTunnels();
+}
+
+// ---------------------------------------------------------------- alt mode: what is inside, and how far along
+// Small bars over buildings: how full a chest is, how far a machine is through its craft, how much fuel a burner has.
+// Icons ride on the models (sprites): a furnace's product, a chest's commonest item. Detail follows the zoom (lodAt,
+// shared with the map): bars only from 'near' in, icons until 'regions'. Only what is on screen is looked at.
+const barBg = overlayInst(new THREE.PlaneGeometry(1, 1), 1536, false, .82), barFg = overlayInst(new THREE.PlaneGeometry(1, 1), 1536, false, 1);
+const _right = new THREE.Vector3(), _bp = new THREE.Vector3(), _bs = new THREE.Vector3();   // reused every frame: nothing allocated per building
+const FILL = [0x7be37a, 0xffd23f, 0xff8a3d];
+function altBars(e) {
+  const out = [];
+  if (e.store && e.kind !== 'depot') { const f = e.store.used() / e.store.slots.length; out.push([f, FILL[f > .9 ? 2 : f > .6 ? 1 : 0]]); }
+  else if (e.kind === 'furnace' || e.kind === 'assembler' || e.kind === 'lab' || e.kind === 'medlab') { if (e.crafting || e.prog > 0 || e.unit) out.push([Math.min(1, e.prog || 0), 0x4aa3ff]); }
+  else if (e.kind === 'drill' && e.status === 'mining') out.push([Math.min(1, e.timer || 0), 0x4aa3ff]);
+  else if (e.kind === 'greenhouse' && e.seeds) out.push([e.grow || 0, 0x7be37a]);
+  if (e.fuel !== undefined && e.kind !== 'inserter' && e.kind !== 'reactor') out.push([Math.min(1, (e.fuel + (e.burn > 0 ? .5 : 0)) / Math.max(1, (ITEMS[e.fuelType || 'coal']?.stack ?? 50) * .5)), e.fuel || e.burn > 0 ? 0xff9a3a : 0xff4a3a]);
+  return out;
+}
+function updateAltInfo() {
+  let n = 0;
+  const lod = lodAt(S.cam.ppu), show = S.altMode && S.started && lod !== 'regions', bars = show && (lod === 'close' || lod === 'near');
+  if (show) {
+    const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .7;
+    _right.set(1, 0, 0).applyQuaternion(camera.quaternion);
+    for (const e of world.ents.values()) {
+      if (e.ghost || !e.parts || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R) continue;
+      altIcon(e);
+      if (!bars) continue;
+      const list = altBars(e); if (!list.length) continue;
+      const big = e.foot && ENTITIES[e.type].big, h = Math.min(1.1, heightOf(e)) + (e.parts.sprite?.visible ? .82 : .2);
+      list.forEach(([f, col], i) => {
+        if (n >= 1536) return;
+        const w = big ? .9 : .62, y = e.y + h - i * .1, at = e.mesh.position;
+        _bp.set(big ? at.x : e.x + .5, y, big ? at.z : e.z + .5);
+        barBg.setMatrixAt(n, _m.compose(_bp, camera.quaternion, _bs.set(w + .06, .1, 1))); barBg.setColorAt(n, _c.setHex(0x101318));
+        _bp.addScaledVector(_right, -w / 2 + w * f / 2);
+        barFg.setMatrixAt(n, _m.compose(_bp, camera.quaternion, _bs.set(Math.max(.001, w * f), .06, 1))); barFg.setColorAt(n, _c.setHex(col));
+        n++;
+      });
+    }
+  }
+  for (const im of [barBg, barFg]) { im.count = n; im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }
+}
+// The icon a building shows in alt mode, updated only when what it shows changes.
+function altIcon(e) {
+  const P = e.parts, sp = P.sprite; if (!sp) return;
+  let id = null;
+  if (e.kind === 'furnace') id = RECIPE[e.recipe] ? Object.keys(RECIPE[e.recipe].out)[0] : null;
+  else if (e.kind === 'chest') { if ((P.iconT = (P.iconT || 0) + 1) % 20 === 1) { let best = 0; for (const [it, c] of e.store.counts()) if (c > best) { best = c; id = it; } P.iconId = id; } else id = P.iconId; }
+  else return;
+  if (id !== P.shown) { P.shown = id; if (id) sp.material = iconSpriteMat(id); }
+  sp.visible = !!id && S.altMode;
+}
+
+// ---------------------------------------------------------------- chests fed by belt outputs
+// Their lids stand open and the goods inside churn: one shared texture, scrolled, tinted per chest by what came in
+// (e.tint, blended as items arrive, see belts.js). Only chests on screen are drawn, with no allocation per frame.
+const goodsTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 16; const g = c.getContext('2d'), R = rng(77);
+  g.fillStyle = '#6a6a6a'; g.fillRect(0, 0, 16, 16);
+  for (let i = 0; i < 26; i++) { const v = 120 + Math.floor(R() * 135); g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(Math.floor(R() * 16), Math.floor(R() * 16), 2 + Math.floor(R() * 2), 2); }
+  for (let i = 0; i < 10; i++) { g.fillStyle = '#2a2a2a'; g.fillRect(Math.floor(R() * 16), Math.floor(R() * 16), 1, 1); }
+  const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const goodsMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshToonMaterial({ map: goodsTex, gradientMap: toonRamp }), 256);
+goodsMesh.layers.set(1); goodsMesh.frustumCulled = false; goodsMesh.count = 0; goodsMesh.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(goodsMesh);
+function updateGoods(dt) {
+  goodsTex.offset.y -= dt * .9; goodsTex.offset.x = Math.sin(S.T * 1.3) * .08;
+  let n = 0;
+  const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
+  for (const e of world.tapChests || []) {
+    const P = e.parts;
+    if (n >= 256 || !P?.inside || e.ghost || !e.mesh || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R || e.store.isEmpty() || P.lid.rotation.x > -1) continue;
+    const [lx, ly, lz, w, d] = P.inside, fill = e.store.used() / e.store.slots.length;
+    _bp.set(lx, ly, lz).applyMatrix4(e.mesh.matrixWorld);
+    const k = .55 + .45 * Math.min(1, fill * 3);   // a little heap that spreads as it fills
+    goodsMesh.setMatrixAt(n, _m.compose(_bp, e.mesh.quaternion, _bs.set(w * k, 1, d * k)));
+    const t = e.tint || [.6, .6, .6]; goodsMesh.setColorAt(n++, _c.setRGB(t[0], t[1], t[2], THREE.SRGBColorSpace));
+  }
+  goodsMesh.count = n; goodsMesh.instanceMatrix.needsUpdate = true; if (goodsMesh.instanceColor) goodsMesh.instanceColor.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------- power in roads
+// Conduit tiles show in alt mode (and while holding a conduit or a road): a dot a tile and a bar to each conduit
+// beside it, yellow where the grid has a pole to feed it, grey where it has none.
+const condMesh = overlayInst(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), 4096, true, .9);
+function updateConduits() {
+  let n = 0;
+  const hold = ITEMS[S.sel]?.tool === 'conduit' || ROADS[S.sel];
+  if (S.started && (S.altMode || hold) && world.roadGrids?.length && !(S.mode === 'depth' && S.layer < 0)) {
+    const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
+    for (const g of world.roadGrids) {
+      const col = g.net ? ROAD_POWER.color : 0x8a8a8a;
+      for (const [x, z] of g.tiles) {
+        if (n >= 4090 || Math.abs(x - cx) > R || Math.abs(z - cz) > R) continue;
+        condMesh.setMatrixAt(n, _m.compose(V(x + .5, .035, z + .5), _q.identity(), V(.22, 1, .22))); condMesh.setColorAt(n++, _c.setHex(col));
+        for (const [dx, dz] of [[1, 0], [0, 1]]) if (world.roads.get((x + dx) + ',' + (z + dz))?.p) {
+          condMesh.setMatrixAt(n, _m.compose(V(x + .5 + dx * .5, .035, z + .5 + dz * .5), _q.identity(), V(dx ? 1 : .08, 1, dz ? 1 : .08))); condMesh.setColorAt(n++, _c.setHex(col));
+        }
+      }
+    }
+  }
+  condMesh.count = n; condMesh.instanceMatrix.needsUpdate = true; if (condMesh.instanceColor) condMesh.instanceColor.needsUpdate = true;
 }
 // What you'd lay with a road in hand: one quad per tile of the strip, green where it fits, red where it doesn't.
 const roadPrev = new THREE.InstancedMesh(new THREE.PlaneGeometry(.96, .96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: .4, depthWrite: false }), 12);
@@ -820,7 +1006,7 @@ function updatePending() {
 }
 // Tiles lit up under the cursor: the whole of a building or road that covers several tiles, the tiles a dam drag will
 // cover, the weedy patches a shovel stroke reaches. Filled in by updateHover, drawn once a frame.
-const tileMarks = new THREE.InstancedMesh(new THREE.PlaneGeometry(.94, .94).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: .32, depthWrite: false, depthTest: false }), 4096);
+const tileMarks = new THREE.InstancedMesh(new THREE.PlaneGeometry(.94, .94).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: .24, depthWrite: false, depthTest: false }), 4096);
 tileMarks.layers.set(UI_LAYER); tileMarks.renderOrder = 7; tileMarks.frustumCulled = false; tileMarks.count = 0; tileMarks.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(tileMarks);
 let nMarks = 0;
 export function markTiles(list, color, y = 0) {
@@ -847,6 +1033,8 @@ function updateHover(hover) {
   updateRoadPreview(hover);
   updatePending();
   hoverMarks(hover);
+  const picked = S.pick && !S.pick.veh && world.ents.get(key(S.pick.x, S.pick.y, S.pick.z));   // Shift + click selection
+  if (picked) markTiles(tilesOf(picked), 0x7ef6ff, picked.y);
   tileMarks.count = nMarks; tileMarks.instanceMatrix.needsUpdate = true; if (tileMarks.instanceColor) tileMarks.instanceColor.needsUpdate = true;
   if (VEHICLES[S.sel] || ROADS[S.sel] || ITEMS[S.sel]?.tool === 'signal' || ENTITIES[S.sel]?.drag) { updateToolHover(hover); return; }
   const sel = S.sel && ENTITIES[S.sel] ? S.sel : null;
@@ -858,9 +1046,10 @@ function updateHover(hover) {
     if (sel) {
       const def = ENTITIES[sel];
       const fake = { type: sel, kind: def.kind, x: 0, y: 0, z: 0, dir: S.dir, dy, reach: def.reach, t: .5, held: null, curve: null, role: 'in' };
-      if (def.multi) { fake.type = def.as || sel; fake.foot = footprint(sel, 0, 0); fake.x = fake.foot[0][0]; fake.z = fake.foot[0][1]; }
+      if (def.multi) { fake.type = def.as || sel; fake.foot = footprint(sel, 0, 0, S.dir); fake.x = fake.foot[0][0]; fake.z = fake.foot[0][1]; }
       preview = makeMesh(fake);
-      preview.userData.off = [fake.x, fake.z];
+      // the preview is moved by its anchor tile; a big building's model sits at the middle of its footprint
+      preview.userData.off = def.big ? [preview.position.x - .5, preview.position.z - .5] : [fake.x, fake.z];
       if (def.kind === 'inserter') poseInserter(fake);
       setPreview(preview); scene.add(preview);
     }
@@ -878,7 +1067,7 @@ function updateHover(hover) {
   marker.position.set(x + .5, y, z + .5);
   marker.scale.set(1.08 * pulse, sel ? .5 : heightOf(ent?.kind === 'feat' ? { kind: 'pole' } : ent) * .95 + .05, 1.08 * pulse);
   // a building over several tiles: the brackets go round all of it
-  const size = sel ? ENTITIES[sel].multi && ENTITIES[sel].size : null, box = size ? footprint(sel, x, z) : real?.foot && !(hover.ctrl && ENTITIES[real.type].tileMine) ? real.foot : null;
+  const size = sel ? ENTITIES[sel].multi && ENTITIES[sel].size : null, box = size ? footprint(sel, x, z, S.dir) : real?.foot && !(hover.ctrl && ENTITIES[real.type].tileMine) ? real.foot : null;
   if (box) {
     const xs = box.map(t => t[0]), zs = box.map(t => t[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
     marker.position.set((x0 + x1 + 1) / 2, y, (z0 + z1 + 1) / 2); marker.scale.x = (x1 - x0 + 1.08) * pulse; marker.scale.z = (z1 - z0 + 1.08) * pulse;
@@ -903,6 +1092,25 @@ function updateHover(hover) {
 // and with an empty hand over weedy ground, the patches a shovel stroke reaches.
 function hoverMarks(h) {
   if (S.dragTiles?.length) { markTiles(S.dragTiles, S.dragOk ? 0x9be37a : 0xff5a4a); return; }
+  if (S.poleDrag?.list.length) {   // power poles being dragged: where each goes, and what it would cover
+    const def = ENTITIES[S.poleDrag.type];
+    for (const p of S.poleDrag.list) {
+      const r = def.supply, area = [];
+      for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) if (dx || dz) area.push([p.x + dx, p.z + dz]);
+      markTiles(area, 0x4aa3ff, S.poleDrag.y);
+    }
+    markTiles(S.poleDrag.list.map(p => [p.x, p.z]), 0x9be37a, S.poleDrag.y);
+    markTiles(S.poleDrag.list.filter(p => p.bad).map(p => [p.x, p.z]), 0xff5a4a, S.poleDrag.y);
+    return;
+  }
+  const station = S.sel === 'crafting_station' && h ? { x: h.x, y: h.y, z: h.z, type: 'crafting_station', fac: S.player.fac }
+    : S.openEnt?.type === 'crafting_station' ? S.openEnt : h && world.ents.get(key(h.x, h.y, h.z))?.type === 'crafting_station' ? world.ents.get(key(h.x, h.y, h.z)) : null;
+  if (station) {   // its reach, and the chests in it
+    const R = ENTITIES.crafting_station.pull.radius, area = [];
+    for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) if (dx || dz) area.push([station.x + dx, station.z + dz]);
+    markTiles(area, 0x7ef6ff, station.y);
+    markTiles(stationChests(station).map(c => [c.x, c.z]), 0xffd23f, station.y);
+  }
   if (!h || S.sel) return;
   const e = world.ents.get(key(h.x, h.y, h.z));
   if (e?.foot) { if (h.ctrl && ENTITIES[e.type].tileMine) markTiles([[h.x, h.z]], 0xffa53d, h.y); else markTiles(e.foot, 0xffe9a0, h.y); return; }
@@ -965,7 +1173,8 @@ const _amb = new THREE.Vector3(), lerp3 = (a, b, k) => _amb.set(a[0] + (b[0] - a
 const glowing = e => e.kind === 'lamp' ? e.lit : e.kind === 'depot' ? true : S.T - e.lastActive < 1.5 || (e.load || 0) > .02;
 function updateLights() {
   const dl = daylight(), night = Math.max(0, 1 - dl * 2.5);   // pools of light show from late evening, not in the afternoon
-  post.uniforms.amb.value.copy(dl > .5 ? lerp3(DAY.duskLight, [1, 1, 1], (dl - .5) * 2) : lerp3(DAY.nightLight, DAY.duskLight, dl * 2));
+  const deep = Math.pow(nightDepth(), DAY.nightCurve), nl = lerp3(DAY.nightLight, DAY.midnightLight, deep).toArray();
+  post.uniforms.amb.value.copy(dl > .5 ? lerp3(DAY.duskLight, [1, 1, 1], (dl - .5) * 2) : lerp3(nl, DAY.duskLight, dl * 2));
   post.uniforms.nightK.value = night;
   if (night < .01) return false;
   let n = 0;
@@ -987,6 +1196,33 @@ function updateLights() {
   lightMesh.count = n; lightMesh.instanceMatrix.needsUpdate = true; if (lightMesh.instanceColor) lightMesh.instanceColor.needsUpdate = true;
   return true;
 }
+// ---------------------------------------------------------------- the map's close-up
+// Zoomed far into the map, it shows the real scene: rendered from above (or at any angle the map turns it to, in depth
+// mode) into a small target, read back, and handed to the map as a canvas. Only where the world is loaded around you.
+const glimpseCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 300);
+let glimpseRT = null, glimpseBuf = null, glimpseImg = null;
+const glimpseCanvas = document.createElement('canvas'), glimpseCtx = glimpseCanvas.getContext('2d');
+export const glimpseReady = (x, z) => chunkShown(x, z);
+export function renderGlimpse(cx, cz, w, h, ppt, yaw, pitch) {
+  w = Math.max(16, Math.min(512, Math.round(w))); h = Math.max(16, Math.min(512, Math.round(h)));
+  if (!glimpseRT || glimpseRT.width !== w || glimpseRT.height !== h) {
+    glimpseRT?.dispose(); glimpseRT = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    glimpseRT.texture.colorSpace = THREE.SRGBColorSpace; glimpseBuf = new Uint8Array(w * h * 4);
+    glimpseCanvas.width = w; glimpseCanvas.height = h; glimpseImg = glimpseCtx.createImageData(w, h);
+  }
+  const y = S.mode === 'depth' ? S.layer : 0, cp = Math.cos(pitch), d = 120;
+  glimpseCam.position.set(cx + Math.sin(yaw) * cp * d, y + Math.sin(pitch) * d, cz + Math.cos(yaw) * cp * d); glimpseCam.lookAt(cx, y, cz);
+  glimpseCam.left = -w / ppt / 2; glimpseCam.right = w / ppt / 2; glimpseCam.top = h / ppt / 2; glimpseCam.bottom = -h / ppt / 2; glimpseCam.updateProjectionMatrix();
+  glimpseCam.layers.set(0); glimpseCam.layers.enable(1);
+  renderer.shadowMap.autoUpdate = false;
+  renderer.setRenderTarget(glimpseRT); renderer.setClearColor(0x0b0d12, 1); renderer.clear(); renderer.render(scene, glimpseCam);
+  renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.shadowMap.autoUpdate = true;
+  renderer.readRenderTargetPixels(glimpseRT, 0, 0, w, h, glimpseBuf);
+  const row = w * 4, out = glimpseImg.data;
+  for (let r = 0; r < h; r++) out.set(glimpseBuf.subarray((h - 1 - r) * row, (h - r) * row), r * row);   // GL rows run bottom up
+  glimpseCtx.putImageData(glimpseImg, 0, 0);
+  return glimpseCanvas;
+}
 export function render(dt, hover) {
   updateCamera(dt);
   if (S.started) terrainView();
@@ -996,8 +1232,8 @@ export function render(dt, hover) {
   updateItems();
   // the light buffer, only after dusk
   if (updateLights()) { renderer.setRenderTarget(rtLight); renderer.setClearColor(0x000000, 1); renderer.clear(); camera.layers.set(0); renderer.render(lightScene, camera); }
-  // colour + depth (the interface layer is left out while the UI is hidden)
-  camera.layers.set(0); camera.layers.enable(1); if (!S.hideUI) camera.layers.enable(UI_LAYER);
+  // colour + depth of the world: the interface is drawn after the lighting (below), so night never hides it
+  camera.layers.set(0); camera.layers.enable(1);
   renderer.setRenderTarget(rtColor); renderer.render(scene, camera);
   // normals for crease highlights (world layer only, no shadows recomputed)
   const bg = scene.background; scene.background = null; scene.overrideMaterial = normalMat;
@@ -1007,4 +1243,12 @@ export function render(dt, hover) {
   camera.layers.enable(1); camera.layers.enable(UI_LAYER);
   // outline + upscale
   renderer.setRenderTarget(null); renderer.render(postScene, postCam);
+  // the interface layer, over the finished picture, tested against the world's depth (left out while the UI is hidden)
+  if (!S.hideUI) {
+    camera.layers.set(UI_LAYER); renderer.autoClear = false; renderer.shadowMap.autoUpdate = false;
+    const bg2 = scene.background; scene.background = null;
+    renderer.render(scene, camera);
+    scene.background = bg2; renderer.autoClear = true; renderer.shadowMap.autoUpdate = true;
+    camera.layers.enable(0); camera.layers.enable(1);
+  }
 }

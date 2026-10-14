@@ -1,18 +1,21 @@
-import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD } from './data.js';
-import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID } from './state.js';
+import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE } from './data.js';
+import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID, recipeUnlocked } from './state.js';
 import { newWorld, ensureChunks } from './worldgen.js';
 import { stockFish } from './fish.js';
-import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo, mineTargetAt } from './sim.js';
+import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo, mineTargetAt, planCraft, depositLayer, machineStats } from './sim.js';
+import { bpAt } from './blueprint.js';
+import { sizeOf } from './multi.js';
 import { toolCursor } from './icons.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
-import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI, openMenu, setMenuTab, setSetting } from './ui.js';
+import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI, openMenu, setMenuTab, setSetting, pickTargetFor, clearPick, openPlayer } from './ui.js';
 import { save, load, loadData, hasSave, wipeSave, slotList, freeSlot, latestSlot, exportSave, exportSlot, importSave } from './save.js';
 import { doAction, host, join, netTick, leave, rememberFriends, cleanName } from './net.js';
 import './signal.js';
 import { updateAudio, sfx, getVolume, setVolume } from './audio.js';
-import { is, combo } from './input.js';
-import { copyBuilding, setClip } from './copypaste.js';
+import { is, combo, keyName } from './input.js';
+import { copyBuilding } from './copypaste.js';
 import { roadAt } from './transport.js';
+import { setClip } from './copypaste.js';
 import { updateMap, resetMap } from './map.js';
 
 const $ = id => document.getElementById(id);
@@ -40,10 +43,10 @@ function begin(fresh, sandbox = false, slot = S.slot, opts = {}) {
   if (fresh) {
     wipeSave(slot);
     S.sandbox = sandbox;
-    S.research = { done: new Set(), current: null, progress: {}, extra: new Set() }; S.maxTier = 0;
+    S.research = { done: new Set(), current: null, queue: [], progress: {}, extra: new Set() }; S.maxTier = 0;
     if (sandbox) unlockAll();
     Object.assign(world, { vehicles: [], units: [], routes: [], factories: [{ id: 1, name: 'Main factory', color: '#7ef6ff' }], facNext: 2, nextId: 1, links: [], marks: { markers: [], areas: [], next: 1 } });
-    world.roads.clear(); world.ents.clear(); world.frames.clear(); world.lines = []; world.beltDirty = world.powerDirty = world.fluidDirty = world.railDirty = true;
+    world.roads.clear(); world.ents.clear(); world.frames.clear(); world.bps.clear(); world.lines = []; world.beltDirty = world.powerDirty = world.fluidDirty = world.railDirty = true;
     S.stats = { made: {} }; S.goalsDone = new Set(); S.med = { levels: {}, current: null, progress: {}, mutations: false };
     newWorld(opts);   // its own seed: biomes, coastlines, lakes and rivers of its own
     Object.assign(S.player, { x: SPAWN.x, z: SPAWN.z, face: 0, fac: 1, veh: null, hp: PLAYER.health, sta: PLAYER.stamina, tired: false });
@@ -215,11 +218,21 @@ addEventListener('beforeunload', () => { if (started) save(); leave(); });
 // ---------------------------------------------------------------- mode + layers
 function toggleMode() {
   const C = S.cam;
-  if (S.mode === 'flat') { S.mode = 'depth'; C.pitchT = .55; }
-  else { S.mode = 'flat'; C.pitchT = .82; S.layer = 0; C.yawT = Math.round(C.yawT / (Math.PI * 2)) * Math.PI * 2; }
+  if (S.mode === 'flat') { S.mode = 'depth'; if (!C.free) C.pitchT = .55; }
+  else { S.mode = 'flat'; S.layer = 0; if (!C.free) { C.pitchT = .82; C.yawT = Math.round(C.yawT / (Math.PI * 2)) * Math.PI * 2; } }
   applyGhostAll(); renderHotbar();
   toast(S.mode === 'depth' ? 'DEPTH MODE · PgUp/PgDn or Shift+wheel: layer · [ ] orbit · V pitch' : 'FLAT MODE', 2200);
 }
+// Two ways to turn the camera: fixed (the default: flat mode looks north, depth mode turns a quarter at a time with
+// [ and ]) or free (hold the middle mouse button and drag: sideways turns it, up and down tilts it, in either mode).
+// A middle click that doesn't drag is still the pipette. Going back to fixed snaps to the nearest quarter.
+const PITCH = [.3, 1.35];
+function toggleCamera() {
+  const C = S.cam; C.free = !C.free;
+  if (!C.free) { C.yawT = S.mode === 'flat' ? Math.round(C.yawT / (Math.PI * 2)) * Math.PI * 2 : Math.round(C.yawT / (Math.PI / 2)) * Math.PI / 2; C.pitchT = S.mode === 'depth' ? .55 : .82; }
+  toast(C.free ? `FREE CAMERA · hold ${keyName('freeRotate')} and drag to turn and tilt · ${keyName('cameraMode')}: fixed` : 'FIXED CAMERA', 2600);
+}
+let rot = null;   // a middle-button drag: { x, y, yaw, pitch, moved }
 function setLayer(l) {
   const [lo, hi] = layerRange();
   if (l < lo || l > hi) { toast(layerLockReason(l)); return; }
@@ -235,11 +248,13 @@ addEventListener('keydown', e => {
   keys.add(e.code);
   const c = e.code;
   if (is('depthMode', c)) { e.preventDefault(); toggleMode(); return; }
+  if (is('cameraMode', c)) { toggleCamera(); return; }
   if (c === 'Escape') {
     if (cancelCursor()) return;
     if (S.linkFrom) { S.linkFrom = null; renderHotbar(); return; }
+    if (S.pick) { clearPick(); return; }
     // Esc closes whatever is open, then empties the hand, and only then opens the menu
-    if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else if (S.sel) selectItem(null); else openMenu('settings');
+    if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else if (S.sel) selectItem(null); else if (S.clip) setClip(null); else openMenu('settings');
     return;
   }
   if (is('chat', c)) { e.preventDefault(); keys.clear(); openChat(); return; }
@@ -281,19 +296,42 @@ addEventListener('keydown', e => {
     if (S.mode !== 'depth') { toast('that is a depth control: press Tab'); return; }
     if (layerKey === 'layerUp') setLayer(S.layer + 1);
     if (layerKey === 'layerDown') setLayer(S.layer - 1);
-    if (layerKey === 'orbitLeft') S.cam.yawT -= Math.PI / 2;
-    if (layerKey === 'orbitRight') S.cam.yawT += Math.PI / 2;
+    if (layerKey === 'orbitLeft') S.cam.yawT = Math.round(S.cam.yawT / (Math.PI / 2)) * Math.PI / 2 - Math.PI / 2;
+    if (layerKey === 'orbitRight') S.cam.yawT = Math.round(S.cam.yawT / (Math.PI / 2)) * Math.PI / 2 + Math.PI / 2;
   }
 });
 addEventListener('keyup', e => { keys.delete(e.code); if (is('pickup', e.code)) S.player.pickup = false; });
 addEventListener('blur', () => { keys.clear(); S.player.pickup = false; rmb = false; building = false; });
 
-// Q: copy the hovered building into the hand, or empty the hand.
+// Q: copy what is under the cursor into the hand (with its direction), or empty the hand. A building you have none of
+// (and can't craft) goes into the hand as a blueprint, to plan with. Over ore with nothing built on it, it picks the best
+// drill you carry that reaches the deposit, or the best one you could build, as a blueprint.
 function pipette() {
-  const ent = hover && (world.ents.get(key(hover.x, hover.y, hover.z)) || world.frames.get(key(hover.x, hover.y, hover.z)));
-  if (!ent || S.sel) { selectItem(null); return; }
-  if (!invGet(ent.type)) { toast(`no ${ENTITIES[ent.type].name} in inventory`); return; }
-  selectItem(ent.type); S.dir = ent.dir;
+  if (S.sel) { selectItem(null); return; }
+  if (!hover) return;
+  const k = key(hover.x, hover.y, hover.z), ent = world.ents.get(k) || world.frames.get(k), bp = bpAt(hover.x, hover.y, hover.z), road = hover.y === 0 && roadAt(hover.x, hover.z);
+  let type = ent ? (ENTITIES[ent.type]?.tileItem && !ENTITIES[ent.type]?.perItem ? ENTITIES[ent.type].tileItem : ent.type) : bp ? bp.type : road ? road.s : null, dir = ent?.dir ?? bp?.dir ?? S.dir;
+  const ore = !ent && !bp && world.ores.get(k);
+  if (ore) type = bestDrill(ore);
+  if (!type) return;
+  const have = invGet(type) > 0 || S.sandbox;
+  selectItem(type); S.dir = dir;
+  S.bpHand = !have && !planCraft(type, 1) && !!ENTITIES[type];
+  if (!have && !S.bpHand) toast(`no ${itemName(type).toLowerCase()} in inventory: placing crafts one`);
+  else if (S.bpHand) toast(`no ${itemName(type).toLowerCase()} to build: placing plans it as a blueprint`);
+  renderHotbar();
+}
+const itemName = it => ITEMS[it]?.name ?? it;
+// The drill for a deposit: the best one in the inventory that reaches its layer (and mines its ore), else the best
+// unlocked one that would.
+function bestDrill(ore) {
+  const drills = Object.keys(ENTITIES).filter(t => ENTITIES[t].kind === 'drill'), lay = ore.layer || 0;
+  const fits = t => { const d = ENTITIES[t]; return (d.depth ?? 0) >= lay && (!ITEMS[ore.type]?.mineFluid || d.ports?.some(p => p.fluid === ITEMS[ore.type].mineFluid)); };
+  const score = t => (ENTITIES[t].depth ?? 0) * 10 + ENTITIES[t].rate * 4 + (ENTITIES[t].burner ? 0 : 1);
+  const held = drills.filter(t => invGet(t) > 0 && fits(t)).sort((a, b) => score(b) - score(a));
+  if (held.length) return held[0];
+  const known = drills.filter(t => RECIPE[t] && recipeUnlocked(RECIPE[t]) && fits(t)).sort((a, b) => score(b) - score(a));
+  return known[0] || drills.filter(fits)[0] || 'burner_drill';
 }
 
 // ---------------------------------------------------------------- mouse
@@ -304,35 +342,64 @@ view.addEventListener('webglcontextrestored', () => console.warn('WebGL context 
 const setMouse = e => { setMouseFromEvent(e); S.mouseClient = { x: e.clientX, y: e.clientY }; };
 // With a building (or road, vehicle, signal) in hand you aim at the floor tile; with an empty hand you aim at
 // whatever is drawn under the cursor.
-const floorTool = it => !!it && (ENTITIES[it] || ROADS[it] || VEHICLES[it] || ITEMS[it]?.tool === 'signal');
-const pick = () => floorTool(S.sel) ? pickCell() : pickTarget();
+const floorTool = it => !!it && (ENTITIES[it] || ROADS[it] || VEHICLES[it] || ITEMS[it]?.tool === 'signal' || ITEMS[it]?.tool === 'conduit');
+// A big building in hand (2 wide or deep) follows the mouse within the tile, so it centres where you point.
+function snapBig(c) {
+  if (!c || !ENTITIES[S.sel]?.big || c.px === undefined) return c;
+  const [w, h] = sizeOf(S.sel, S.dir);
+  return { ...c, x: Math.round(c.px - w / 2) + Math.floor((w - 1) / 2), z: Math.round(c.pz - h / 2) + Math.floor((h - 1) / 2) };
+}
+const pick = () => floorTool(S.sel) ? snapBig(pickCell()) : pickTarget();
+// Holding Shift while placing (or a blueprint in hand) plans instead of building.
+let planning = false;
+const planOn = () => planning || S.bpHand;
 view.addEventListener('contextmenu', e => e.preventDefault());
-view.addEventListener('pointermove', setMouse);
+view.addEventListener('pointermove', e => {
+  setMouse(e);
+  if (rot) {   // free camera: drag to turn and tilt
+    const dx = e.clientX - rot.x, dy = e.clientY - rot.y;
+    if (Math.hypot(dx, dy) > 4) rot.moved = true;
+    if (rot.moved && S.cam.free) { S.cam.yawT = S.cam.yaw = rot.yaw - dx * .008; S.cam.pitchT = S.cam.pitch = Math.max(PITCH[0], Math.min(PITCH[1], rot.pitch + dy * .005)); }
+  }
+});
 view.addEventListener('pointerleave', () => { mouse.set(9, 9); S.mouseClient = null; });
 view.addEventListener('pointerdown', e => {
   if (!started) return;
   if (S.modal && S.modal !== 'title') closeModals();
   setMouse(e); hover = pick();
-  if (clipClick(combo(e))) { e.preventDefault(); return; }
-  if (e.button === 1) { e.preventDefault(); pipette(); return; }
+  if (is('freeRotate', combo(e)) || e.button === 1) { e.preventDefault(); rot = { x: e.clientX, y: e.clientY, yaw: S.cam.yawT, pitch: S.cam.pitchT, moved: false, button: e.button }; return; }
+  // Shift + left click: with something to build in hand it plans a blueprint (below); with an empty hand it pastes
+  // copied settings, or with nothing copied, selects what is under the cursor for transfer modes
+  const placing = e.shiftKey && e.button === 0 && ENTITIES[S.sel];
+  if (!placing && !(e.shiftKey && e.button === 0 && !S.sel && !S.clip) && clipClick(combo(e))) { e.preventDefault(); return; }
   if (e.button === 2) { rmb = true; return; }    // hold right-click to mine
   if (e.button !== 0 || !hover) return;
+  if (e.shiftKey && !S.sel) { pickTargetFor(hover); return; }
+  if (hover.player && !S.sel) { openPlayer(hover.player); sfx('open'); return; }
+  if (hover.veh && e.ctrlKey && S.sel) { doAction({ a: 'fast', veh: hover.veh, sel: S.sel, mode: S.pick?.veh === hover.veh ? S.pickMode : null }); renderHotbar(); return; }
   if (hover.veh && !S.sel) { const v = world.vehicles.find(x => x.id === hover.veh); if (v) { if (Math.hypot(v.x - S.player.x, v.z - S.player.z) > PLAYER.reach + 1) toast('out of reach'); else { openEntity(v); sfx('open'); } } return; }
   if (ITEMS[S.sel]?.food) { doAction({ a: 'eat', it: S.sel }); sfx('craft'); renderHotbar(); return; }
   const ent = world.ents.get(key(hover.x, hover.y, hover.z));
   if (ITEMS[S.sel]?.tool === 'link') { linkClick(ent); return; }
-  if (e.ctrlKey && ent) {                                         // Ctrl+click fast transfer
+  if (e.ctrlKey && ent) {                                         // Ctrl+click fast transfer (in the selection's mode)
     if (distTo(hover.x, hover.z) > PLAYER.reach) { toast('out of reach'); return; }
-    doAction({ a: 'fast', x: ent.x, y: ent.y, z: ent.z, sel: S.sel });
+    const picked = S.pick && !S.pick.veh && S.pick.x === ent.x && S.pick.y === ent.y && S.pick.z === ent.z;
+    doAction({ a: 'fast', x: ent.x, y: ent.y, z: ent.z, sel: S.sel, mode: picked && S.sel ? S.pickMode : null });
     renderHotbar(); return;
   }
+  if (!S.sel && !ent && bpAt(hover.x, hover.y, hover.z)) { doAction({ a: 'bpbuild', x: hover.x, y: hover.y, z: hover.z }); sfx('place'); return; }   // build a planned building
+  planning = e.shiftKey && !!ENTITIES[S.sel];
   building = true; lastPaint = null; lastPlacedCell = null;
   paintAt(hover, true);
 });
 addEventListener('pointerup', e => {
   if (e.button === 2) { rmb = false; return; }
+  if (rot && e.button === rot.button) { const r = rot; rot = null; if (!r.moved) pipette(); return; }
   building = false;
   if (S.dragTiles) { if (S.dragTiles.length) doAction({ a: 'drag', type: S.sel, tiles: S.dragTiles, fac: S.player.fac }); S.dragTiles = null; renderHotbar(); }
+  if (S.poleDrag) { placePoles(); S.poleDrag = null; renderHotbar(); }
+  if (conduitTiles.length) { doAction({ a: 'conduit', tiles: conduitTiles.splice(0) }); renderHotbar(); }
+  planning = false;
 });
 view.addEventListener('wheel', e => {
   if (e.shiftKey && S.mode === 'depth') { setLayer(S.layer + (e.deltaY < 0 ? 1 : -1)); return; }
@@ -370,7 +437,9 @@ function linkClick(ent) {
 
 function paintAt(c, first) {
   if (ROADS[S.sel]) { paintRoad(c, first); return; }
+  if (ITEMS[S.sel]?.tool === 'conduit') { paintConduit(c); return; }
   if (ENTITIES[S.sel]?.drag) { paintDrag(c, first); return; }
+  if (isPoleLine(S.sel)) { paintPoles(c, first); return; }
   if (VEHICLES[S.sel] || ITEMS[S.sel]?.tool === 'signal') {
     if (!first) return;
     if (c.y !== 0) { toast('that goes on the ground layer'); return; }
@@ -382,16 +451,15 @@ function paintAt(c, first) {
     if (first && ent) { if (distTo(c.x, c.z) > PLAYER.reach) { toast('out of reach'); sfx('error'); } else { openEntity(ent); sfx('open'); } building = false; }
     return;
   }
-  // dragging belts lays them along the direction of travel, turning the previous one into the corner
-  if (def.kind === 'belt' && lastPaint) {
-    const dx = c.x - lastPaint.x, dz = c.z - lastPaint.z;
-    if (Math.abs(dx) + Math.abs(dz) === 1) {
-      S.dir = DIRS.findIndex(([a, b]) => a === dx && b === dz);
-      if (lastPlacedCell?.kind === 'belt') doAction({ a: 'setdir', x: lastPlacedCell.x, y: lastPlacedCell.y, z: lastPlacedCell.z, dir: S.dir });
-    }
+  // Belts keep the direction R gave them while you drag (walking with WASD moves the cursor, never turns them).
+  const dy = effDy(S.sel);
+  if (planOn()) {   // a blueprint: planned, anywhere you can see, built later
+    if (canPlace(S.sel, c.x, c.y, c.z, S.dir, dy, { noInv: true, bp: true }) === 'occupied' && ent && first && !planning) { if (distTo(c.x, c.z) <= PLAYER.reach) { openEntity(ent); sfx('open'); } building = false; return; }
+    doAction({ a: 'bp', type: S.sel, x: c.x, y: c.y, z: c.z, dir: S.dir, dy, fac: S.player.fac, quiet: !first });
+    lastPaint = c; return;
   }
   // running out is fine: the host crafts another if it can (placeOrCraft in sim.js)
-  const dy = effDy(S.sel), err = canPlace(S.sel, c.x, c.y, c.z, S.dir, dy, { reach: true, noInv: true });
+  const err = canPlace(S.sel, c.x, c.y, c.z, S.dir, dy, { reach: true, noInv: true });
   if (err) {
     if (first) {
       if (err === 'occupied' && ent && S.sel !== 'frame') { if (distTo(c.x, c.z) <= PLAYER.reach) { openEntity(ent); sfx('open'); } building = false; }
@@ -403,6 +471,41 @@ function paintAt(c, first) {
   lastPlacedCell = { ...c, kind: def.kind };
   lastPaint = c;
   renderHotbar();
+}
+
+// Power poles dragged out in a line: spaced as far apart as their supply areas allow without gaps (and never further
+// than their wires reach), shown while you drag, placed when you let go. Where one can't stand, it tries a tile to
+// either side. Those out of reach are planned as blueprints; holding Shift plans them all.
+const isPoleLine = t => ENTITIES[t]?.kind === 'pole' && !ENTITIES[t].volts;
+const poleStep = t => { const d = ENTITIES[t]; return Math.max(1, Math.min(Math.floor(d.wire), d.supply * 2 + 1)); };
+function paintPoles(c, first) {
+  if (first) S.poleDrag = { type: S.sel, y: c.y, from: c, list: [] };
+  const D = S.poleDrag; if (!D) return;
+  const dx = c.x - D.from.x, dz = c.z - D.from.z, along = Math.abs(dx) >= Math.abs(dz), len = Math.max(Math.abs(dx), Math.abs(dz)), step = poleStep(D.type), n = Math.ceil(len / step);
+  D.list = [];
+  for (let i = 0; i <= n; i++) {
+    const t = n ? Math.round(i * len / n) : 0, x = along ? D.from.x + Math.sign(dx) * t : D.from.x, z = along ? D.from.z : D.from.z + Math.sign(dz) * t;
+    let spot = null;
+    for (const [ox, oz] of [[0, 0], along ? [0, 1] : [1, 0], along ? [0, -1] : [-1, 0]]) if (!canPlace(D.type, x + ox, D.y, z + oz, 0, 0, { noInv: true, bp: true })) { spot = { x: x + ox, z: z + oz }; break; }
+    D.list.push(spot || { x, z, bad: true });
+  }
+}
+function placePoles() {
+  const D = S.poleDrag; let planned = 0, built = 0;
+  for (const p of D.list) {
+    if (p.bad) continue;
+    if (planning || S.bpHand || distTo(p.x, p.z) > PLAYER.reach) { doAction({ a: 'bp', type: D.type, x: p.x, y: D.y, z: p.z, dir: 0, fac: S.player.fac, quiet: true }); planned++; }
+    else { doAction({ a: 'place', type: D.type, x: p.x, y: D.y, z: p.z, dir: 0, dy: 0, fac: S.player.fac }); built++; }
+  }
+  if (planned && !planning && !S.bpHand) toast(`${built} placed · ${planned} out of reach, planned as blueprints: click them to build`);
+  sfx('place');
+}
+// Road conduits: dragged over road tiles, sent in batches.
+const conduitTiles = [];
+function paintConduit(c) {
+  if (c.y !== 0 || !roadAt(c.x, c.z) || roadAt(c.x, c.z).p || conduitTiles.some(t => t[0] === c.x && t[1] === c.z)) return;
+  conduitTiles.push([c.x, c.z]);
+  if (conduitTiles.length >= 8) doAction({ a: 'conduit', tiles: conduitTiles.splice(0) });
 }
 
 // Things laid by dragging across tiles (dams): a straight run from where the drag started, placed on release as one.
@@ -462,6 +565,7 @@ function frame() {
     if (started && S.modal !== 'title' && !paused) {
       hover = pick();
       if (hover) hover.ctrl = held('ControlLeft') || held('ControlRight');   // Ctrl: mine single tiles
+      S.player.sel = S.sel;
       setToolCursor();
       S.player.mineCell = rmb && !S.modal ? hover : null;
       const typing = document.activeElement?.tagName === 'INPUT';

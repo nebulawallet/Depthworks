@@ -1,5 +1,5 @@
 // Shared mutable game state.
-import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE, DEPOSIT, DAY } from './data.js';
+import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE, DEPOSIT, DAY, LOD } from './data.js';
 
 // Tiles per side of the world. Worlds made before chunks are 96; new ones are 500 to 65536 (see worldgen.js).
 export let GRID = 96;
@@ -21,7 +21,7 @@ export const S = {
   sel: null, dir: 0, dy: 0, handMine: null,
   maxTier: 0, activeVol: 0,
   hotbar: [], hotbarSeen: new Set(),
-  research: { done: new Set(), current: null, progress: {} },
+  research: { done: new Set(), current: null, progress: {}, queue: [] },   // labs work on `current`, the first queued tech they can
   power: { demand: 0, nextDemand: 0, capacity: 0, sat: 1, produced: 0 },
   stats: { made: {} },
   signal: { started: false, stage: -1, pulses: 0, taught: new Set(), seen: new Set(), log: [] },
@@ -117,6 +117,8 @@ export const world = {
   chunks: new Map(), gen: null, edits: { feats: new Set(), ores: new Map(), oil: new Map(), patches: new Set() },
   tiles: null, flow: null,
   links: [],          // cables strung by hand: { kind: item id, a: [x, y, z], b: [x, y, z] }
+  bps: new Map(),     // blueprints: planned buildings, never run (see blueprint.js)
+  roadGrids: [],      // touching road tiles with a power conduit in them (see rebuildPower in sim.js)
   marks: { markers: [], areas: [], next: 1 },   // map markers and labelled areas
   oil: new Map(),     // "x,z" -> { yield } crude oil wells on the surface (percent)
   roads: new Map(),   // "x,z" -> road tile (see transport.js)
@@ -201,10 +203,17 @@ const smooth = t => t * t * (3 - 2 * t);
 export const sunHeight = (T = S.T) => { const h = hourOf(T); return Math.sin(Math.PI * (h - DAY.sunrise) / (DAY.sunset - DAY.sunrise)) * (h >= DAY.sunrise && h < DAY.sunset ? 1 : 0) - (h >= DAY.sunrise && h < DAY.sunset ? 0 : .3); };
 // Daylight, 0 to 1, following the sun all day long: twilight a little past the horizon, full only at midday.
 export function daylight(T = S.T) { return smooth(Math.max(0, Math.min(1, (sunHeight(T) + .08) / 1.08))); }
+// How deep into the night it is: 0 at sunset and sunrise, 1 in the middle of the night (see DAY.midnightLight).
+export function nightDepth(T = S.T) {
+  const h = hourOf(T), len = 24 - (DAY.sunset - DAY.sunrise), t = ((h - DAY.sunset) % 24 + 24) % 24;
+  return t < len ? Math.sin(Math.PI * t / len) : 0;
+}
+// Level of detail by how many pixels a tile takes on screen, shared by the map and alt mode (LOD in data.js).
+export const lodAt = ppt => LOD.find(l => ppt >= l.min)?.id ?? 'regions';
 // A sandbox world starts with every technology done and every layer open.
 export function unlockAll() {
   for (const id of Object.keys(TECH)) S.research.done.add(id);
-  S.research.current = null; S.maxTier = TIERS.length - 1;
+  S.research.current = null; S.research.queue = []; S.maxTier = TIERS.length - 1;
 }
 // `extra`: recipes an old save keeps after research moved them (see save.js)
 export const recipeUnlocked = r => isResearched(r.tech) || !!S.research.extra?.has(r.id);
@@ -230,6 +239,9 @@ export function layerLockReason(y) {
 export const endless = o => !DEPOSIT[o.layer]?.size;
 export const layerSize = (o, layer) => DEPOSIT[layer]?.size ? Math.round(o.base * DEPOSIT[layer].size) : o.base;
 export const newDeposit = (type, base, layer = 0) => { const o = { type, base, layer, amount: 0 }; o.amount = layerSize(o, layer); return o; };
+// How worked a deposit is: its layer plus the share of that layer dug out (0 untouched, 1 surface gone, 2 bedrock).
+// Its look follows this (ORE_STAGES in data.js).
+export const oreWear = o => (o?.layer || 0) + (!o || endless(o) ? 0 : Math.max(0, Math.min(1, 1 - o.amount / Math.max(1, layerSize(o, o.layer)))));
 export function generateOres(seed = 20261013) {
   world.ores.clear();
   const R = rng(seed), C = GRID / 2;

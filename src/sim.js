@@ -1,14 +1,15 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT, FRAMES, ROADS, TILES, TOOLS, groupOf, ingredientMatches } from './data.js';
-import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize, SPAWN, daylight, removeFeat, underOf, patchAt, isResearched } from './state.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT, FRAMES, ROADS, TILES, TOOLS, VOLTAGES, ELV, ROAD_POWER, PIPE_HIT, hitOf, oreStage, groupOf, ingredientMatches } from './data.js';
+import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize, oreWear, SPAWN, daylight, removeFeat, underOf, patchAt, isResearched } from './state.js';
 import { isBeltLike, dropOnBelt, takeFromBelt, beltWants, beltsTick, touchBelts, clearSeg, segItems, beltCommand, lanesOf } from './belts.js';
 import { rebuildFluids, fluidPre, fluidPost, producerCaps, burnNet, burnRate, draw, push, avail, room, passThrough, fluidConflict, flush, sameFac, isPipeLike } from './fluids.js';
 import { roadAt, removeRoad, roadTiles, isWalkway, roadBlocks, transportTick, rebuildRails, wayNear, vehSlots, vehSlotAccept, vehSlotPut, vehSlotTake, vehicleById, vehicleTarget, removeVehicle, depotCommand, vstats } from './transport.js';
+import { bpAt, removeBlueprintsUnder, removeBlueprint } from './blueprint.js';
 import { fishTarget, catchFish, fishTick } from './fish.js';
 import { greenhouseAccepts, greenhouseInsert, farmTick, digPatch, patchName } from './farm.js';
 import { damTick, reactorTick, reactorAccepts, repair } from './plants.js';
 import { playerMods, maxHealth, maxStamina, reachOf, bodyTick, medTick, medAccepts, medSlotItems } from './body.js';
-import { isMulti, footprint, setFoot, clearFoot, groups, wallsAt, neighboursToMerge, joinAll, rekey, KINDS, covers } from './multi.js';
+import { isMulti, isBig, footprint, setFoot, clearFoot, groups, wallsAt, neighboursToMerge, joinAll, rekey, KINDS, covers } from './multi.js';
 export { sameFac };
 const isClient = () => S.net.role === 'client';
 
@@ -58,7 +59,7 @@ export function createEntity(type, x, y, z, dir = 0, dy = 0) {
     case 'inserter': e.t = 0; e.held = null; e.reach = def.reach; e.swing = def.swing; e.dy = dy || 0; e.filter = null; break;
     case 'drill': e.timer = 0; e.buffer = null; e.bufN = 0; break;
     case 'furnace': e.recipe = null; e.inp = {}; e.out = {}; e.crafting = false; break;
-    case 'assembler': e.recipe = null; e.inp = {}; e.out = {}; e.crafting = false; break;
+    case 'assembler': e.recipe = null; e.inp = {}; e.out = {}; e.crafting = false; if (def.pull) e.arm = { t: 0, it: null, at: null }; break;
     case 'lab': e.inp = {}; e.unit = null; break;
     case 'chest': e.store = new Inventory(def.cap); break;
     case 'transmitter': e.inp = {}; e.charging = false; break;
@@ -179,11 +180,22 @@ function burner(e, want, mw, dt) {
 
 // ---------------------------------------------------------------- power networks
 // Poles join into networks by wire reach, by overlapping supply areas, and by cables strung by hand, but only
-// within one voltage (VOLTAGES). Machines inside a pole's supply area join that network.
+// within one voltage (VOLTAGES). Machines inside a pole's supply area join that network, but only poles of a voltage
+// machines may draw from: generators feed extra-low voltage only (one-tile engines from old saves, `compact`, still
+// feed any pole, as they always did), and dams high voltage only. Road conduits join poles near them into grids that
+// power machines beside the road (ROAD_POWER).
 export const nets = [];
 export const voltsOf = def => def.volts || [def.volt ?? 0];
 export const autoVolt = def => voltsOf(def)[0];   // the voltage a pole wires itself up on
 const producerKind = e => e.kind === 'solar' || e.kind === 'engine' || e.kind === 'fgen';
+// Can pole p feed entity e (or take its power)?
+export function poleServes(e, p) {
+  const def = ENTITIES[e.type], pv = voltsOf(ENTITIES[p.type]);
+  if (def.hv) return pv.includes(1);
+  if (def.gen) return e.compact ? true : pv.includes(ELV);
+  return pv.some(v => VOLTAGES[v]?.consumers);
+}
+const conduitAt = (x, z) => !!world.roads.get(x + ',' + z)?.p;
 export function rebuildPower() {
   const poles = [...world.ents.values()].filter(e => e.kind === 'pole');
   const parent = new Map(poles.map(p => [p, p]));
@@ -211,6 +223,29 @@ export function rebuildPower() {
     if (a?.kind !== 'pole' || b?.kind !== 'pole' || !sameFac(a, b)) continue;
     join(a, b); cables.push([a, b, l.kind]);
   }
+  // road conduits: each touching group is a grid; it joins every low voltage pole of one factory near it
+  const grids = [], gridAt = new Map();
+  for (const [k, t] of world.roads) {
+    if (!t.p || gridAt.has(k)) continue;
+    const g = { id: grids.length, tiles: [], poles: [], net: null, fac: null, demand: 0, nextDemand: 0, sat: 1 }, q = [k];
+    gridAt.set(k, g);
+    while (q.length) {
+      const c = q.pop(), [x, z] = c.split(',').map(Number); g.tiles.push([x, z]);
+      for (const [dx, dz] of DIRS) { const n = (x + dx) + ',' + (z + dz); if (!gridAt.has(n) && conduitAt(x + dx, z + dz)) { gridAt.set(n, g); q.push(n); } }
+    }
+    grids.push(g);
+  }
+  if (grids.length) for (const p of poles) {
+    const def = ENTITIES[p.type]; if (p.y !== 0 || !voltsOf(def).includes(ROAD_POWER.volt)) continue;
+    const r = Math.max(def.supply, ROAD_POWER.poleReach);
+    for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+      const g = gridAt.get((p.x + dx) + ',' + (p.z + dz)); if (!g) continue;
+      if (g.fac === null) g.fac = p.fac ?? 1;
+      if ((p.fac ?? 1) !== g.fac || g.poles.includes(p)) continue;
+      if (g.poles.length) join(g.poles[0], p);
+      g.poles.push(p);
+    }
+  }
   const byRoot = new Map();
   nets.length = 0;
   for (const p of poles) {
@@ -218,20 +253,28 @@ export function rebuildPower() {
     if (!byRoot.has(r)) { const n = { id: nets.length, poles: [], demand: 0, nextDemand: 0, capacity: 0, sat: 0, produced: 0, engines: [], solar: 0, consumers: 0 }; byRoot.set(r, n); nets.push(n); }
     p.net = byRoot.get(r); p.net.poles.push(p);
   }
+  for (const g of grids) g.net = g.poles[0]?.net ?? null;
   for (const e of world.ents.values()) {
     if (e.kind === 'pole') continue;
-    e.net = null;
+    e.net = null; e.viaRoad = null;
     if (!(isElectric(e) || producerKind(e))) continue;
-    const hv = ENTITIES[e.type].hv;   // high voltage only: a dam joins power lines and transformer stations, not small poles
     for (const p of poles) {
       const s = ENTITIES[p.type].supply;
-      if (hv && !voltsOf(ENTITIES[p.type]).includes(1)) continue;
+      if (!poleServes(e, p)) continue;
       if (Math.abs(e.y - p.y) <= 1 && sameFac(e, p) && (e.foot || [[e.x, e.z]]).some(([x, z]) => Math.abs(x - p.x) <= s && Math.abs(z - p.z) <= s)) { e.net = p.net; break; }
+    }
+    // beside a powered road: machines only (generators and dams need their own poles)
+    if (!e.net && grids.length && e.y === 0 && isElectric(e) && !ENTITIES[e.type].hv && !ENTITIES[e.type].gen) {
+      const R = ROAD_POWER.reach;
+      search: for (const [x, z] of e.foot || [[e.x, e.z]]) for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
+        const g = gridAt.get((x + dx) + ',' + (z + dz));
+        if (g?.net && (e.fac ?? 1) === g.fac) { e.net = g.net; e.viaRoad = g; break search; }
+      }
     }
     if (e.net && isElectric(e)) e.net.consumers++;
   }
   world.fluidDirty = true;
-  world.wires = wires; world.cables = cables; world.powerDirty = false;
+  world.wires = wires; world.cables = cables; world.roadGrids = grids; world.powerDirty = false;
   bus.emit('power');
 }
 
@@ -250,7 +293,7 @@ function powerTick(dt) {
     }
     n.demand = n.nextDemand; n.produced = used; n.nextDemand = 0;
   }
-  for (const e of world.ents.values()) if ((e.kind === 'engine' || e.kind === 'fgen') && !e.net) { e.load = 0; e.status = 'not connected: put it in a pole\'s area'; }
+  for (const e of world.ents.values()) if ((e.kind === 'engine' || e.kind === 'fgen') && !e.net) { e.load = 0; e.status = e.compact ? 'not connected: put it in a pole\'s area' : 'not connected: put it in a generator pole\'s area'; }
   fluidPost(dt, burner);
   reactorTick(dt);
 }
@@ -295,11 +338,51 @@ function drillOutput(e) {
   if (t.kind === 'inserter') return;
   while (e.buffer && (isBeltLike(t) ? dropOnBelt(t, e.buffer, e.dir, false) : canAccept(t, e.buffer) && (insert(t, e.buffer), true))) takeBuf(e, 1);
 }
+// ---------------------------------------------------------------- crafting stations
+// The arm of a crafting station fetches what its recipe is short of (enough for two crafts) from chests of its factory
+// within reach, one item a trip: out to the chest (it takes the item there), back, and in. e.arm: { t: 0..1 through the
+// trip, it: what it is fetching, at: [x, y, z] of the chest }. Guests only draw it (the host decides what it takes).
+export const stationChests = e => {
+  const R = ENTITIES[e.type].pull?.radius ?? 0, out = [];
+  for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
+    const c = world.ents.get(key(e.x + dx, e.y, e.z + dz));
+    if (c?.kind === 'chest' && sameFac(c, e) && !out.includes(c)) out.push(c);
+  }
+  return out;
+};
+function stationArm(e, def, dt, sat, demand) {
+  const A = e.arm ||= { t: 0, it: null, at: null }, r = RECIPE[e.recipe];
+  if (!A.it && A.t <= 0) {   // idle: look for something it is short of
+    if (!r || isClient()) return;
+    for (const [k, n] of Object.entries(r.in)) {
+      if (groupHave(e, k) >= n * 2) continue;
+      for (const c of stationChests(e)) {
+        const it = [...c.store.counts().keys()].find(i => ingredientMatches(k, i));
+        if (it) { A.it = it; A.at = [c.x, c.y, c.z]; A.t = 0; A.got = false; break; }
+      }
+      if (A.it) break;
+    }
+    if (!A.it) return;
+  }
+  demand(def.power * .3);
+  A.t += dt / def.pull.trip * sat;
+  if (A.it && !A.got && A.t >= .5 && !isClient()) {   // at the chest: take it, or come back empty
+    const c = world.ents.get(key(...A.at));
+    if (c?.store?.count(A.it) && sameFac(c, e)) { c.store.remove(A.it, 1); A.got = true; c.lastActive = S.T; } else A.it = null;
+  }
+  if (A.t >= 1) {
+    if (A.it && A.got && !isClient()) { e.inp[A.it] = (e.inp[A.it] || 0) + 1; e.lastActive = S.T; }
+    A.t = 0; A.it = null; A.got = false;
+  }
+}
+
 // Mining never empties a deposit: when its layer runs out, it drops to the next one down (only the host decides).
 export function depleteOre(x, y, z, n = 1) {
   const o = world.ores.get(key(x, y, z)); if (!o) return null;
   if (!endless(o)) {
+    const before = oreStage(oreWear(o));
     o.amount -= n;
+    if (oreStage(oreWear(o)) !== before) bus.emit('orestage', x, y, z, o);   // its look changes (terrain.js)
     if (o.amount <= 0 && !isClient()) { o.layer++; o.amount = layerSize(o, o.layer); bus.emit('orelayer', x, y, z, o); }
     world.edits.ores.set(key(x, y, z), [o.layer, o.amount]);   // chunks are made again from the seed: keep what was dug
   }
@@ -309,8 +392,8 @@ export const depositLayer = o => DEPOSIT[Math.min(DEPOSIT.length - 1, o?.layer |
 const noPower = e => !e.net ? 'not connected to power' : 'no power';
 
 function tickEntity(e, dt) {
-  const def = ENTITIES[e.type], net = e.net, sat = net ? net.sat : 0;
-  const demand = kw => { if (net) net.nextDemand += kw; };
+  const def = ENTITIES[e.type], net = e.net, g = e.viaRoad, sat = net ? Math.min(net.sat, g ? g.sat : 1) : 0;
+  const demand = kw => { if (net) net.nextDemand += kw; if (g) g.nextDemand += kw; };
   const st = def.augSlots ? machineStats(e) : null;
   switch (e.kind) {
     case 'drill': {
@@ -351,13 +434,15 @@ function tickEntity(e, dt) {
     }
     case 'assembler':
       if (def.cats?.includes('barrel')) barrelTick(e);
+      if (def.pull) stationArm(e, def, dt, sat, demand);
       if (e.crafting) demand(def.power * st.power);
+      if (def.pull && !e.crafting && RECIPE[e.recipe]) { craftTick(e, dt, def.speed * st.speed, sat, st.prod); if (e.arm?.it) e.status = `fetching ${ITEMS[e.arm.it].name.toLowerCase()}`; else if (e.status === 'waiting for ingredients') e.status = `waiting: no chest within ${def.pull.radius} tiles has what it needs`; break; }
       craftTick(e, dt, def.speed * st.speed, sat, st.prod);
       if (e.status === 'no power') e.status = noPower(e);
       break;
     case 'lab': {
       const tech = TECH[S.research.current];
-      if (!tech || S.research.done.has(tech.id)) { e.status = 'no research selected'; e.unit = null; break; }
+      if (!tech || S.research.done.has(tech.id)) { e.status = S.research.queue?.length ? 'queued research is waiting for precision' : 'no research selected'; e.unit = null; break; }
       if (e.unit !== tech.id) {
         e.unit = null; e.prog = 0;
         if ((S.research.progress[tech.id] || 0) >= tech.count) break;
@@ -468,13 +553,53 @@ function tickEntity(e, dt) {
 }
 
 // ---------------------------------------------------------------- research
+// The research queue: S.research.queue lists techs in the order they will be researched. Labs work on `current`, the
+// first queued tech whose prerequisites are done; one waiting on a prerequisite further up the queue simply waits its
+// turn. Queuing a tech queues whatever it needs that isn't done or queued yet, just before it.
 export function completeResearch(id) {
   S.research.done.add(id);
-  if (S.research.current === id) S.research.current = null;
+  nextResearch();
   bus.emit('research', id);
 }
 export function techAvailable(t) {
   return t.pre.every(p => S.research.done.has(p)) && (t.precision ?? 0) <= S.maxTier;
+}
+export function nextResearch() {
+  const R = S.research;
+  R.queue = (R.queue || []).filter(id => TECH[id] && !R.done.has(id));
+  R.current = R.queue.find(id => techAvailable(TECH[id])) || null;
+}
+// A tech and everything it still needs, prerequisites first.
+export function techPath(id) {
+  const out = [], seen = new Set();
+  const visit = t => { if (seen.has(t) || S.research.done.has(t) || !TECH[t]) return; seen.add(t); for (const p of TECH[t].pre) visit(p); out.push(t); };
+  visit(id); return out;
+}
+// Does tech t need `id`, directly or through other techs?
+const dependsOn = (t, id) => TECH[t].pre.some(p => p === id || dependsOn(p, id));
+// op.do: 'now' puts it (and what it needs) first, 'queue' adds it at the end, 'remove' takes it out (with whatever
+// queued needs it), 'move' shifts it by op.by places as far as its prerequisites and dependents allow.
+export function researchAction(op) {
+  const R = S.research, t = TECH[op.id];
+  R.queue ||= [];
+  if (!t || R.done.has(op.id)) return;
+  if (op.do === 'remove') {
+    if (!R.queue.includes(op.id)) return;
+    R.queue = R.queue.filter(q => q !== op.id && !dependsOn(q, op.id));
+  } else if (op.do === 'move') {
+    const q = R.queue, i = q.indexOf(op.id); if (i < 0) return;
+    let j = i;
+    for (let k = 0; k < Math.abs(op.by | 0); k++) {
+      const n = j + Math.sign(op.by); if (n < 0 || n >= q.length) break;
+      if (op.by < 0 ? dependsOn(op.id, q[n]) : dependsOn(q[n], op.id)) break;   // never ahead of what it needs, never behind what needs it
+      [q[j], q[n]] = [q[n], q[j]]; j = n;
+    }
+  } else {
+    const path = techPath(op.id).filter(id => op.do === 'now' || !R.queue.includes(id));
+    R.queue = op.do === 'now' ? [...path, ...R.queue.filter(q => !path.includes(q))] : [...R.queue, ...path];
+  }
+  nextResearch();
+  bus.emit('queue');
 }
 
 // ---------------------------------------------------------------- precision
@@ -593,40 +718,61 @@ export function turnPending(x, y, z, dir) { const p = actor.pending?.find(q => s
 // ---------------------------------------------------------------- the engineer
 export const playerCell = () => ({ x: Math.floor(actor.x), z: Math.floor(actor.z) });
 export const distTo = (x, z) => Math.hypot(x + .5 - actor.x, z + .5 - actor.z);
-// Solid shapes on the surface: machines are squares, trees and rocks are circles. Belts and hollow frames are walkable.
-function solidShape(cx, cz) {
-  if (cx < 0 || cz < 0 || cx >= GRID || cz >= GRID) return { sq: .5 };
+// What the engineer bumps into on the surface, as rectangles [x0, z0, x1, z1] and circles [x, z, r]. Machines are
+// squares, trees and rocks circles, small things smaller shapes from data (hitOf): pipes their middle and the straight
+// runs of their line. Buildings over several tiles are solid right across their inside. Belts and hollow frames are walkable.
+function solidShapes(cx, cz, out) {
+  if (cx < 0 || cz < 0 || cx >= GRID || cz >= GRID) { out.push([cx, cz, cx + 1, cz + 1]); return; }
   const e = world.ents.get(key(cx, 0, cz));
-  if (e?.kind === 'dam') return null;   // dams are ground to walk on
-  if (isWater(cx, cz)) return { sq: .5 };   // no swimming
+  if (e?.kind === 'dam') return;   // dams are ground to walk on
+  if (isWater(cx, cz)) { out.push([cx, cz, cx + 1, cz + 1]); return; }   // no swimming
   const f = world.feats.get(key(cx, 0, cz));
-  if (f) return { r: FEATURES[f.type]?.look.shape === 'rock' ? .42 : .22 };
-  if (!e || e.belt) return null;
-  if (e.kind === 'greenhouse') { const m = wallsAt(e, cx, cz); return m ? { walls: m } : null; }   // walk in through the doors
-  if (e.kind === 'pole') return { r: .15 };
-  return { sq: .46 };
+  if (f) { out.push([cx + .5, cz + .5, FEATURES[f.type]?.look.shape === 'rock' ? .42 : .22]); return; }
+  if (!e || e.belt) return;
+  if (e.kind === 'greenhouse') {   // thin walls along a room's walled edges: walk in through the doors
+    const m = wallsAt(e, cx, cz), t = .06;
+    for (let d = 0; d < 4; d++) if (m >> d & 1) out.push([d === 1 ? cx + 1 - t : cx, d === 2 ? cz + 1 - t : cz, d === 3 ? cx + t : cx + 1, d === 0 ? cz + t : cz + 1]);
+    return;
+  }
+  const h = hitOf(e.type);
+  if (!h) return;
+  const mx = cx + .5, mz = cz + .5;
+  if (e.foot && e.foot.length > 1) {   // solid across its own tiles, the usual margin at its outside edges
+    const sq = h.sq ?? .46, m = .5 - sq, inn = (dx, dz) => covers(e, cx + dx, cz + dz);
+    out.push([cx + (inn(-1, 0) ? 0 : m), cz + (inn(0, -1) ? 0 : m), cx + 1 - (inn(1, 0) ? 0 : m), cz + 1 - (inn(0, 1) ? 0 : m)]);
+    return;
+  }
+  if (h === 'pipe') {
+    // Touching parallel lines join each other at every tile. A link blocks only where it is part of a plain straight run
+    // (one of its two pipes joins exactly the two opposite ways), so a line can't be walked through, while lines that
+    // touch (every pipe also joined sideways) never wall off the gaps between them: those are only their middles.
+    const w = PIPE_HIT, c = e.conn || 0;
+    const straight = (q, ns) => q === (ns ? 5 : 10);
+    let conn = 0;
+    for (let d = 0; d < 4; d++) if (c >> d & 1) { const n = world.ents.get(key(cx + DIRS[d][0], 0, cz + DIRS[d][1])), ns = d % 2 === 0; if (straight(c, ns) || straight(n?.conn || 0, ns)) conn |= 1 << d; }
+    out.push([mx - w, mz - w, mx + w, mz + w]);
+    for (let d = 0; d < 4; d++) if (conn >> d & 1) {
+      const [dx, dz] = DIRS[d];
+      out.push([dx < 0 ? cx : dx > 0 ? mx : mx - w, dz < 0 ? cz : dz > 0 ? mz : mz - w, dx > 0 ? cx + 1 : dx < 0 ? mx : mx + w, dz > 0 ? cz + 1 : dz < 0 ? mz : mz + w]);
+    }
+    return;
+  }
+  if (h.r) out.push([mx, mz, h.r]);
+  else out.push([mx - h.sq, mz - h.sq, mx + h.sq, mz + h.sq]);
 }
+const _shapes = [];
 function collides(px, pz) {
   const r = PLAYER.radius;
   for (let cx = Math.floor(px - r - .5); cx <= Math.floor(px + r + .5); cx++) for (let cz = Math.floor(pz - r - .5); cz <= Math.floor(pz + r + .5); cz++) {
-    const s = solidShape(cx, cz); if (!s) continue;
-    const mx = cx + .5, mz = cz + .5;
-    if (s.walls) {   // thin walls along a tile's walled edges
-      for (let d = 0; d < 4; d++) {
-        if (!(s.walls >> d & 1)) continue;
-        const t = .06, x0 = d === 1 ? cx + 1 - t : cx, x1 = d === 3 ? cx + t : cx + 1, z0 = d === 2 ? cz + 1 - t : cz, z1 = d === 0 ? cz + t : cz + 1;
-        if (Math.hypot(px - Math.max(x0, Math.min(px, x1)), pz - Math.max(z0, Math.min(pz, z1))) < r) return true;
-      }
-      continue;
-    }
-    if (s.r) { if (Math.hypot(px - mx, pz - mz) < r + s.r) return true; }
-    else {
-      const nx = Math.max(mx - s.sq, Math.min(px, mx + s.sq)), nz = Math.max(mz - s.sq, Math.min(pz, mz + s.sq));
-      if (Math.hypot(px - nx, pz - nz) < r) return true;
+    _shapes.length = 0; solidShapes(cx, cz, _shapes);
+    for (const s of _shapes) {
+      if (s.length === 3) { if (Math.hypot(px - s[0], pz - s[1]) < r + s[2]) return true; continue; }
+      if (Math.hypot(px - Math.max(s[0], Math.min(px, s[2])), pz - Math.max(s[1], Math.min(pz, s[3]))) < r) return true;
     }
   }
   return false;
 }
+export const playerCollides = collides;
 export const playerBlocks = (x, z) => { const r = PLAYER.radius; for (const p of S.players.values()) if (p.x + r > x + .04 && p.x - r < x + .96 && p.z + r > z + .04 && p.z - r < z + .96) return true; return false; };
 
 // input: { mx, mz } desired direction in world space (unit or zero)
@@ -708,6 +854,8 @@ export function mineTargetAt(c) {
   if (e?.kind === 'rail' && e.sig !== null && e.sig !== undefined) return { kind: 'sig', k, c, time: .2, reach: reachOf(actor), name: 'Rail signal' };
   if (e && isMulti(e) && c.ctrl && ENTITIES[e.type].tileMine) return { kind: 'tile', k: 'tile' + k, c, time: .3, reach: reachOf(actor), name: ENTITIES[e.type].name + ' tile' };
   if (e) return { kind: 'ent', k, c, time: e.belt ? .15 : e.kind === 'inserter' || e.kind === 'pole' ? .2 : isMulti(e) ? Math.min(2, .4 + e.foot.length * .015) : .4, reach: reachOf(actor), name: ENTITIES[e.type].name };
+  const bp = bpAt(c.x, c.y, c.z);
+  if (bp) return { kind: 'bp', k: 'bp' + bp.id, c, time: .1, reach: reachOf(actor) + 30, name: ENTITIES[bp.type].name + ' blueprint' };
   if (world.frames.has(k)) return { kind: 'frame', k, c, time: .3, reach: reachOf(actor), name: 'Hollow frame' };
   if (c.y === 0) { const f = world.feats.get(k); if (f) return { kind: 'feat', k, c, time: FEATURES[f.type].time, reach: reachOf(actor), name: FEATURES[f.type].name, tool: FEATURES[f.type].tool }; }
   if (c.y === 0 && isWater(c.x, c.z)) { const f = fishTarget(c); return f ? { kind: 'fish', k: 'fish' + f.id, c, fish: f.id, time: .35, reach: reachOf(actor), name: 'Fish' } : null; }
@@ -740,6 +888,7 @@ function mineTick(dt) {
   else if (t.kind === 'road') removeRoad(x, z, t.one);
   else if (t.kind === 'sig') { const e = world.ents.get(t.k); if (e) { e.sig = null; invGive('rail_signal'); world.railDirty = true; bus.emit('remesh', e); } }
   else if (t.kind === 'veh') { const r = removeVehicle(t.veh); if (r) notify('toast', r); }
+  else if (t.kind === 'bp') removeBlueprint(x, y, z);
   else if (t.kind === 'tile') { const e = world.ents.get(key(x, y, z)); if (e) { const r = removeTile(e, x, z); if (r && r !== 'removed') notify('toast', r); } }
   else if (t.kind === 'ore' || t.kind === 'feat' || t.kind === 'patch') {
     // the tool's sweep: everything of the same sort this close to the target goes too
@@ -809,14 +958,57 @@ export function dropAt(c, it) {
   else return false;
   invAdd(it, -1); return true;
 }
-// Ctrl+click: put the held stack into a machine, or empty its outputs into the inventory.
-export function fastTransfer(e, sel) {
-  if (!e || e.kind === 'frame') return 0;
-  let n = 0;
-  if (sel && invGet(sel)) {
-    while (invGet(sel) > 0 && canAccept(e, sel, true) && n < 500) { insert(e, sel); invAdd(sel, -1); n++; }
+// Ctrl+click: put the held stack into a machine, or empty its outputs into the inventory. Where a held item goes is
+// decided the same way for every building, from its slots (entSlots): an ingredient goes only into an input slot that
+// takes it, fuel only into a fuel slot (and only if it is fuel), augments into augment slots, anything else into
+// storage. `mode` (Shift-click selection, see TRANSFER_MODES) narrows it to one kind of slot; 'store' spreads the
+// stack evenly over every storage slot that takes it.
+export const TRANSFER_MODES = {
+  fuel: { name: 'Fuel', desc: 'Ctrl + click with fuel in hand: fill only its fuel slot.' },
+  input: { name: 'Input', desc: 'Ctrl + click with an ingredient in hand: fill only its input slots.' },
+  store: { name: 'Store', desc: 'Ctrl + click with anything in hand: spread the stack evenly over its storage slots.' },
+  aug: { name: 'Augment', desc: 'Ctrl + click with an augment in hand: put it in a free augment slot.' },
+};
+const slotKind = id => id === 'fuel' ? 'fuel' : id === 'src' || id === 'seeds' || id.startsWith('in:') ? 'input' : id.startsWith('aug:') ? 'aug' : id.startsWith('c:') ? 'store' : 'out';   // c: chests, depots and vehicle cargo
+// Which transfer modes make sense for a target: the kinds of slot it has that items can go into.
+export function modesFor(t) {
+  const kinds = new Set(slotsOf(t).map(sl => slotKind(sl.id)));
+  return Object.keys(TRANSFER_MODES).filter(m => kinds.has(m));
+}
+function transferInto(t, it, mode) {
+  const list = slotsOf(t).filter(sl => slotKind(sl.id) !== 'out');
+  const accept = sl => slotAccept(t, sl.id, it);
+  let want = list;
+  if (mode) want = list.filter(sl => slotKind(sl.id) === mode);
+  else {   // an ingredient first (if something here takes it as one), then fuel, augments, storage
+    const pick = k => list.filter(sl => slotKind(sl.id) === k && accept(sl) > 0);
+    want = pick('input');
+    if (!want.length) want = pick('fuel');   // fuel slots only ever take what that building burns
+    if (!want.length && ITEMS[it]?.aug) want = pick('aug');
+    if (!want.length) want = pick('store');
+  }
+  if (mode === 'fuel' && !want.some(sl => accept(sl) > 0)) { notify('toast', `it doesn't burn ${ITEMS[it].name.toLowerCase()}`); return 0; }
+  let n = 0, have = invGet(it);
+  if (mode === 'store' && want.length > 1) {   // evenly: as many slots as will take it share the stack
+    const open = want.filter(sl => accept(sl) > 0);
+    for (let i = 0; i < open.length && have > 0; i++) {
+      const share = Math.ceil(have / (open.length - i)), k = Math.min(share, accept(open[i]));
+      if (k > 0) { slotPut(t, open[i].id, it, k); invAdd(it, -k); have -= k; n += k; }
+    }
     return n;
   }
+  if (t.store && !mode && want.length && want.every(sl => slotKind(sl.id) === 'store')) { const left = t.store.add(it, have); invAdd(it, -(have - left)); return have - left; }
+  for (const sl of want) {
+    if (have <= 0) break;
+    const k = Math.min(have, accept(sl));
+    if (k > 0) { slotPut(t, sl.id, it, k); invAdd(it, -k); have -= k; n += k; }
+  }
+  return n;
+}
+export function fastTransfer(e, sel, mode = null) {
+  if (!e || e.kind === 'frame') return 0;
+  if (sel && invGet(sel)) return transferInto(e, sel, TRANSFER_MODES[mode] ? mode : null);
+  let n = 0;
   const grab = (obj, it) => { const k = Math.min(obj[it], invRoom(it)); if (k > 0) { invAdd(it, k); obj[it] -= k; n += k; if (!obj[it]) delete obj[it]; } };
   if (e.store) for (const [it, have] of e.store.counts()) { const k = Math.min(have, invRoom(it)); if (k > 0) { e.store.remove(it, k); invAdd(it, k); n += k; } }
   if (e.out) for (const it of Object.keys(e.out)) grab(e.out, it);
@@ -843,6 +1035,8 @@ export function simulate(dt, input = { mx: 0, mz: 0 }) {
     n.capacity = n.solar * ENTITIES.solar.out * daylight() + n.hydro + n.engines.reduce((s, e) => s + e.cap, 0);   // solar follows the sun
     n.sat = n.demand > 0 ? Math.min(1, n.capacity / n.demand) : (n.capacity > 0 ? 1 : 0);
   }
+  // a road grid carries only so much: what its own machines want past that slows them down
+  for (const g of world.roadGrids) { g.demand = g.nextDemand; g.nextDemand = 0; g.sat = g.demand > ROAD_POWER.capacity ? ROAD_POWER.capacity / g.demand : 1; }
   if (world.railDirty !== false) rebuildRails();
   beltsTick(dt);
   if ((touchTimer += dt) > .25) { touchTimer = 0; touchBelts(); }
@@ -871,7 +1065,7 @@ export function powerSummary() {
 // ---------------------------------------------------------------- building
 const FAST_REPLACE = new Set(['belt', 'inserter']);   // belts only for belts with the same number of lanes
 export function canPlace(type, x, y, z, dir = S.dir, dy = S.dy, opts = {}) {
-  if (ENTITIES[type]?.multi) return canPlaceMulti(type, opts.tiles || footprint(type, x, z), y, opts);
+  if (ENTITIES[type]?.multi) return canPlaceMulti(type, opts.tiles || footprint(type, x, z, dir), y, { ...opts, dir });
   if (x < 0 || z < 0 || x >= GRID || z >= GRID) return 'out of bounds';
   if (y < 0) underOf(x, z);
   if (!opts.noInv && invGet(type) < 1) return `no ${ENTITIES[type].name} in inventory`;
@@ -907,20 +1101,26 @@ function canPlaceMulti(type, tiles, y, opts) {
   const def = ENTITIES[type];
   if (!tiles.length) return 'nothing to build on';
   if (!opts.noInv && invGet(type) < itemsFor(type, tiles)) return `that needs ${itemsFor(type, tiles)} ${def.name.toLowerCase()}`;
-  if (y !== 0) return `the ${def.name.toLowerCase()} goes on the ground layer`;
+  if (def.big) {   // boilers and steam engines: any open layer, standing on frames above the ground
+    const [lo, hi] = layerRange();
+    if (y < lo || y > hi) return layerLockReason(y);
+    for (const [x, z] of tiles) { if (y < 0) underOf(x, z); if (y > 0 && !world.frames.has(key(x, y - 1, z))) return 'nothing to stand on: put hollow frames under every tile'; }
+  } else if (y !== 0) return `the ${def.name.toLowerCase()} goes on the ground layer`;
   if (def.drag && tiles.length < 2) return 'drag it across at least two tiles of water';
   if (opts.reach && !tiles.some(([x, z]) => distTo(x, z) <= reachOf(actor) + 1)) return 'out of reach';
   for (const [x, z] of tiles) {
     if (x < 0 || z < 0 || x >= GRID || z >= GRID) return 'out of bounds';
     const k = key(x, y, z);
-    if (world.feats.has(k)) return `a ${FEATURES[world.feats.get(k).type].name.toLowerCase()} is in the way: hold right-click to mine it`;
-    const wet = isWater(x, z);
+    if (y === 0 && world.feats.has(k)) return `a ${FEATURES[world.feats.get(k).type].name.toLowerCase()} is in the way: hold right-click to mine it`;
+    const wet = y === 0 && isWater(x, z);
     if (def.onWater ? !wet : wet) return def.onWater ? `a ${def.name.toLowerCase()} goes across water` : 'you can\'t build on water';
     if (world.ents.get(k)) return 'occupied';
-    if (roadAt(x, z)) return 'keep roads clear';
-    if (world.oil.has(x + ',' + z)) return 'there is crude oil under it';
+    if (y === 0 && roadAt(x, z)) return 'keep roads clear';
+    if (y === 0 && world.oil.has(x + ',' + z)) return 'there is crude oil under it';
+    if (def.big && y === 0 && opts.reach && playerBlocks(x, z)) return 'you are standing there';
   }
   if (groups(tiles).length > 1) return `a ${def.name.toLowerCase()} has to be one piece`;
+  if (def.big && (def.fluids || def.ports)) { const f = fluidConflict(type, tiles[0][0], y, tiles[0][1], opts.dir ?? 0, opts.fac ?? actorFac(), null, tiles); if (f) return f; }
   return null;
 }
 // Place a building that covers several tiles. Touching ones of its kind join it into one (see multi.js).
@@ -934,6 +1134,7 @@ export function placeMulti(type, tiles, y, dir = 0, free = false, fac = null) {
   world.powerDirty = true; world.fluidDirty = true;
   if (near.length) {   // grow the biggest touching one, and fold the rest into it
     const base = near[0];
+    removeBlueprintsUnder(e.foot, y);
     base.foot.push(...e.foot);
     joinAll(base, near.slice(1));
     bus.emit('remesh', base);
@@ -941,6 +1142,7 @@ export function placeMulti(type, tiles, y, dir = 0, free = false, fac = null) {
   }
   setFoot(e);
   world.ents.set(key(e.x, e.y, e.z), e);
+  removeBlueprintsUnder(e.foot, y);
   bus.emit('placed', e);
   return e;
 }
@@ -983,7 +1185,16 @@ function refundMulti(e) {
 // Which factory the acting engineer is building for (see Factories in state.js).
 export const actorFac = () => factoryOf(actor.fac)?.id ?? 1;
 export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false, fac = null) {
-  if (ENTITIES[type]?.multi) return placeMulti(type, footprint(type, x, z), y, dir, free, fac);
+  if (ENTITIES[type]?.multi) return placeMulti(type, footprint(type, x, z, dir), y, dir, free, fac);
+  return placeOne(type, x, y, z, dir, dy, free, fac);
+}
+// A big building from an old save that is still one tile: it stays one tile, with its old connections (see sizeOf).
+export function placeCompact(type, x, y, z, dir, fac) {
+  const e = placeOne(type, x, y, z, dir, 0, true, fac);
+  if (typeof e === 'object' && e) e.compact = true;
+  return e;
+}
+function placeOne(type, x, y, z, dir, dy, free, fac) {
   if (!free) { const err = canPlace(type, x, y, z, dir, dy, { fac }); if (err) return err; invAdd(type, -1); }
   const k = key(x, y, z);
   if (type === 'frame') {
@@ -1012,6 +1223,7 @@ export function place(type, x, y, z, dir = S.dir, dy = S.dy, free = false, fac =
     }
   }
   world.ents.set(k, e);
+  removeBlueprintsUnder([[x, z]], y);
   if (e.belt) world.beltDirty = true;
   if (e.kind === 'rail') world.railDirty = true;
   world.powerDirty = true; world.fluidDirty = true;
@@ -1073,8 +1285,9 @@ export function linkPoles(kind, a, b) {
   if (Math.hypot(A.x - B.x, A.z - B.z, A.y - B.y) > tool.reach) return `too far: a ${tool.name.toLowerCase()} reaches ${tool.reach} tiles`;
   const da = ENTITIES[A.type], db = ENTITIES[B.type];
   if (tool.transformer) {
-    const [t, o] = da.volts?.length > 1 ? [da, db] : db.volts?.length > 1 ? [db, da] : [];
-    if (!t || !t.volts.slice(1).some(v => voltsOf(o).includes(v))) return 'transformer cables go from a transformer station to a line of its other voltage';
+    const st = tool.steps, isSt = d => d.volts?.length > 1 && d.volts[0] === st[0] && d.volts.includes(st[1]);
+    const [t, o] = isSt(da) ? [da, db] : isSt(db) ? [db, da] : [];
+    if (!t || !voltsOf(o).includes(st[1])) return st[0] === 2 ? 'step-up cables go from a step-up station to a low voltage pole' : 'transformer cables go from a transformer station to a high voltage line';
   } else if (autoVolt(da) !== autoVolt(db)) return 'different voltages: link them through a transformer station';
   if (!invGet(kind)) return `no ${tool.name.toLowerCase()} in inventory`;
   invAdd(kind, -1);
@@ -1100,8 +1313,16 @@ export function editMarks(op) {
 }
 
 export function rotateEntity(e, by = 1) {
-  if (!e || e.kind === 'frame' || isMulti(e)) return;
-  if (e.kind === 'rail') return;
+  if (!e || e.kind === 'frame' || e.kind === 'rail') return;
+  if (isMulti(e)) {   // big buildings turn on their north-west tile when there is room; rooms and dams never turn
+    if (!isBig(e)) return;
+    const dir = (e.dir + by + 4) % 4, foot = footprint(e.type, e.x, e.z, dir);
+    if (foot.some(([x, z]) => { const o = world.ents.get(key(x, e.y, z)); return (o && o !== e) || (e.y === 0 && (isWater(x, z) || world.feats.has(key(x, 0, z)) || roadAt(x, z))); })) { notify('toast', 'no room to turn it there'); return; }
+    rekey(e, () => { e.foot = foot; setFoot(e); });
+    e.dir = dir; world.fluidDirty = true; world.powerDirty = true;
+    bus.emit('remesh', e);
+    return;
+  }
   e.dir = (e.dir + by + 4) % 4;
   if ((e.kind === 'underground' || e.kind === 'upipe') && e.pair) { e.pair.pair = null; bus.emit('remesh', e.pair); e.pair = null; }
   if (e.belt) world.beltDirty = true;

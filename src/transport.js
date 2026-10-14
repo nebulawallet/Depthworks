@@ -4,7 +4,7 @@
 // and trains are "units" that follow a path of tiles (road, water or rail) to the stops of a route. One path
 // finder, one path follower and one scheduler serve all three ways, so trucks, ships and trains behave alike.
 import { ENTITIES, ITEMS, ROADS, FRAMES, VEHICLES, vehicleStats, FLUIDS, FUELS, BARREL_SIZE, PLAYER, FEATURES } from './data.js';
-import { S, world, key, DIRS, GRID, bus, Inventory, isWater, invGive, invAdd, invGet, actor, notify, stackOf, removeFeat } from './state.js';
+import { S, world, key, DIRS, GRID, bus, Inventory, isWater, invGive, invAdd, invGet, actor, notify, stackOf, removeFeat, isResearched } from './state.js';
 import { draw, room } from './fluids.js';
 import { distTo } from './sim.js';
 
@@ -60,7 +60,7 @@ export function placeRoad(op) {
   }
   for (const [it, n] of Object.entries(need)) if (invGet(it) < n) return `that needs ${n} ${ITEMS[it].name.toLowerCase()}`;
   if (!changes.length) return null;
-  for (const [x, z, t, old] of changes) { if (old) invGive(old.s); invAdd(t.s, -1); world.roads.set(tk(x, z), t); }
+  for (const [x, z, t, old] of changes) { if (old) invGive(old.s); if (old?.p) t.p = old.p; invAdd(t.s, -1); world.roads.set(tk(x, z), t); }   // a conduit stays in a road laid over again
   roadsChanged(changes.map(([x, z, t]) => [x, z, t]));
   return null;
 }
@@ -68,7 +68,7 @@ export function placeRoad(op) {
 export function removeRoad(x, z, one = false) {
   const r = roadAt(x, z); if (!r) return;
   const tiles = one || !r.o ? [[x, z]] : roadTiles(r.o);
-  for (const [a, b] of tiles) { const t = roadAt(a, b); if (t) { world.roads.delete(tk(a, b)); invGive(t.s); } }
+  for (const [a, b] of tiles) { const t = roadAt(a, b); if (t) { world.roads.delete(tk(a, b)); invGive(t.s); if (t.p) invGive('road_conduit'); } }
   roadsChanged(tiles.map(([a, b]) => [a, b, null]));
 }
 // Paste a road's lanes and markings onto another road (the whole of it; its width stays).
@@ -93,8 +93,23 @@ function groupOldRoads() {
   }
 }
 // Co-op: road changes made on the host arrive as a list of [x, z, tile or null].
-export function applyRoads(list) { for (const [x, z, t] of list || []) t ? world.roads.set(tk(x, z), t) : world.roads.delete(tk(x, z)); world.wayVersion = (world.wayVersion || 0) + 1; bus.emit('roads', list); }
-function roadsChanged(list) { world.wayVersion = (world.wayVersion || 0) + 1; bus.emit('roads', list); }
+export function applyRoads(list) { for (const [x, z, t] of list || []) t ? world.roads.set(tk(x, z), t) : world.roads.delete(tk(x, z)); world.wayVersion = (world.wayVersion || 0) + 1; world.powerDirty = true; bus.emit('roads', list); }
+function roadsChanged(list) { world.wayVersion = (world.wayVersion || 0) + 1; if (list.some(c => c[2]?.p || world.roadGrids?.length)) world.powerDirty = true; bus.emit('roads', list); }
+// Lay power conduits into road tiles (Powered roads research): one road conduit a tile, roads only. See ROAD_POWER.
+export function layConduit(tiles) {
+  if (!isResearched('road_power') && !S.sandbox) return 'research Powered roads first';
+  if (!Array.isArray(tiles)) return null;
+  const list = [];
+  for (const c of tiles.slice(0, 64)) {
+    const x = Math.floor(+c[0]), z = Math.floor(+c[1]), t = roadAt(x, z);
+    if (!t || t.p || distTo(x, z) > PLAYER.reach + 2) continue;
+    if (!invGet('road_conduit')) { if (!list.length) return 'no road conduits in inventory'; break; }
+    invAdd('road_conduit', -1); t.p = 1; list.push([x, z, t]);
+  }
+  if (!list.length) return tiles.some(([x, z]) => roadAt(x, z)) ? null : 'conduits go into roads: drag over road tiles';
+  world.powerDirty = true; roadsChanged(list);
+  return null;
+}
 
 // ---------------------------------------------------------------- rails
 const railAt = (x, z) => { const e = world.ents.get(key(x, 0, z)); return e?.kind === 'rail' ? e : null; };

@@ -115,7 +115,63 @@ export function rebuildBelts() {
   lines.forEach(visit);
   world.lines = order; world.beltDirty = false; world.beltRepack = false;
   world.beltVersion = (world.beltVersion || 0) + 1;
+  buildTaps(belts);
   bus.emit('belts');
+}
+
+// ---------------------------------------------------------------- outputs (taps)
+// Any two-lane belt tile can push the lane nearest one of its sides out into whatever stands on that side: a chest, a
+// machine, another belt (as a side-load). `bout` on the tile: { L, R }, each null (off), '*' (anything) or an item.
+// A tap takes items off its lane where they pass the tile, as fast as the lane brings them, and never splits the line:
+// it works like an inserter reaching into the belt, so the line stays one line. Chests fed this way show open.
+export const tapsOf = b => b.bout && (b.bout.L || b.bout.R);
+const OUT_SIDES = [['L', 0, 3], ['R', 1, 1]];   // [setting, lane, side relative to the belt's direction]
+function buildTaps(belts) {
+  for (const c of world.tapChests || []) c.tapFed = false;
+  const taps = [], chests = [];
+  for (const b of belts) {
+    if (!tapsOf(b) || b.kind !== 'belt' || lanesOf(b) !== 2) continue;
+    for (const [k, li, rel] of OUT_SIDES) {
+      const f = b.bout[k]; if (!f) continue;
+      const d = (b.dir + rel) % 4, n = neighbour(b, d);
+      let t = null;
+      if (n && sameFac(b, n)) t = isBeltLike(n) ? target(b, d, n) : TAP_NOT.has(n.kind) ? null : { ent: n };
+      taps.push({ b, li, f, d, t, cd: 0, side: k });
+      if (t?.ent?.kind === 'chest') { t.ent.tapFed = true; chests.push(t.ent); }
+    }
+  }
+  world.taps = taps; world.tapChests = chests;
+}
+const TAP_NOT = new Set(['inserter', 'pole', 'frame', 'rail', 'pipe', 'upipe', 'fpump', 'valve', 'tank']);
+// A building going up or coming down beside a tap changes where it pushes to.
+const nearTap = e => (world.taps || []).some(T => { const [dx, dz] = DIRS[T.d]; return T.b.y === e.y && (e.foot || [[e.x, e.z]]).some(([x, z]) => x === T.b.x + dx && z === T.b.z + dz); });
+for (const ev of ['placed', 'removed']) bus.on(ev, e => { if (e.kind !== 'frame' && nearTap(e)) world.beltDirty = true; });
+function tapsTick(dt) {
+  for (const T of world.taps || []) {
+    if ((T.cd -= dt) > 0 || !T.t) continue;
+    const b = T.b, ln = b.line; if (!ln?.packed) continue;
+    const a = ln.L[T.li].items, hi = b.line.segs[b.line.segs.length - 1] === b ? Infinity : b.off + b.len;
+    for (let i = firstBelow(a, hi); i < a.length && a[i].x >= b.off - EPS; i++) {
+      const type = a[i].type;
+      if (T.f !== '*' && T.f !== type) continue;
+      if (T.t.ent ? !canAccept(T.t.ent, type) : !T.t.line?.packed || !lineAccepts(T.t.line, type)) break;
+      if (T.t.ent) { removeIndex(ln, T.li, i); insert(T.t.ent, type); tint(T.t.ent, type); }
+      else if (toTarget(T.t, ln, T.li, type, 0)) removeIndex(ln, T.li, i);
+      else break;
+      T.cd = SPACING / ln.speed;   // one lane's worth of throughput, no more
+      break;
+    }
+  }
+}
+// The colour of what a tapped chest has been fed lately, for its open lid: blended toward each new item, so a chest fed
+// one ore turns that colour and a mixed feed settles between them. Item colours are worked out once.
+const ITEM_RGB = {};
+for (const [id, it] of Object.entries(ITEMS)) ITEM_RGB[id] = [(it.color >> 16 & 255) / 255, (it.color >> 8 & 255) / 255, (it.color & 255) / 255];
+function tint(e, type) {
+  if (e.kind !== 'chest') return;
+  const c = ITEM_RGB[type], t = e.tint ||= [c[0], c[1], c[2]];
+  for (let i = 0; i < 3; i++) t[i] += (c[i] - t[i]) * .2;
+  e.fedT = S.T;
 }
 function makeLine(segs, claimed) {
   const first = segs[0], n = lanesOf(first);
@@ -264,6 +320,7 @@ export function beltsTick(dt) {
     for (let li = 0; li < ln.n; li++) if (laneTick(ln, li, s)) moved = true;
     if (moved) ln.act = S.T;
   }
+  tapsTick(dt);
 }
 function laneTick(ln, li, s) {
   const L = ln.L[li], a = L.items;
@@ -398,6 +455,14 @@ export function beltCommand(e, cmd, arg) {
       world.beltDirty = true; bus.emit('remesh', e); return true;
     }
     case 'midoff': if (isBusTile(e)) { e.midOff = !e.midOff; world.beltDirty = true; bus.emit('remesh', e); } return true;
+    case 'bout': {   // "L:item", "L:*" or "L:" (off), and the same for R: a lane pushed out to that side
+      if (e.kind !== 'belt' || lanesOf(e) !== 2) return true;
+      const [side, it] = String(arg).split(':'), v = it === '*' ? '*' : ITEMS[it] ? it : null;
+      if (side !== 'L' && side !== 'R') return true;
+      e.bout = { L: e.bout?.L ?? null, R: e.bout?.R ?? null, [side]: v };
+      if (!e.bout.L && !e.bout.R) e.bout = null;
+      world.beltDirty = true; bus.emit('remesh', e); return true;
+    }
     case 'sort': if (isBusTile(e)) { e.sort = !e.sort; world.beltDirty = true; bus.emit('remesh', e); } return true;
   }
   return false;

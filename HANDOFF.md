@@ -15,12 +15,39 @@ glyphs, and something answers using only the mechanisms it has heard.
 
 ## Where the last session left off
 
-Everything is committed and pushed (`main` at "Warmer biome colours, a 24-hour clock and a smooth daylight curve").
-That session added generated chunked worlds with biomes, multi-tile objects, tools, farming, the medical lab, dams,
-nuclear power, advanced fluids and copy/paste (see the status table and "Judgment calls" below), then tuned looks on
-the owner's feedback: bigger biomes and ore patches, borders that fade into whatever is across them (`groundColors`
-in worldgen.js), warmer palettes, a 24-hour clock in the status panel and daylight that follows the sun's height all
-day. The owner tests by serving the folder (`python -m http.server 5173`) and playing; nothing they reported is open.
+Everything is committed and pushed (`main` at "Add research queue and tree, power tiers, blueprints, crafting stations and more").
+The owner has not played it by hand yet: start with "Not verified" below, then their feedback.
+
+This session worked through a long list from the owner (research, power, interaction, visuals, map, camera, crafting
+stations, belt outputs). In short:
+
+- **Research:** a queue (labs work down it; queuing a tech queues what it needs first; reorder and remove from the
+  panel; saved and synced) and a new research window, research.js: a left-to-right tree in sections (`TECH_CATS`),
+  curved prerequisite lines, node states, tooltips, pan, zoom and search.
+- **Rebalance:** electric furnaces at red science (Electric smelting needs only Steel), a Steel electric furnace (×3,
+  165 kW, 3 augment slots) with green science (Advanced smelting), Crafting stations (red), Powered roads (red and green,
+  after Roads and Electric distribution).
+- **Power:** a third voltage, extra-low (`ELV`): generators feed only generator poles; a step-up station plus a step-up
+  cable lift it into low voltage. Boilers are 2×1 and steam engines 2×2 (`big`, turned with R), with paired in and
+  out arrows at their ports. Road conduits carry low voltage under roads to machines beside them. Power poles drag out
+  in lines spaced to their coverage, previewed while dragging.
+- **Building and hands:** blueprints (Shift + place, or Q on something you can't build; stippled; click one to build
+  it), Q over ore picks the best drill, Ctrl+click routes items by slot kind everywhere, Shift+click selects a building
+  for transfer modes (fuel, input, store evenly, augment), click an engineer for their details.
+- **Looks:** a shared stippled see-through path (dither) for ghosts, previews, blueprints, glass and the see-through
+  ground; the interface drawn after the night; darker midnights (`DAY.midnightLight`, `nightCurve`); more colourful
+  biomes, and the real culprit behind the washed-out ground fixed (terrain textures were decoded as linear because
+  the line setting their colour space sat inside a comment); ore that barely shows until it is worked, with global
+  stages by wear and depth; fuller ore patches in new worlds (generation v2).
+- **Belts and chests:** single belt tiles push one lane out to the side (Outputs in the belt panel, filters, copy and
+  paste) without splitting the line; chests fed that way stand open with their goods churning in the fed colours.
+  Underground belts show their traffic in depth mode, below the ground.
+- **Crafting stations:** assemblers with an arm that fetches ingredients one at a time from chests within 3 tiles.
+- **Map:** dirty-set refresh with a per-chunk building index and a time budget, quarter-resolution regions when zoomed
+  out, a rendered close-up when zoomed in (turnable in depth mode), wheel zoom on the minimap.
+- **Camera:** a free mode (C) turned and tilted with a middle-button drag, alongside the fixed one.
+- **Collision:** smaller shapes for small things (`hitOf`), a smaller engineer (radius .22), and pipe lines that only
+  block along their straight runs, so rows of anything small can be walked between.
 
 ## Status
 
@@ -29,13 +56,13 @@ day. The owner tests by serving the folder (`python -m http.server 5173`) and pl
 | Core loop (mine → smelt → craft → automate → research) | Done, played through in code-driven tests |
 | Engineer, Factorio controls, reach, collision | Done. Hand mining shows one counting popup per haul ("+3 Iron ore (47)") |
 | Inventories | Real slots (80 for the player, 16/32 for chests), drag and drop, typed machine slots. Clicking any usable item (building, road, vehicle, cable, signal, food) in the inventory puts it in the hand |
-| Building | Placing something you've run out of crafts it (and its parts) if you have the materials; the spot waits as a pale square and builds itself when the craft lands, so belt drags keep going |
+| Building | Placing something you've run out of crafts it (and its parts) if you have the materials; the spot waits as a pale square and builds itself when the craft lands, so belt drags keep going. Blueprints (Shift + place, Q on what you can't build, click to build). Belts keep the direction R gives them |
 | Logistics | Two-lane belts in 3 tiers (4 items per lane per tile, side-loads onto the near lane, curves keep lanes), undergrounds, splitters with per-way filters, lifts. Simulated as lines (`belts.js`). Three-lane bus belts with filtered side channels and a bus underground. Belt lines tab in the logistics window: names, filters, speed augments, network diagram |
 | Augments | Speed / efficiency / productivity in 5 tiers (10/15/25/35/50%), depth (2 tiers) for drills. 2 slots by default, 3 on assembler II, refinery, big drill, 4 on the vehicle factory |
 | Deposits | Never run out: surface (4× the old amount), depth (10×, slower, 1 in 6 cycles gives two), endless bedrock. Burner drill reaches surface, electric drill depth, big drill bedrock |
 | Sandbox | Title screen: everything researched, crafting free and instant, an Everything tab handing out any item |
 | Health and stamina | 100 health: moving vehicles hurt (9 per tile/s of speed), it regenerates after 5 s (faster well fed), food heals, death respawns you at the landing site with your inventory. Hold Shift to sprint (x1.55) on stamina |
-| Power | Solar, small/medium poles, separate networks. Steam chain (water pump → boilers → steam engines, Factorio's 1:20:40, load-based), high voltage power lines (21×21), transformer stations, hand-strung power and transformer cables, brownouts, flashing plugs on unpowered machines |
+| Power | Three voltages: extra-low (generators, generator poles), low (machines), high (power lines). Steam chain (water pump → 2×1 boilers → 2×2 steam engines, Factorio's 1:20:40, load-based) into generator poles, a step-up station and step-up cable into low voltage, transformer stations into high voltage. Powered roads (conduits). Pole lines dragged out by coverage. Brownouts, flashing plugs on unpowered machines |
 | World | Generated from a seed, 500 to 65536 tiles a side (2048 by default), in 32×32 chunks made when first needed (worldgen.js). World options on the new game screen: size, seed, biome size, water, ore. Saves keep only the seed, options and edits. Worlds from before chunks load as they were (96 tiles) and gain weedy patches |
 | Rendering | Chunks around the camera only (terrain.js): a coarse picture at once, full detail painted a few tiles a frame, texture detail by zoom (16/8/4 texels a tile), flora hidden zoomed out, models only for buildings in shown chunks |
 | Biomes | 11, defined in data (BIOMES): climate, ground, ores and patterns, trees, flora, weedy patches, oil, three crops. Biomes are large (climate scale 520 tiles by default) and ore patches big (starter patches 1.7× the old size). The landing site has livable biomes all around. Borders wander in a smooth warp, and each tile's ground colour is a 13-tile blur of the biomes actually around it (groundColors), on the ground and the map alike. Hazards in six (heat, cold, fumes, spores, resonance, radiation): exposure builds and fades, never kills, adaptations cut it |
@@ -54,7 +81,7 @@ day. The owner tests by serving the folder (`python -m http.server 5173`) and pl
 | Fish | Fish swim near engineers; every chunk's water keeps a population with logistic regrowth (caught up when someone returns). Catch by hand (hold right-click), eat for a speed buff, cook in furnaces. Boat nets catch past a stack and tear at two |
 | Map | Minimap, big map (M) with zoom/pan, markers, labelled areas, terrain/resources/production/power views |
 | Interface | One compact quickbar row with a 1/2/3 switch (X cycles), health and stamina bars beside it, Hide UI (H). Pause menu (F1, or Esc once nothing else is open): resume, settings (volume, building icons, goals list, minimap), controls and key rebinding, how to play, save, export, save and quit. It pauses solo games. Rendering is fixed at the normal pixel size |
-| Research | 38 techs, 4 science pack tiers, gated by precision for depth |
+| Research | 48 techs plus 18 tool upgrades in 9 sections, 4 science pack tiers, gated by precision for depth. A queue (saved, synced), and a left-to-right tree window with search |
 | Depth | Layers −2..4, hollow frames, ghosting, lazily painted underground floors |
 | Alien conversation | 9 scripted exchanges plus ambient replies, glyph animations, clarity that grows |
 | Look | Pixel-snapped camera, toon shading, outline post pass, ore piles, trees/rocks, particles |
@@ -143,7 +170,47 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
   line and a filter inserter; co-op host and guest building identical chunks, a guest's greenhouse and a dug patch
   syncing.
 
+- **This session, in the browser pane (two tabs for co-op, an old build in a worktree for old saves):**
+  - Steam chain on the new tier: pump → 2×1 boiler → 2×2 engines → generator pole → step-up station → step-up cable →
+    small pole → assembler: 'working'. Without the cable the assembler has no power. One boiler at full fire gives
+    exactly 1800 kW, shared by three engines at 67% (two engines' worth: the ratio holds).
+  - Collision: walking between two touching rows of pipes, three rows of pipes, irrigation and steel pipe, pipe and
+    chest, inserter and chest, pole and filter inserter, valve and pump all get through; a single pipe line can't be
+    walked through; full machines stay solid. (Test: a row of 10 at z and z+1, start at z+1 left of them, run 3 s.)
+  - Research queue: prerequisites queue first, moves stop at dependencies, removal takes dependents along. Real clicks
+    in the tree (queue), wheel zoom, typing in search.
+  - Real mouse: placing a 2-wide boiler (preview follows the mouse, arrows pairs at its ports), Shift+click planning a
+    blueprint, Q emptying the hand, clicking a blueprint to build it, Shift+click selecting a boiler, choosing Fuel
+    and Ctrl+click with coal (all 50 went into its fuel), dragging small poles (3 placed 5 apart, the 4th out of reach
+    planned as a blueprint), clicking the engineer for details, C and a middle drag turning and tilting the camera.
+  - Ctrl+click routing: coal → furnace fuel, ore → furnace input, packs → lab inputs, augments → lab augment slots,
+    coal refused by a lab, wood → brazier fuel; Fuel mode refuses ore; Store mode spreads 108 plates over 16 chest slots
+    (7 or 6 each).
+  - Belt outputs: 33 items of a mixed belt went into a chest from the left lane; the chest's lid opens and its goods
+    take the blended colour. Crafting station: fetched 20 plates one trip at a time, made 9 gears, idle without power.
+  - Q over ore: no drills held → electric drill as a blueprint; burner drills held → burner drill; both → electric.
+  - Saves: a world with everything new round-trips identically. A save made by the previous commit loads: its boiler
+    and engines stay one tile (`compact`), keep powering the assembler through the small pole, and its current
+    research becomes the queue; its world keeps generation v1.
+  - Co-op: a guest's blueprint, queued research and belt output reach the host (and the host's taps rebuild), and the
+    host sees what the guest holds.
+  - Map: the close-up renders the scene around you; zoomed out, regions draw the whole charted world; after building,
+    a map update costs about 0.02 ms. Ore: new worlds' starter patches are solid (65% → 100% of the disc), ragged edge
+    tiles 21% → 8% of biome ore, with about the same ore overall (the threshold lift was measured for that).
+  - Looks seen in screenshots: midnight, the brazier's light, alt-mode icons and bars at night; worked against fresh
+    ore; stippled ghosts, previews, blueprints and see-through ground in depth mode with tunnel traffic below.
+
 ## Not verified (treat as risks)
+
+- **This session's work by hand at length.** Everything above was driven from code and screenshots in an 800×600
+  pane. Not felt by hand: the free camera's feel (and how much it shimmers), the research window on a big screen, pole
+  dragging while walking, belt outputs at scale, crafting stations in a real build.
+- **Picking with the free camera at low tilt** (raycasts are right in principle; only checked at one angle).
+- **The map close-up's cost** on a slow machine: it renders and reads back up to 256×256 every 0.12 s while shown.
+- **Co-op for the newest pieces:** step-up cables strung by a guest, a guest's crafting station arm (guests only draw
+  the host's), a guest Shift-selecting and using transfer modes.
+- **Brighter ground everywhere:** fixing the terrain colour space changed every biome (and underground floors are
+  darker). The new palettes were chosen with it fixed, but only the meadow, steppe, taiga and the far map were looked at.
 
 - **The new systems by hand.** Most of this session's work was driven from the console and checked with screenshots:
   dragging a dam with the mouse, Shift-click copy/paste in the logistics window and network diagram, rebinding copy
@@ -188,7 +255,50 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
   first guesses.
 - **Old worlds stay 96×96.** Only new worlds are big; an old save can't grow.
 
-## Judgment calls this session (confirm with the owner)
+## Judgment calls, latest session (confirm with the owner)
+
+- **The low tier is "extra-low voltage"** (ELV), below low voltage, to fit "Low voltage / High voltage". Its pieces:
+  generator pole, step-up station, step-up cable, all craftable from the start from wood, copper cable, plates and
+  gears. Steam engines and diesel generators feed it; **solar panels still feed low voltage directly** (they aren't a
+  "steam" generator, and making them need a step-up too felt like a tax).
+- **Old boilers and engines stay one tile and keep their direct connection** (`compact`) instead of being regrown to
+  2×1 / 2×2: that never overlaps anything and nothing loses power. A new one placed (or an old one picked up and put
+  back) is big and feeds generator poles only. A toast-free change: their panels say so.
+- **Steam engines join any touching steam neighbour; pipes join only at their two ends.** Boilers: water in and on at
+  both short ends, steam out of both back edges. Big buildings turn (R) on their north-west tile when there's room.
+- **Powered roads:** conduits are laid into existing road tiles with a conduit item (drag), one a tile; any road
+  surface or path. A grid joins low voltage poles of one factory whose supply area covers it (or within 1 tile), feeds
+  machines within 1 tile of it, and carries at most 3 MW to those machines (past that they slow down). Rails are
+  unaffected. Numbers in `ROAD_POWER`.
+- **Belt drags no longer turn belts** (Factorio 1.1's way): a belt goes down facing where R points, however you drag or
+  walk. Q still copies a building's direction (the pipette is "the player specifying" it).
+- **Shift + left click with an empty hand pastes when something is copied, and selects otherwise.** Esc clears the
+  clipboard (and the selection), so you can always get to selecting. With a building in hand Shift plans a blueprint.
+- **Store mode spreads a stack over the target's storage slots** (chests, depots, vehicle cargo); machines without
+  storage don't offer it.
+- **Player info** shows name, health, stamina, held item, what they're doing (walking, mining what, driving what),
+  the factory they build for, well-fed time, hazard exposure, and the tools (research levels, shared by everyone).
+  There is no armour or equipment grid in the game, so "equipment" is the held item and the tools.
+- **Pipes are walkable between, not across:** a link is solid only along a plain straight run, so a single line still
+  blocks while touching lines (which join each other everywhere) leave their gaps open. The engineer got smaller
+  (radius .28 → .22) so every two-row layout of small things clears.
+- **The map close-up lives in the big map and the minimap** (wheel zooms the minimap now). Only where the world is
+  loaded (around you); elsewhere it says it is too far. "Pannable in every direction" in depth mode: the map pans as
+  always, and a right-drag turns and tilts the close-up all the way round.
+- **The free camera** is a second mode (C, also in settings), not a replacement: a middle-button drag turns and tilts
+  it in flat and depth mode; a middle click without dragging is still the pipette. Going back snaps to the fixed view.
+- **Dither:** ghosts, previews, blueprints, glass, roofs and the see-through ground are stippled. Interface overlays
+  (tile highlights, supply areas, arrows) and water streaks stay blended: they are interface or effects, not things.
+- **Ore stages are global** (one table for every ore, by wear plus layer). The "transitions" are the ground and piles
+  changing over six stages and a shared edge blend between ore and ground (and between ores).
+- **Fuller ore patches only in new worlds** (`world.gen.v` 2): older worlds' chunks are made again from their seed, and
+  their buildings stand on that ore.
+- **Crafting stations** take from chests (wooden and iron) of their factory within a 7×7 square, enough for two
+  crafts at a time, and also accept inserters like any assembler.
+- **Research clicks:** click queues (with prerequisites), Ctrl+click researches first, right-click unqueues. Moving an
+  item stops at its prerequisites and dependents.
+
+## Judgment calls, the session before (confirm with the owner)
 
 - Barrels hold 10 (asked for) instead of 50. Old saves get five barrels for each filled one, and the barrel stack went
   from 10 to 50 so slots carry the same fluid. Filled barrels on belts keep one there and drop four beside it.
@@ -272,7 +382,10 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 - Use port 5174 (`depthworks-alt` in `.claude/launch.json`) for your own server. It's a different origin from 5173,
   so its localStorage (and saves) are separate.
 - The browser caches modules hard. After editing, refresh them with `fetch('/src/<file>.js', { cache: 'reload' })`
-  for each changed file, then reload, or the old code keeps running. Await all the fetches before reloading.
+  for each changed file (and `/` for index.html), then reload, or the old code keeps running. Await all the fetches
+  before reloading.
+- To check an old save against new code: `git worktree add --detach <dir> HEAD~n`, serve it on another port, build
+  something there, read `(await import('/src/save.js')).serialize()`, and `loadData(JSON.parse(text))` it here.
 - To see night, set `depthworks.S.T` (T = 0 is hour `DAY.start`; an hour is `DAY.length / 24` seconds: `S.T = 14 * 60` is 22:00) and run a second.
 - In the in-app browser pane, a hidden pane gets no animation frames. Taking a screenshot forces a frame, and
   `depthworks.run(seconds)` steps the simulation.

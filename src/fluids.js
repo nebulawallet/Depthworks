@@ -41,8 +41,24 @@ export function boxesOf(e) {
     });
     return list;
   }
-  if (def.fluids) return Object.keys(def.fluids).map((f, i) => ({ i, fluid: f, io: def.fluids[f], sides: ALL, pipeSides: def.pipeSides?.[f]?.map(s => (s + e.dir) % 4), cap: def.cap }));
+  // big buildings (boilers, steam engines) join neighbours along their whole outside edge, pipes only at the edges on
+  // their pipe sides; one-tile ones from old saves join on every side as they always did
+  if (def.fluids) return Object.keys(def.fluids).map((f, i) => ({ i, fluid: f, io: def.fluids[f], sides: ALL, cap: def.cap * (e.foot?.length || 1),
+    pipeSides: e.foot || f !== 'steam' || e.kind !== 'engine' ? def.pipeSides?.[f]?.map(s => (s + e.dir) % 4) : undefined, touch: e.foot ? perimeter(e) : undefined }));
   return [];
+}
+// The tile edges a box joins at: [x, z, d] for each, d the absolute side it faces.
+const edgesOf = (e, A) => A.touch || (A.pipeSides ? [...new Set([...A.sides, ...A.pipeSides])] : A.sides).map(d => [e.x, e.z, d]);
+// Where a fluid building's pipes connect, for drawing: [x, z, d, fluid, through] for every tile edge a pipe can join on
+// its pipe sides (big buildings only list edges on those sides). `through`: the fluid passes on to the other side too.
+export function portEdges(e) {
+  const def = ENTITIES[e.type]; if (!def?.fluids || !def.pipeSides) return [];
+  const out = [];
+  for (const B of boxesOf(e)) {
+    if (!B.pipeSides) continue;
+    for (const [x, z, d] of edgesOf(e, B)) if (B.pipeSides.includes(d)) out.push([x, z, d, B.fluid, !!def.through?.includes(B.fluid)]);
+  }
+  return out;
 }
 // Can box A (on a) reach box B (on the neighbour b, which lies in direction d from a)?
 function connects(a, A, d, b, B) {
@@ -75,7 +91,7 @@ export function rebuildFluids() {
   for (const A of boxes) {
     const a = A.e;
     // the tile edges this box can join at: every outside edge of a building over several tiles, else its own sides
-    for (const [x, z, d] of A.touch || (A.pipeSides ? [...new Set([...A.sides, ...A.pipeSides])] : A.sides).map(d => [a.x, a.z, d])) {
+    for (const [x, z, d] of edgesOf(a, A)) {
       const [dx, dz] = DIRS[d], b = world.ents.get(key(x + dx, a.y, z + dz));
       if (!b?._boxes || b === a) continue;
       for (const B of b._boxes) if (connects(a, A, d, b, B)) { join(A.id, B.id); if (!A.touch) a.conn |= 1 << d; }
@@ -220,13 +236,14 @@ export function passThrough(e, dt, power) {
 }
 
 // Would placing `type` here connect lines that hold different fluids? (Factorio refuses that too.)
-export function fluidConflict(type, x, y, z, dir, fac, recipe) {
-  const fake = { type, kind: ENTITIES[type].kind, x, y, z, dir, fac, recipe, role: 'in' };
+export function fluidConflict(type, x, y, z, dir, fac, recipe, foot = null) {
+  const fake = { type, kind: ENTITIES[type].kind, x, y, z, dir, fac, recipe, role: 'in', foot };
+  if (foot) fake.footSet = new Set(foot.map(([a, b]) => a + ',' + b));
   for (const A of boxesOf(fake)) {
     const seen = new Set(A.fluid ? [A.fluid] : []);
-    for (const d of A.pipeSides ? [...new Set([...A.sides, ...A.pipeSides])] : A.sides) {
-      const [dx, dz] = DIRS[d], b = world.ents.get(key(x + dx, y, z + dz));
-      if (!b?.fb) continue;
+    for (const [tx, tz, d] of edgesOf(fake, A)) {
+      const [dx, dz] = DIRS[d], b = world.ents.get(key(tx + dx, y, tz + dz));
+      if (!b?.fb || b === fake) continue;
       for (const B of boxesOf(b)) {
         if (!connects(fake, A, d, b, B)) continue;
         const n = b.fb[B.i];

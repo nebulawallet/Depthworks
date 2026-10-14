@@ -111,7 +111,8 @@ function oreMargin(t, spec, x, z, s, layer) {
       }
       return best * .3;
     }
-    default: return fbm(x / (44 * size), z / (44 * size), s, 3) - (.77 - (w - 1) * .03) - (layer ? .03 : 0);
+    // fewer octaves in newer worlds: rounder, more solid blobs, with the threshold raised to keep as much ore overall
+    default: return fbm(x / (44 * size), z / (44 * size), s, fuller() ? 2 : 3) - (.77 + (fuller() ? BLOB_LIFT : 0) - (w - 1) * .03) - (layer ? .03 : 0);
   }
 }
 function pickOre(table, x, z, layer) {
@@ -131,12 +132,17 @@ const STARTER = [['iron_ore', -11, -7.5, 5], ['copper_ore', 8.5, -12, 4.4], ['co
 const STARTER_UNDER = [['crystal', 6, 5, 3.8, -1, 1.5], ['crystal', -20, -24, 3.8, -1, 1.5], ['iron_ore', -12, 12, 5, -1, 3], ['copper_ore', 18, -12, 4.4, -1, 3],
   ['abyssal_ore', 0, -15, 5, -2, 2], ['crystal', 20, -30, 3.8, -2, 3]];
 const SPREAD = 1.5, GROW = 1.7;   // the old layout's spacing and patch size, made bigger
+// Worlds made since version 2 have fuller ore patches: solid inside, holes only near the rim. Older worlds keep their
+// layout (their chunks are made again from the seed, and buildings stand on that ore).
+const fuller = () => (G()?.v || 1) >= 2;
+const BLOB_LIFT = .045;   // measured: the same ore overall as before (within a few percent), with a third of the ragged edges
+const starterHole = (h, d) => fuller() ? h < Math.max(0, d - .8) * 2.5 : h < d * .55;
 function starterAt(x, z, layer) {
   for (const [t, dx0, dz0, r0, y = 0, rich = 1] of layer ? STARTER_UNDER : STARTER) {
     if (y !== layer) continue;
     const dx = dx0 * SPREAD, dz = dz0 * SPREAD, r = r0 * GROW;
     const d = Math.hypot(x + .5 - (SPAWN.x + dx), z + .5 - (SPAWN.z + dz));
-    if (d < r && hash(x, z, G().seed + 201 + y) >= d / r * .55) return [t, rich, d / r];
+    if (d < r && !starterHole(hash(x, z, G().seed + 201 + y), d / r)) return [t, rich, d / r];
   }
   return null;
 }
@@ -188,7 +194,7 @@ function freshChunk(c) {
     if (near < 80) { const st = starterAt(x, z, 0); if (st) ore = [st[0], 1, st[2]]; }
     else {
       const p = pickOre(bi.ores, x, z, 0) || pickOre(STRAY_ORES, x, z, 0);
-      if (p && hash(x, z, s + 211) > Math.max(0, .35 - p[2] * 6)) ore = [p[0], p[1].rich ?? 1, Math.max(0, 1 - p[2] * 12)];
+      if (p && hash(x, z, s + 211) > Math.max(0, fuller() ? .12 - p[2] * 8 : .35 - p[2] * 6)) ore = [p[0], p[1].rich ?? 1, Math.max(0, 1 - p[2] * 12)];
     }
     if (ore) { addOre(c, k, ore[0], richBase(x, z, ore[1], ore[2], hash(x, z, s + 300)), E); continue; }
     if (near < 6) continue;
@@ -275,7 +281,7 @@ export function newWorld(opts = {}) {
   const size = Math.max(WORLD.min, Math.min(WORLD.max, Math.round(+opts.size || WORLD.size)));
   const seed = Number.isFinite(+opts.seed) && opts.seed !== '' ? Math.floor(+opts.seed) >>> 0 : seedFromText(opts.seed);
   setWorldSize(size);
-  world.gen = { v: 1, size, seed, biomeScale: WORLD.biomeScale[opts.biomes] ?? WORLD.biomeScale.normal, water: WORLD.water[opts.water] ?? 1, ores: WORLD.ores[opts.ores] ?? 1,
+  world.gen = { v: 2, size, seed, biomeScale: WORLD.biomeScale[opts.biomes] ?? WORLD.biomeScale.normal, water: WORLD.water[opts.water] ?? 1, ores: WORLD.ores[opts.ores] ?? 1,
     opts: { biomes: opts.biomes || 'normal', water: opts.water || 'normal', ores: opts.ores || 'normal' } };
   resetWorldMaps();
   S.seed = seed;

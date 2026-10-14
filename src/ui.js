@@ -1,16 +1,19 @@
 // HUD and panels. Panels re-render on a timer, so actions use pointerdown delegation via data-act.
 import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER, HOTBARS, VOLTAGES, TILES, FLUIDS, ROADS, FUELS, FRAMES, ENGINES, VEHICLES, DEPOSIT, AUGMENTS, DAY, FEATURES, BIOMES, HAZARDS, MEDICAL, MED, CROPS, TOOLS, recipeIcon, recipeName, groupOf } from './data.js';
-import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt, factoryOf, FAC_COLORS, isResearched, endless, hourOf, daylight, patchAt, biomeIndexAt } from './state.js';
+import { S, world, inv, invGet, bus, key, DIRS, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt, factoryOf, FAC_COLORS, isResearched, endless, hourOf, daylight, patchAt, biomeIndexAt } from './state.js';
 import { playerMods, maxHealth, maxStamina, reachOf, hazardAt, resistance, medLevel, unitsFor, unitCost, medAvailable } from './body.js';
 import { seedsNeeded, FARM, patchName } from './farm.js';
 import { damRating, REACTOR } from './plants.js';
-import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, slotsOf, voltsOf, nets, machineStats, depositLayer, hasTool, toolStat, toolLevel, barrelMode } from './sim.js';
+import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, slotsOf, voltsOf, nets, machineStats, depositLayer, hasTool, toolStat, toolLevel, barrelMode, TRANSFER_MODES, modesFor, stationChests } from './sim.js';
+import { renderTree, setTreeToast } from './research.js';
+import { bpAt } from './blueprint.js';
 import { segItems, lanesOf, laneName, lineName, lineItems, lineWarn, lineAugs } from './belts.js';
 import { vstats, unitOf, routeById, driverOf, roadAt, dockTiles, vehicleById } from './transport.js';
 import { fishTarget } from './fish.js';
 import { openLogistics, renderLogistics, drawLogistics, showBeltLine, lineEndHTML } from './logistics.js';
 import { iconHTML, iconURL, fmtN, toolCursor } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
+import { ROAD_POWER, ELV } from './data.js';
 import { project } from './scene.js';
 import { doAction, chat, netInfo } from './net.js';
 import { ACTIONS, keyName, keyNames, rebind, resetKeys, MOUSE_ACTIONS, combo, is } from './input.js';
@@ -97,17 +100,17 @@ function renderMenu() {
   for (const p of m.querySelectorAll('[data-tab]')) p.classList.toggle('on', p.dataset.tab === menuTab);
   if (menuTab === 'controls') renderKeys();
   if (menuTab === 'settings') {
-    for (const c of m.querySelectorAll('[data-set]')) c.checked = c.dataset.set === 'altMode' ? S.altMode : !!S.settings[c.dataset.set];
+    for (const c of m.querySelectorAll('[data-set]')) c.checked = c.dataset.set === 'altMode' ? S.altMode : c.dataset.set === 'camFree' ? !!S.cam.free : !!S.settings[c.dataset.set];
     $('pmGame').innerHTML = `${S.sandbox ? 'Sandbox world. ' : ''}${S.net.role === 'client' ? 'You are a guest: the host saves this world.' : `Saving to slot ${S.slot}, every 30 seconds and when you quit. Export to file keeps a copy outside the browser.`}${S.net.role === 'host' ? ` Invite code: <b>${esc(S.net.code || '…')}</b>` : ''}`;
   }
 }
 // Interface settings, kept in this browser.
 const SETTINGS_KEY = 'depthworks.settings';
-S.settings = { goals: true, minimap: true };
+S.settings = { goals: true, minimap: true, altInserters: true };
 try { Object.assign(S.settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch { /* storage unavailable */ }
 export function applySettings() { $('goals').classList.toggle('off', !S.settings.goals); $('minimap').classList.toggle('off', !S.settings.minimap); }
 export function setSetting(k, v) {
-  if (k === 'altMode') S.altMode = v; else S.settings[k] = v;
+  if (k === 'altMode') S.altMode = v; else if (k === 'camFree') S.cam.free = v; else S.settings[k] = v;
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(S.settings)); } catch { /* storage unavailable */ }
   applySettings();
 }
@@ -144,7 +147,7 @@ addEventListener('keydown', e => {
 // holds it, just like picking it from the quickbar.
 const holdable = it => !!(ENTITIES[it] || ITEMS[it]?.road || ITEMS[it]?.vehicle || ITEMS[it]?.tool || ITEMS[it]?.food);
 export function selectItem(it) {
-  S.sel = it || null; S.linkFrom = null; renderHotbar();
+  S.sel = it || null; S.linkFrom = null; S.bpHand = false; renderHotbar();
 }
 export function cycleBar() { S.bar = (S.bar + 1) % S.bars.length; renderHotbar(); }
 // Factorio-style: the first time you hold a new kind of building it takes the first free quickbar slot.
@@ -176,10 +179,11 @@ export function renderHotbar() {
   $('hand').style.bottom = $('hotbar').offsetHeight + 18 + 'px';
   const ent = S.sel && ENTITIES[S.sel], tool = ITEMS[S.sel]?.tool === 'link', it = ITEMS[S.sel];
   const forFac = ent && !ent.shared && (world.factories.length > 1 || isResearched('factory_planning')) ? ` · for ${facChip(S.player.fac, 'factories')}` : '';
-  const hand = S.sel ? `${iconHTML(S.sel, invGet(S.sel))} <b>${itemName(S.sel)}</b>` + (ent ? ` · facing ${DIR_NAMES[S.dir]}${forFac}`
+  const hand = S.sel ? `${iconHTML(S.sel, invGet(S.sel))} <b>${itemName(S.sel)}</b>` + (S.bpHand ? ' <span class="tag">blueprint</span>' : '') + (ent ? ` · facing ${DIR_NAMES[S.dir]}${forFac}${S.bpHand ? ' · click to plan it' : ' · Shift: plan a blueprint'}`
+    : it?.tool === 'conduit' ? ' · drag over road tiles to lay power in them'
     : tool ? (S.linkFrom ? ' · now click the other pole · Esc cancels' : ' · click a pole, then another, to string a cable')
     : it?.road ? ` · drag to lay · R turns it (${S.dir % 2 ? 'east-west' : 'north-south'})` : it?.vehicle ? ` · click to put it down · R turns it · facing ${DIR_NAMES[S.dir]}`
-    : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : ' · Ctrl+click a machine to put it in · Z drops one')
+    : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : ` · Ctrl+click a machine to put it in${S.pick && S.pickMode ? ` (${TRANSFER_MODES[S.pickMode].name.toLowerCase()} mode on the selection)` : ''} · Z drops one`)
     + (ent?.kind === 'lift' ? ` · ${S.dy === -1 ? 'down' : 'up'}` : '')
     + (ent?.kind === 'inserter' && S.mode === 'depth' ? ` · ${['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]}` : '')
     : '';
@@ -313,23 +317,11 @@ const toolIconURL = id => toolCursor(id).slice(4, toolCursor(id).indexOf(')'));
 let resTab = 'tech';
 function renderResearch() {
   if (resTab === 'med') { renderMedical(); return; }
-  const cur = TECH[S.research.current];
-  const cards = TECHS.map(t => {
-    const done = S.research.done.has(t.id), avail = techAvailable(t), active = S.research.current === t.id;
-    const prog = (S.research.progress[t.id] || 0) / t.count;
-    const cost = Object.keys(t.cost).map(p => iconHTML(p)).join('');
-    const unl = t.unlocks.map(u => ITEMS[u] ? iconHTML(u) : RECIPE[u] ? `<span${tipAttr(recipeName(RECIPE[u]))}>${iconHTML(recipeIcon(RECIPE[u]))}</span>` : `<span class="tag">${u}</span>`).join('');
-    const needs = t.pre.filter(p => !S.research.done.has(p)).map(p => TECH[p].name);
-    const lock = !done && !avail ? `<div class="warn">${needs.length ? 'needs ' + needs.join(', ') : ''}${(t.precision ?? 0) > S.maxTier ? `${needs.length ? ' · ' : 'needs '}precision ${t.precision}` : ''}</div>` : '';
-    return `<div class="tech ${done ? 'done' : avail ? '' : 'locked'} ${active ? 'active' : ''}" data-act="tech:${t.id}">
-      <div class="tn">${t.name}</div>
-      <div class="tc">${cost} <span class="dim">× ${t.count} · ${t.time}s</span></div>
-      <div class="tu">${unl}</div>${lock}
-      <div class="bar"><i style="width:${(done ? 1 : prog) * 100}%"></i></div></div>`;
-  }).join('');
-  setHTML($('resBody'), resTabsHTML() + `<div class="dim" style="margin-bottom:6px">${cur ? `Researching <b>${cur.name}</b>. Labs need: ${Object.keys(cur.cost).map(p => itemName(p)).join(', ')}.` : 'Pick a technology. Labs will pull the packs they need from what you feed them.'}</div><div class="techs">${cards}</div>`);
+  const cur = TECH[S.research.current], q = S.research.queue || [];
+  const head = resTabsHTML() + `<div class="dim rhead">${cur ? `Researching <b>${cur.name}</b>${q.length > 1 ? `, then ${q.length - 1} more queued` : ''}. Labs need: ${Object.keys(cur.cost).map(p => itemName(p)).join(', ')}.` : q.length ? 'The queue is waiting: what is next needs more precision.' : 'Pick technologies to queue. Labs pull the packs they need from what you feed them.'}</div>`;
+  renderTree($('resBody'), head); $('resBody')._html = null;
 }
-
+setTreeToast(m => toast(m, 2200));
 const resTabsHTML = () => `<div class="tabs"><div class="tab ${resTab === 'tech' ? 'on' : ''}" data-act="restab:tech">Technology</div><div class="tab ${resTab === 'med' ? 'on' : ''}" data-act="restab:med"${tipAttr('Upgrades for every engineer, researched in medical labs')}>Medical</div></div>`;
 // Medical research: upgrades for every engineer, levels bought with lots of terrestrial packs and chlorophyll.
 function renderMedical() {
@@ -411,6 +403,15 @@ function beltHTML(e) {
     h += `<div class="row"><b>middle</b> ${e.midOff ? '<span class="warn">stopped here</span>' : 'goes straight on'} <button data-act="midoff">${e.midOff ? 'let it through' : 'stop it here'}</button></div>`;
     h += `<div class="row"><b>sort</b> <button data-act="sort" class="${e.sort ? 'on' : ''}"${tipAttr('Filtered channels take their item from any lane, before the bus ahead: a mixed belt (crops and seeds from a greenhouse, say) comes apart into the two channels')}>${e.sort ? 'sorting: channels take their item from any lane' : 'sort by channel filters'}</button></div>`;
   }
+  if (n === 2 && e.kind === 'belt') {   // outputs: a lane pushed out to the side, into whatever stands there
+    h += `<h4>Outputs</h4><div class="dim">Push the lane on one side out into what stands on that side: a chest, a machine, another belt. It takes items as they pass this tile, and the line runs on as one line.</div>`;
+    for (const [side, k, d] of [['left', 'L', (e.dir + 3) % 4], ['right', 'R', (e.dir + 1) % 4]]) {
+      const f = e.bout?.[k], nb = world.ents.get(key(e.x + DIRS[d][0], e.y, e.z + DIRS[d][1])), pk = 'bo' + k;
+      h += `<div class="row chan"><b>${side}</b> ${!f ? '<span class="dim">off</span>' : f === '*' ? 'anything' : `${iconHTML(f)} ${itemName(f)}`}
+        <button data-act="bout:${k}:" class="${!f ? 'on' : ''}">off</button><button data-act="bout:${k}:*" class="${f === '*' ? 'on' : ''}"${tipAttr('push every item on that lane out')}>any</button><button data-act="bpick:${pk}" class="${f && f !== '*' ? 'on' : ''}"${tipAttr('push only one kind of item out')}>${beltPick === pk ? 'cancel' : 'filter…'}</button>
+        ${f ? (nb ? `<span class="dim">into the ${ENTITIES[nb.type].name.toLowerCase()}</span>` : '<span class="warn">nothing on that side</span>') : ''}</div>` + pickGrid(pk);
+    }
+  }
   if (ln) {
     h += `<h4>Line</h4><div>${esc(lineName(ln))} <span class="dim">${ln.segs.length} tile${ln.segs.length > 1 ? 's' : ''} · ${lineItems(ln)} items${lineAugs(ln).length ? ` · ${lineAugs(ln).map(a => iconHTML(a)).join('')}` : ''}${ln.cfg.filter.length ? ` · only ${ln.cfg.filter.map(f => iconHTML(f)).join('')}` : ''}</span></div>`;
     h += `<div class="dim">${lineEndHTML(ln)}</div>`;
@@ -479,6 +480,11 @@ function renderEntity() {
       if (def.ports) body += portsHTML(e);
       body += RECIPE[e.recipe] ? machineSlotsHTML(e, e.prog) : '<div class="dim" style="margin-top:6px">Pick a recipe to see its slots.</div>';
       if (def.ports && RECIPE[e.recipe]) body += `<h4>Fluids</h4>${fluidHTML(e)}`;
+      if (def.pull) {
+        const chests = stationChests(e), A = e.arm;
+        body += `<h4>Reach</h4><div class="dim">Its arm takes ingredients from ${chests.length ? `the ${chests.length} chest${chests.length > 1 ? 's' : ''}` : 'any chest'} within ${def.pull.radius} tiles (lit up while this is open), one at a time, enough for two crafts. Inserters take out what it makes.</div>`
+          + `<div>${A?.it ? `fetching ${iconHTML(A.it)} ${itemName(A.it)}` : chests.length ? '<span class="dim">arm resting</span>' : '<span class="warn">no chests in reach</span>'}</div>`;
+      }
       body += augHTML(e, `crafting speed ${fmtX(def.speed)}`);
       break;
     }
@@ -527,6 +533,11 @@ function renderEntity() {
       break;
     }
     case 'solar': body += `<div>Up to ${def.out} kW in daylight.</div>`; break;
+    case 'lamp':
+      if (def.burner) body += `<div class="dim">${e.lit ? 'lit' : daylight() > .2 ? 'it lights itself when it gets dark' : 'out of fuel'} · a piece of coal lasts about a night</div>` + machineSlotsHTML(e)
+        + `<div class="btns"><button data-act="putfuel"${tipAttr('Put the coal (or wood) you carry into it')}>add fuel from inventory</button></div>`;
+      else body += `<div class="dim">${def.power} kW · lights itself when it gets dark</div>`;
+      break;
     case 'greenhouse': {
       const n = e.foot.length, crop = e.seed && CROPS[e.seed], need = seedsNeeded(e), lamps = e.lamps || 0;
       body += `<div>${n} tiles${crop ? ` of ${crop.name.toLowerCase()}` : ''} · ${need} seed${need > 1 ? 's' : ''} to plant · harvest every ${FARM.cycle} s at full water: ${Math.max(1, Math.round(n * FARM.cropPerTile))} ${crop ? crop.name.toLowerCase() : 'crop'} and ${Math.max(1, Math.round(n * FARM.seedPerTile))} spare seeds</div>`;
@@ -573,14 +584,15 @@ function renderEntity() {
       const short = e.water > 0 && e.water < .98 ? ` <span class="warn">${Math.round(e.water * 100)}%: not enough water for every boiler</span>` : '';
       const pumped = e.fnet?.water?.members.some(m => m.kind === 'pump' || m.kind === 'pipe' || m.kind === 'tank');
       body += `<div>water: ${pumped ? `<span class="okc">connected</span>${short}` : '<span class="warn">no pump or pipe touching it</span>'} · ${engines} engine${engines === 1 ? '' : 's'} on its steam</div>`;
-      body += `<div class="dim">pipes join water at the drum ends (left and right) and steam at the back</div>`;
+      body += `<div class="dim">${e.foot ? 'water goes in and through at either end (blue and orange arrows); steam comes out of the back' : 'pipes join water at the drum ends (left and right) and steam at the back'}</div>`;
       break;
     }
     case 'engine': {
       const st = e.fnet?.steam, n = e.net;
       body += `<h4>Output</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.out)} / ${def.out} kW · ${Math.round((e.load || 0) * def.steam)} steam/s</div>`;
       const boilers = st ? st.members.some(m => m.kind === 'boiler') : false;
-      body += `<div>steam: ${!boilers ? '<span class="warn">no boiler on its steam</span>' : st.amount > 0 ? `<span class="okc">${fmtN(st.amount)} in the line</span>` : '<span class="warn">boilers have no fuel or water</span>'} · ${n ? `network ${n.id + 1}` : '<span class="warn">not in a pole\'s area</span>'}</div>`;
+      body += `<div>steam: ${!boilers ? '<span class="warn">no boiler on its steam</span>' : st.amount > 0 ? `<span class="okc">${fmtN(st.amount)} in the line</span>` : '<span class="warn">boilers have no fuel or water</span>'} · ${n ? `network ${n.id + 1}` : `<span class="warn">not in a ${e.compact ? 'pole' : 'generator pole'}\'s area</span>`}</div>`;
+      body += `<div class="dim">${e.compact ? 'An engine from before engines were big: it feeds any pole, as it always did. A new one feeds generator poles only.' : 'Feeds a generator pole (extra-low voltage). A step-up station and a step-up cable take that power to your machines.'}</div>`;
       break;
     }
     case 'pole': {
@@ -596,6 +608,9 @@ function renderEntity() {
       }
       const cables = world.links.filter(l => [l.a, l.b].some(p => p[0] === e.x && p[1] === e.y && p[2] === e.z)).length;
       body += `<div class="dim">${VOLTAGES[voltsOf(def)[0]].name}${def.volts ? ` → ${def.volts.slice(1).map(v => VOLTAGES[v].name.toLowerCase()).join(', ')}` : ''} · supplies a ${def.supply * 2 + 1}×${def.supply * 2 + 1} area · wires reach ${def.wire} tiles${cables ? ` · ${cables} cable${cables > 1 ? 's' : ''}` : ''}</div>`;
+      if (voltsOf(def).includes(ELV) && !def.volts) body += `<div class="dim">Generators in its area feed it; machines can't draw from it. Wire it to a step-up station and link that to a low voltage pole with a step-up cable.</div>`;
+      const grids = (world.roadGrids || []).filter(g => g.poles.includes(e));
+      if (grids.length) body += `<div class="dim">feeds ${grids.length} powered road${grids.length > 1 ? 's' : ''}: ${grids.map(g => `${g.tiles.length} tiles, ${Math.round(g.demand)} / ${ROAD_POWER.capacity} kW`).join(' · ')}</div>`;
       break;
     }
     case 'inserter': {
@@ -702,7 +717,7 @@ function act(a, ev) {
     case 'facdel': if (facDelArm !== +arg) { facDelArm = +arg; renderFactories(); setTimeout(() => { facDelArm = null; }, 3000); return; } facDelArm = null; doAction({ a: 'factory', do: 'remove', id: +arg }); return;
     case 'openlog': closeEntity(); openModal('logistics'); return;
     case 'bpick': beltPick = beltPick === arg ? null : arg; renderEntity(); return;
-    case 'bpickset': if (e && beltPick) { const p = beltPick; beltPick = null; doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: p.startsWith('sf') ? 'sfilter' : 'chan', arg: p.startsWith('sf') ? p.slice(2) + ':' + arg : (p === 'chL' ? 'L:' : 'R:') + arg }); renderEntity(); } return;
+    case 'bpickset': if (e && beltPick) { const p = beltPick; beltPick = null; doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: p.startsWith('sf') ? 'sfilter' : p.startsWith('bo') ? 'bout' : 'chan', arg: p.startsWith('sf') ? p.slice(2) + ':' + arg : p.startsWith('bo') ? p.slice(2) + ':' + arg : (p === 'chL' ? 'L:' : 'R:') + arg }); renderEntity(); } return;
     case 'beltnet': case 'beltline': if (e?.line) { const at = [e.x, e.y, e.z]; closeEntity(); openModal('logistics'); showBeltLine(at, cmd === 'beltnet' ? 'net' : 'map'); } return;
     case 'rulepick': rulePick = !rulePick; renderEntity(); return;
     case 'hot': {
@@ -724,13 +739,12 @@ function act(a, ev) {
     case 'cancel': doAction({ a: 'cancel', i: +arg }); renderInventory(); return;
     case 'restab': resTab = arg; renderResearch(); return;
     case 'med': { const u = MED[arg]; if (!medAvailable(u)) { toast(u.mutation && !S.med.mutations ? 'find irradiated seeds first' : 'fully researched'); return; } doAction({ a: 'med', id: arg }); S.med.current = arg; renderResearch(); toast('medical research: ' + u.name); return; }
-    case 'tech': {
-      const t = TECH[arg];
-      if (S.research.done.has(arg)) return;
-      if (!techAvailable(t)) { toast('not available yet'); return; }
-      doAction({ a: 'research', id: arg }); S.research.current = arg; renderResearch(); toast('researching ' + t.name); return;
-    }
+    case 'tech': doAction({ a: 'research', id: arg, do: 'queue' }); renderResearch(); return;
     case 'close': closeEntity(); return;
+    case 'putfuel': if (e) { const f = ['coal', 'wood', 'solid_fuel'].find(it => invGet(it) > 0); if (f) doAction({ a: 'fast', x: e.x, y: e.y, z: e.z, sel: f, mode: 'fuel' }); else toast('no coal or wood in inventory'); renderEntity(); } return;
+    case 'pickmode': S.pickMode = S.pickMode === arg ? null : arg; renderPick(); renderHotbar(); return;
+    case 'pickclear': clearPick(); return;
+    case 'closeplayer': S.viewPlayer = null; renderPlayer(); return;
     case 'copycode': return;
   }
   if (!e) return;
@@ -835,7 +849,8 @@ const GOALS = [
   ['wood', 'Chop a few trees for wood', () => (S.stats.mined?.wood || 0) >= 8],
   ['expand', 'Craft more burner drills and furnaces (E) and run 4 drills', () => count(e => e.kind === 'drill' && isActive(e)) >= 4],
   ['copper', 'Smelt 20 copper plates', () => made('copper_plate') >= 20],
-  ['power', 'Make power: a water pump on water, a fuelled boiler beside it, a steam engine beside that, and a small pole', () => any(e => e.kind === 'engine' && e.net && e.cap > 0)],
+  ['power', 'Make power: a water pump on water, a fuelled boiler and a steam engine beside it, a generator pole by the engine', () => any(e => e.kind === 'engine' && e.net && e.cap > 0)],
+  ['stepup', 'Link a step-up station to a small pole with a step-up cable, so the power reaches your machines', () => any(e => e.kind !== 'pole' && e.net && ENTITIES[e.type].power && e.net.engines.length)],
   ['electric', 'Run an electric drill on the network', () => any(e => e.type === 'drill' && e.status === 'mining')],
   ['lab', 'Craft automation packs, place a lab and choose research (T)', () => Object.keys(S.research.progress).length > 0],
   ['automation', 'Finish researching Automation', () => S.research.done.has('automation')],
@@ -900,13 +915,16 @@ export function describeCell(c) {
   if (e) out.push(`<b>${ENTITIES[e.type].name}</b> <span class="dim">${e.belt ? beltLine(e) : e.status || ''}</span>${world.factories.length > 1 && !ENTITIES[e.type].shared ? ' ' + facChip(e.fac) : ''}`);
   if (e?.line && lineWarn(e.line) && e.line.segs[e.line.segs.length - 1] === e) out.push(`<span class="warn">${lineWarn(e.line)}</span>`);
   if (f) out.push('Hollow frame' + (e ? ' (machine inside)' : ''));
+  const bp = !e && bpAt(c.x, c.y, c.z);
+  if (bp) out.push(`<b>${ENTITIES[bp.type].name}</b> <span class="tag">blueprint</span> <span class="dim">click with an empty hand to build it · hold right-click to clear it</span>`);
+  if (c.player) { const p = S.players.get(c.player); if (p) out.push(`<b>${esc(p.name)}</b> <span class="dim">${p.local ? 'you' : 'engineer'} · click for more</span>`); }
   const ft = c.y === 0 && world.feats.get(k);
   if (ft) out.push(`<b>${FEATURES[ft.type]?.name ?? 'Tree'}</b> <span class="dim">hold right-click to ${FEATURES[ft.type]?.tool === 'axe' ? 'chop it down' : 'break it'}</span>`);
   if (o) out.push(depositHTML(o));
   const oil = c.y === 0 && world.oil.get(c.x + ',' + c.z);
   if (oil) out.push(`${iconHTML('crude_oil')} Crude oil · yield ${Math.round(oil.yield)}% <span class="dim">a pumpjack draws it</span>`);
   const rd = c.y === 0 && roadAt(c.x, c.z);
-  if (rd) out.push(`<b>${ROADS[rd.s].name}</b> <span class="dim">${rd.w ? `${rd.w} wide, ${rd.l} lane${rd.l > 1 ? 's' : ''}` : 'faster walking'}</span>`);
+  if (rd) out.push(`<b>${ROADS[rd.s].name}</b> <span class="dim">${rd.w ? `${rd.w} wide, ${rd.l} lane${rd.l > 1 ? 's' : ''}` : 'faster walking'}</span>${rd.p ? ` · <span style="color:#ffc83a">power conduit</span>${(g => g ? ` <span class="dim">${g.net ? `network ${g.net.id + 1}, ${Math.round(g.demand)} / ${ROAD_POWER.capacity} kW` : 'no pole feeds it'}</span>` : '')(world.roadGrids?.find(g => g.tiles.some(([x, z]) => x === c.x && z === c.z)))}` : ''}`);
   if (c.y === 0 && TILES[tileAt(c.x, c.z)]?.liquid && fishTarget(c)) out.push('<b>Fish</b> <span class="dim">hold right-click to catch it</span>');
   const t = c.y === 0 && TILES[tileAt(c.x, c.z)];
   if (t?.liquid) out.push(`<b>${t.name}</b> <span class="dim">${flowAt(c.x, c.z) >= 0 ? `flows ${DIR_NAMES[flowAt(c.x, c.z)]} · ` : ''}no walking or building, except water pumps</span>`);
@@ -952,14 +970,60 @@ bus.on('hurt', n => {
   bus.emit('float', '-' + Math.round(n), S.player.x, 1.3, S.player.z);
 });
 bus.on('respawn', (x, z) => { S.player.x = x; S.player.z = z; S.player.vx = S.player.vz = 0; });
+// ---------------------------------------------------------------- Shift + click selection: transfer modes
+// Shift + click a building or vehicle with an empty hand to select it. A few buttons show beside it, one per kind of
+// slot it has (fuel, input, store, augments); pick one, and Ctrl + click on it with something in hand puts it only
+// there (store spreads the stack evenly over its storage). Esc or Shift + click on nothing clears the selection.
+const pickTarget = () => S.pick?.veh ? vehicleById(S.pick.veh) : S.pick ? world.ents.get(key(S.pick.x, S.pick.y, S.pick.z)) : null;
+export function pickTargetFor(h) {
+  const e = h?.veh ? vehicleById(h.veh) : h && world.ents.get(key(h.x, h.y, h.z));
+  if (!e || e.kind === 'frame' || !modesFor(e).length) { if (S.pick) clearPick(); else if (e) toast('nothing goes into that'); return; }
+  S.pick = e.isVeh ? { veh: e.id } : { x: e.x, y: e.y, z: e.z }; S.pickMode = null;
+  renderPick(); bus.emit('uiclick');
+}
+export function clearPick() { S.pick = null; S.pickMode = null; renderPick(); renderHotbar(); }
+export function renderPick() {
+  const el = $('pickbar'), t = pickTarget();
+  if (!t) { if (S.pick) S.pick = null; el.style.display = 'none'; return; }
+  const name = t.isVeh ? itemName(t.type) : ENTITIES[t.type].name;
+  setHTML(el, `<b>${esc(name)}</b> <span class="dim">Ctrl + click it with an item:</span> ${modesFor(t).map(m => `<button data-act="pickmode:${m}" class="${S.pickMode === m ? 'on' : ''}"${tipAttr(`<b>${TRANSFER_MODES[m].name} mode</b><div class="dim">${TRANSFER_MODES[m].desc}</div>`)}>${TRANSFER_MODES[m].name}</button>`).join('')}<span class="x" data-act="pickclear"${tipAttr('clear the selection (Esc)')}>✕</span>`);
+  el.style.display = '';
+}
+function placePick() {
+  const el = $('pickbar'), t = pickTarget(); if (!t || el.style.display === 'none') return;
+  const [x, y] = project(t.isVeh ? t.rx ?? t.x : t.x + .5, (t.y || 0) + 1.4, t.isVeh ? t.rz ?? t.z : t.z + .5);
+  el.style.left = Math.max(8, Math.min(innerWidth - el.offsetWidth - 8, x - el.offsetWidth / 2)) + 'px'; el.style.top = Math.max(8, y - el.offsetHeight - 6) + 'px';
+}
+
+// ---------------------------------------------------------------- an engineer's details (click one)
+export function openPlayer(id) { S.viewPlayer = id; renderPlayer(); }
+function renderPlayer() {
+  const el = $('playerInfo'), p = S.viewPlayer && S.players.get(S.viewPlayer);
+  if (!p) { S.viewPlayer = null; el.style.display = 'none'; return; }
+  const hp = p.hp ?? maxHealth(p), mh = maxHealth(p), st = p.sta ?? maxStamina(p), ms = maxStamina(p), held = p.local ? S.sel : p.sel, v = p.veh && vehicleById(p.veh);
+  const doing = v ? `driving a ${itemName(v.type).toLowerCase()}` : p.mining ? (p.mining.blocked ? `trying to mine ${p.mining.name.toLowerCase()} (${p.mining.blocked})` : `mining ${p.mining.name.toLowerCase()}`) : p.sprinting ? 'sprinting' : p.moving ? 'walking' : 'standing';
+  const expo = Object.entries(p.expo || {}).filter(([, x]) => x > .05).map(([h, x]) => `<span style="color:${HAZARDS[h].color}">${HAZARDS[h].name.toLowerCase()} ${Math.round(x * 100)}%</span>`).join(' · ');
+  const dist = Math.hypot((p.rx ?? p.x) - S.player.x, (p.rz ?? p.z) - S.player.z);
+  setHTML(el, `<div class="eph"><i class="dot" style="background:${hexCol(p.color)}"></i> <b>${esc(p.name)}</b> <span class="dim">${p.local ? 'you' : Math.round(dist) + ' tiles away'}</span><span class="x" data-act="closeplayer">✕</span></div>
+    <div class="row">Health <span class="dim">${Math.round(hp)} / ${mh}</span></div><div class="bar"><i style="width:${hp / mh * 100}%;background:#d84a4a"></i></div>
+    <div class="row">Stamina <span class="dim">${Math.round(st)} / ${ms}</span></div><div class="bar"><i style="width:${st / ms * 100}%;background:#e5c03a"></i></div>
+    <div class="row">Holding ${held ? `${iconHTML(held)} ${itemName(held)}` : '<span class="dim">nothing</span>'}</div>
+    <div class="row">${doing[0].toUpperCase() + doing.slice(1)} · building for ${facChip(p.fac ?? 1)}</div>
+    ${p.fed > S.T ? `<div class="row okc">Well fed <span class="dim">${Math.ceil(p.fed - S.T)} s</span></div>` : ''}
+    ${expo ? `<div class="row">Exposure: ${expo}</div>` : ''}
+    <div class="row dim">Tools: ${Object.entries(TOOLS).filter(([id]) => hasTool(id)).map(([id, t]) => `${t.name.toLowerCase()} ×${toolStat(id, 'speed')}`).join(' · ')} <span class="tiny">(shared by everyone)</span></div>`);
+  el.style.display = '';
+}
+
 export function updateUI(dt, hover) {
   updateVitals();
+  placePick();
   setHTML($('info'), describeCell(hover));
   renderMineBar();
   if (S.modal === 'logistics') drawLogistics();
   if ((slowT += dt) < .2) return;
   slowT = 0;
-  renderStatus(); renderGoals(); renderHotbar(); updateSignalText(); renderCoop();
+  renderStatus(); renderGoals(); renderHotbar(); updateSignalText(); renderCoop(); renderPlayer(); if (S.pick) renderPick();
   if (panelEnt && Math.hypot(panelEnt.x + .5 - S.player.x, panelEnt.z + .5 - S.player.z) > PLAYER.reach + 2) closeEntity();   // walked away
   if (panelEnt) renderEntity();
   if (S.modal === 'inventory') renderInventory();

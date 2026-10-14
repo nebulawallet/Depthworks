@@ -5,9 +5,9 @@
 // dropped (their buildings' models with them, see scene.js). Each chunk has its own ore piles, trees, rocks, flora,
 // weeds and water surface as instanced meshes.
 import * as THREE from 'three';
-import { ITEMS, TILES, BIOMES, FEATURES, ROADS } from './data.js';
-import { S, world, key, GRID, CHUNK, chunkKey, chunkOf, underOf, DIRS, rng, tileAt } from './state.js';
-import { M, facet, toonRamp } from './models.js';
+import { ITEMS, TILES, BIOMES, FEATURES, ROADS, ORE_STAGES, oreStage, DITHER } from './data.js';
+import { S, world, key, GRID, CHUNK, chunkKey, chunkOf, underOf, DIRS, rng, tileAt, oreWear } from './state.js';
+import { M, facet, toonRamp, dither } from './models.js';
 import { groundColors } from './worldgen.js';
 import { roadAt } from './transport.js';
 
@@ -124,12 +124,13 @@ function roadPixel(I, fx, fz, c, x, z) {
 // ---------------------------------------------------------------- painting a tile
 // Everything a tile's pixels need from its neighbours, looked up once per tile instead of once per pixel.
 function neighbourhood(R, y, x, z) {
-  const N = { x, z, ore: new Int16Array(9), tile: new Uint8Array(9), depth: new Uint8Array(9), pal: [] };
+  const N = { x, z, ore: new Int16Array(9), stage: new Uint8Array(9), tile: new Uint8Array(9), depth: new Uint8Array(9), pal: [] };
   for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
     const j = (dz + 1) * 3 + dx + 1, tx = x + dx, tz = z + dz, inside = tx >= 0 && tz >= 0 && tx < GRID && tz < GRID;
     if (y < 0 && inside) underOf(tx, tz);
     const o = inside ? world.ores.get(key(tx, y, tz)) : null;
     N.ore[j] = o ? ORE_IDS.indexOf(o.type) : -1;
+    N.stage[j] = o ? oreStage(oreWear(o)) : 0;
     if (y === 0) { N.tile[j] = inside ? tileAt(tx, tz) : 0; N.depth[j] = N.tile[j] && inside ? depthOf(R, tx, tz) : 0; }
     // ground colours of the neighbours, so a biome border fades across pixels rather than stepping at tile edges
     if (y === 0 && world.gen) { const cc = inside ? chunkOf(tx, tz) : null; N.pal[j] = cc ? palette(cc, (tz - cc.z0) * CHUNK + (tx - cc.x0)) : null; }
@@ -165,15 +166,19 @@ function paintTile(R, y, x, z, tp, d, stride, ox, oz) {
       col = [cr, cg, cb];
     }
     let r = col[0] + lift, g = col[1] + lift, b = col[2] + lift;
-    // ore ground: presence blended between tile centres and roughened, so patches have organic edges
-    let field = 0, best = -1, bw = 0;
+    // ore ground: one transition for every ore. Presence (of any ore) is blended between tile centres and roughened, so
+    // a patch has organic edges and neighbouring ores meet cleanly; the nearest ore tile gives the colour, and its stage
+    // (how worked it is, ORE_STAGES) how it looks: barely there when untouched, then more ore, rubble and a darker pit.
+    let field = 0, best = -1, bw = 0, bj = 0;
     for (const [cx, cz, w] of [[x0, z0, (1 - tx) * (1 - tz)], [x0 + 1, z0, tx * (1 - tz)], [x0, z0 + 1, (1 - tx) * tz], [x0 + 1, z0 + 1, tx * tz]]) {
-      const id = N.ore[(cz - z + 1) * 3 + (cx - x + 1)]; if (id >= 0) { field += w; if (w > bw) { bw = w; best = id; } }
+      const j = (cz - z + 1) * 3 + (cx - x + 1), id = N.ore[j]; if (id >= 0) { field += w; if (w > bw) { bw = w; best = id; bj = j; } }
     }
-    if (best >= 0 && field + (vnoise(wx * 3.1, wz * 3.1) - .5) * .7 > .45) {
-      const oc = rgbOf(ITEMS[ORE_IDS[best]].color);
-      r = r * .82 + oc[0] * .05; g = g * .82 + oc[1] * .05; b = b * .82 + oc[2] * .05;
-      if (grain < .16) { const k = .6 + grain * 2.4; r = oc[0] * k; g = oc[1] * k; b = oc[2] * k; }
+    const ST = best >= 0 ? ORE_STAGES[N.stage[bj]] : null;
+    if (ST && field + (vnoise(wx * 3.1, wz * 3.1) - .5) * .7 > .95 - ST.edge) {
+      const oc = rgbOf(oreLook(ORE_IDS[best])), dk = 1 - ST.pit, t = ST.tint;
+      r = r * dk * (1 - t) + oc[0] * t; g = g * dk * (1 - t) + oc[1] * t; b = b * dk * (1 - t) + oc[2] * t;
+      if (grain < ST.specks) { const k = .6 + grain / Math.max(.01, ST.specks) * .45; r = oc[0] * k; g = oc[1] * k; b = oc[2] * k; }
+      else if (grain < ST.specks + ST.rubble * .5) { const q = .75 + (grain - ST.specks) * 2; r = r * .5 + 104 * q * .5; g = g * .5 + 98 * q * .5; b = b * .5 + 92 * q * .5; }
     }
     // weedy patch: tangled darker ground with the biome's green (or whatever grows there) in it
     if (patch) {
@@ -194,18 +199,21 @@ function coarseColor(R, y, x, z) {
   const c = R.c, i = (z - R.z0) * CHUNK + (x - R.x0);
   if (y === 0 && TILES[c.tiles[i]].liquid) return TILES[c.tiles[i]].paint;
   const o = world.ores.get(key(x, y, z));
-  if (o) return rgbOf(ITEMS[o.type].color).map(v => v * .7);
+  if (o) {   // the far-off picture shows ore as faintly as the close one does
+    const ST = ORE_STAGES[oreStage(oreWear(o))], base = y === 0 ? (world.gen ? palette(c, i) : legacyPal)[1] : UNDER[y][1], oc = rgbOf(oreLook(o.type)), k = Math.min(1, ST.tint * 3 + ST.specks);
+    return base.map((v, q) => v * (1 - ST.pit) * (1 - k) + oc[q] * .8 * k);
+  }
   if (y === 0 && roadAt(x, z)) return ROADS[roadAt(x, z).s].paint;
   const p = y === 0 ? (world.gen ? palette(c, i) : legacyPal) : UNDER[y];
   return p[1];
 }
 
 // ---------------------------------------------------------------- layers of one chunk (ground and two underground floors)
-const sideMat = new THREE.MeshToonMaterial({ color: 0x3b2f24, gradientMap: toonRamp });
+const sideMat = dither(new THREE.MeshToonMaterial({ color: 0x3b2f24, gradientMap: toonRamp }));
 function makeSurface(R, y) {
   if (y < 0 && !R.underClutter) { underOf(R.x0, R.z0); refreshClutter(R); R.underClutter = true; }   // the first look below: make its deposits
   const w = R.w, h = R.h, L = { y, tp: 0, canvas: null, tex: null };
-  const mat = new THREE.MeshToonMaterial({ gradientMap: toonRamp });
+  const mat = dither(new THREE.MeshToonMaterial({ gradientMap: toonRamp }));
   if (y === 0) {
     L.mesh = new THREE.Mesh(new THREE.BoxGeometry(w, 2, h), [sideMat, sideMat, mat, sideMat, sideMat, sideMat]);
     L.mesh.position.set(R.x0 + w / 2, -1, R.z0 + h / 2);
@@ -228,7 +236,10 @@ function coarseCanvas(R, y) {
 }
 function setTexture(R, L, tp, canvas) {
   const tex = new THREE.CanvasTexture(canvas);
-  tex.magFilter = tex.minFilter = tp > 1 ? THREE.NearestFilter : THREE.LinearFilter;   // the first quick picture is soft, not blocky tex.colorSpace = THREE.SRGBColorSpace; tex.generateMipmaps = false;
+  tex.magFilter = tex.minFilter = tp > 1 ? THREE.NearestFilter : THREE.LinearFilter;   // the first quick picture is soft, not blocky
+  // The painted colours are sRGB like every other colour in the game. (This used to sit inside the comment above, so
+  // the ground was read as linear and came out pale and grey: the reason livable biomes looked washed out.)
+  tex.colorSpace = THREE.SRGBColorSpace; tex.generateMipmaps = false;
   L.tex?.dispose(); L.tex = tex; L.canvas = canvas; L.tp = tp; L.mat.map = tex; L.mat.needsUpdate = true;
 }
 
@@ -307,7 +318,8 @@ const geoCache = new Map();
 function featParts(type) {
   if (geoCache.has(type)) return geoCache.get(type);
   const L = FEATURES[type]?.look || FEATURES.tree.look, parts = [], glow = L.glow ? { emissive: L.glow, emissiveIntensity: .9 } : {};
-  const crown = (f, add = 0) => { _c.setHSL((L.hue ?? .3) + f.v * (L.hueV ?? .1) + add * .02, L.sat ?? .38, (L.lit ?? .25) + f.v * .07 + add * .07); };
+  // crowns are picked in sRGB, like the ground they stand on (so they don't wash out next to it)
+  const crown = (f, add = 0) => { _c.setHSL((L.hue ?? .3) + f.v * (L.hueV ?? .1) + add * .02, Math.min(1, (L.sat ?? .38) * 1.15), (L.lit ?? .25) + .06 + f.v * .07 + add * .07, THREE.SRGBColorSpace); };
   const trunk = () => _c.setHex(L.trunk);
   switch (L.shape) {
     case 'cone':
@@ -381,12 +393,12 @@ function buildClutter(R) {
     const geo = type === 'crystal' ? facet(new THREE.OctahedronGeometry(.12, 0).scale(.7, 1.8, .7).translate(0, .18, 0)) : facet(new THREE.DodecahedronGeometry(.13, 0).scale(1, .62, 1).translate(0, .06, 0));
     const im = inst(R, geo, M(0xffffff, glow ? { emissive: ITEMS[type].emissive, emissiveIntensity: .8 } : {}), list.length * 4, +ys);
     list.forEach(([k, o], i) => {
-      const [x, y, z] = k.split(',').map(Number), r = rng(x * 131 + z * 71 + y * 17), rich = .55 + .45 * Math.min(1, o.amount / 900);
+      const [x, y, z] = k.split(',').map(Number), r = rng(x * 131 + z * 71 + y * 17), rich = .55 + .45 * Math.min(1, o.amount / 900), stage = oreStage(oreWear(o)), ST = ORE_STAGES[stage];
       for (let j = 0; j < 4; j++) {
-        const s = rich * (.75 + r() * .75) * (j === 0 ? 1.35 : 1);
-        _m.compose(V(x + .12 + r() * .76, y, z + .12 + r() * .76), _q.setFromEuler(_e.set((r() - .5) * .4, r() * 6, (r() - .5) * .4)), V(s, s * (.8 + r() * .5), s));
+        const s = rich * ST.size * (.75 + r() * .75) * (j === 0 ? 1.35 : 1), px = x + .12 + r() * .76, pz = z + .12 + r() * .76, rot = _q.setFromEuler(_e.set((r() - .5) * .4, r() * 6, (r() - .5) * .4)), sy = (.8 + r() * .5) * (stage ? 1 : .55), tone = .8 + r() * .35;
+        _m.compose(V(px, y - (stage ? 0 : .03), pz), rot, j < ST.piles ? V(s, s * sy, s) : V(0, 0, 0));
         addClutter(R, k, im, i * 4 + j, _m);
-        _c.setHex(oreLook(type)).multiplyScalar(.8 + r() * .35); im.setColorAt(i * 4 + j, _c);
+        _c.setHex(oreLook(type)).multiplyScalar(tone); im.setColorAt(i * 4 + j, _c);
       }
     });
   }
@@ -499,6 +511,14 @@ function unload(R) {
   for (let i = jobs.length - 1; i >= 0; i--) if (jobs[i].R === R) jobs.splice(i, 1);
   shown.delete(R.k);
 }
+// Ore tiles that changed stage: their chunk's piles are rebuilt, a chunk at most every couple of seconds.
+const staleOre = new Map();
+export function oreChanged(x, y, z) {
+  const tiles = []; for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) tiles.push([x + dx, z + dz]);
+  repaintTiles(tiles, y);
+  const R = shownAt(x, z); if (R && !staleOre.has(R)) staleOre.set(R, S.T + 2);
+}
+function rebuildStale() { for (const [R, t] of staleOre) if (S.T >= t || !shown.has(R.k)) { staleOre.delete(R); if (shown.has(R.k)) rebuildChunkClutter(R); } }
 // Rebuild a chunk's clutter (after its objects changed a lot, say a whole road went).
 export function rebuildChunkClutter(R) { refreshClutter(R); applyDepthView(R); }
 function refreshClutter(R) {
@@ -529,6 +549,7 @@ export function updateTerrain(x, z, r, ppu, first = false) {
   const fl = ppu >= 10;
   if (fl !== floraOn) { floraOn = fl; for (const R of shown.values()) for (const im of R.meshes) if (im.userData.kind === 'flora') im.visible = fl && visibleFor(im); }
   runJobs(first ? 400 : 5, x, z);
+  rebuildStale();
 }
 // Depth mode: the ground goes see-through when looking below it, and underground floors get painted when first seen.
 function visibleFor(im) {
@@ -541,12 +562,12 @@ function applyDepthView(R) {
   const { depth, layer } = depthView;
   for (const y of [-1, -2]) if (depth && layer <= y + 1 && !R.layers[y]) makeSurface(R, y);
   const L0 = R.layers[0], L1 = R.layers[-1], see0 = depth && layer < 0, see1 = depth && layer < -1;
-  if (L0) { see(L0.mat, see0, .12); L0.mesh.layers.set(see0 ? 1 : 0); }
-  if (L1) { see(L1.mat, see1, .15); L1.mesh.layers.set(see1 ? 1 : 0); }
+  if (L0) { see(L0.mat, see0, DITHER.ground); L0.mesh.layers.set(see0 ? 1 : 0); }
+  if (L1) { see(L1.mat, see1, DITHER.ground * 1.2); L1.mesh.layers.set(see1 ? 1 : 0); }
   for (const im of R.meshes) im.visible = visibleFor(im) && (im.userData.kind !== 'flora' || floraOn);
 }
 export function setDepthView(depth, layer) {
   depthView = { depth, layer };
-  see(sideMat, depth && layer < 0, .12);
+  see(sideMat, depth && layer < 0, DITHER.ground);
   for (const R of shown.values()) applyDepthView(R);
 }
