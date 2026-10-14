@@ -8,14 +8,15 @@
 import { Peer } from 'peerjs';
 import { patchAt, clearPatch, removeFeat, S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, invGive, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
 import { ITEMS, TECH, MED } from './data.js';
-import { placeDrag, placeOrCraft, turnPending, heal, place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory, researchAction } from './sim.js';
+import { placeDrag, placeOrCraft, turnPending, heal, place, rotateEntity, queueCraft, cancelCraft, fastTransfer, fastTransferMany, dropAt, entityCommand, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory, researchAction } from './sim.js';
 import { placeBlueprint, buildBlueprint, removeBlueprint, bpOp, applyBpOp } from './blueprint.js';
 import { serialize, entToJSON, entFromJSON, applyEntJSON } from './save.js';
 import { clearFoot } from './multi.js';
 import { applyToBuilding } from './copypaste.js';
-import { medToJSON, medFromJSON, medAvailable } from './body.js';
+import { medToJSON, medFromJSON, medAction } from './body.js';
 import { roadAt, pasteRoad, placeRoad, applyRoads, placeSignal, placeVehicle, board, routeAction, vehToJSON, unitToJSON, applyVehicles, layConduit, vehicleById } from './transport.js';
 import { fishToList, fishFromList } from './fish.js';
+import { tradeAction, tradeView } from './trade.js';
 
 const PREFIX = 'depthworks-v1-';
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -94,12 +95,28 @@ function applyAction(op) {
       notify('toast', done.length ? `Pasted ${done.join(', ')}` : `${op.clip?.from ?? 'that'} has nothing that fits there`);
       break;
     }
+    case 'fastmany': {   // Ctrl+click on a selection: the held stack shared out over all of it (or all of them emptied)
+      const list = (Array.isArray(op.list) ? op.list : []).slice(0, 256).map(r => r?.veh ? vehicleById(r.veh) : Array.isArray(r) ? world.ents.get(key(r[0], r[1], r[2])) : null).filter(Boolean);
+      const n = fastTransferMany(list, op.sel, op.mode);
+      notify('toast', n ? `${op.sel ? 'put in' : 'took'} ${n} item${n > 1 ? 's' : ''} across ${list.length}` : op.sel ? 'none of them take that' : 'nothing to take');
+      break;
+    }
+    case 'pastemany': {   // settings onto every selected building they fit
+      let hit = 0;
+      for (const r of (Array.isArray(op.list) ? op.list : []).slice(0, 256)) {
+        const t = Array.isArray(r) && world.ents.get(key(r[0], r[1], r[2])); if (!t) continue;
+        if (applyToBuilding(t, op.clip, (b, c, a) => c === 'setdir' ? rotateEntity(b, (a - b.dir + 4) % 4) : entityCommand(b, c, a)).length) hit++;
+      }
+      notify('toast', hit ? `Pasted ${op.clip?.from ?? 'settings'} onto ${hit} of ${op.list.length}` : `${op.clip?.from ?? 'that'} has nothing that fits these`);
+      break;
+    }
     case 'move': moveItems(op.from, op.to, op.n); break;
     case 'shift': shiftMove(op.from, op.ent); break;
     case 'research': if (TECH[op.id]) researchAction({ id: op.id, do: ['now', 'queue', 'remove', 'move'].includes(op.do) ? op.do : 'now', by: op.by }); break;
     case 'link': { const msg = linkPoles(op.kind, op.from, op.to); if (msg) notify('toast', msg); break; }
     case 'mark': editMarks(op); break;
-    case 'med': if (!op.id || (MED[op.id] && medAvailable(MED[op.id]))) S.med.current = op.id || null; break;
+    case 'trade': tradeAction(actor, op); break;
+    case 'med': medAction({ id: op.id, do: ['now', 'queue', 'remove', 'move'].includes(op.do) ? op.do : 'now', by: op.by }); break;
   }
   return null;
 }
@@ -185,6 +202,7 @@ function onHostMessage(conn, m) {
   const p = c.p;
   switch (m.t) {
     case 'input':
+      p.heard = performance.now();   // trades call it off when this goes quiet (trade.js)
       if (!p.veh) Object.assign(p, { x: m.x, z: m.z });
       Object.assign(p, { face: m.face, walk: m.walk, moving: m.moving, vx: m.vx, vz: m.vz, pickup: !!m.pickup, drive: m.drive && typeof m.drive.t === 'number' ? { t: Math.max(-1, Math.min(1, m.drive.t)), s: Math.max(-1, Math.min(1, m.drive.s || 0)) } : null });
       if (typeof m.fac === 'number' && factoryOf(m.fac)) p.fac = m.fac;
@@ -218,6 +236,7 @@ bus.on('orelayer', (x, y, z, d) => op({ o: 'orelayer', x, y, z, layer: d.layer, 
 bus.on('feat', (x, z) => op({ o: 'feat', x, z }));
 bus.on('patch', (x, z) => op({ o: 'patch', x, z }));
 bus.on('medical', () => op({ o: 'med', med: medToJSON() }));
+bus.on('medqueue', () => op({ o: 'med', med: medToJSON() }));
 bus.on('research', id => op({ o: 'research', id }));
 bus.on('bp', (b, on) => op({ o: 'bp', b: bpOp(b), on }));
 bus.on('pulse', e => op({ o: 'pulse', x: e.x, y: e.y, z: e.z }));
@@ -264,7 +283,7 @@ function hostTick(dt) {
     }
     for (const k of c.cache.keys()) if (!states.has(k)) c.cache.delete(k);
     const p = c.p;
-    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, hp: Math.round(p.hp), fac: p.fac, expo: p.expo || {}, pend: (p.pending || []).map(q => ({ ...q })) } });
+    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, hp: Math.round(p.hp), fac: p.fac, expo: p.expo || {}, pend: (p.pending || []).map(q => ({ ...q })), trade: tradeView(p.id) } });
   }
 }
 
@@ -366,6 +385,7 @@ function applyState(m) {
   S.player.fed = you.fed || 0;
   if (typeof you.hp === 'number') S.player.hp = you.hp;
   S.player.pending = you.pend || [];
+  if (JSON.stringify(S.tradeView ?? null) !== JSON.stringify(you.trade ?? null)) { S.tradeView = you.trade || null; bus.emit('trade'); }
   bus.emit('inv');
   // world
   world.ground = m.ground.map(([i, x, z]) => ({ type: ITEM_IDS[i], x, z }));

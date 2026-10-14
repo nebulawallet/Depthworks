@@ -62,7 +62,7 @@ export const ITEMS = {
   blue_pack:      { name: 'Precision pack', color: 0x4a7ae0, shape: 'pack' },
   resonance_pack: { name: 'Resonance pack', color: 0x7ef6ff, emissive: 0x1d8a99, shape: 'pack' },
   // tools: hold one and click two poles to string a cable between them (see VOLTAGES)
-  power_cable:       { name: 'Power cable', color: 0xd88a4a, shape: 'cable', tool: 'link', reach: 32, desc: 'Click two poles of the same voltage to connect them, up to 32 tiles apart. Click a linked pair again to take it down.' },
+  power_cable:       { name: 'Power cable', color: 0xd88a4a, shape: 'cable', tool: 'link', reach: 32, toBuilding: 12, desc: 'Click two poles of the same voltage to connect them, up to 32 tiles apart. With Direct wiring researched, also from an electric pole to a machine up to 12 tiles away, which then draws from that pole. Click a linked pair again to take it down.' },
   transformer_cable: { name: 'Transformer cable', color: 0x6ab8ff, shape: 'cable', tool: 'link', reach: 32, transformer: true, steps: [0, 1], desc: 'Connects a transformer station to a high voltage line, up to 32 tiles away.' },
   // `steps`: the two voltages a transformer cable joins (the station's own, then the one it steps into)
   step_up_cable:  { name: 'Step-up cable', color: 0xd8c84a, shape: 'cable', tool: 'link', reach: 32, transformer: true, steps: [2, 0], desc: 'Connects a step-up station to a low voltage pole up to 32 tiles away, so the power of your generators reaches your machines.' },
@@ -222,22 +222,29 @@ export const TOOLS = {
 export const MEDICAL = [
   { id: 'vitality', name: 'Vitality', levels: 5, units: 60, fx: { health: 20 }, desc: '+20 maximum health a level.' },
   { id: 'endurance', name: 'Endurance', levels: 5, units: 60, fx: { stamina: 20 }, desc: '+20 maximum stamina a level.' },
-  { id: 'recovery', name: 'Recovery', levels: 4, units: 80, fx: { regen: .3 }, desc: 'Health comes back 30% faster a level.' },
-  { id: 'stride', name: 'Stride', levels: 4, units: 80, fx: { walk: .05 }, desc: 'Walk 5% faster a level.' },
+  { id: 'recovery', name: 'Recovery', levels: 4, units: 80, fx: { regen: .3 }, pre: [['vitality', 1]], desc: 'Health comes back 30% faster a level.' },
+  { id: 'stride', name: 'Stride', levels: 4, units: 80, fx: { walk: .05 }, pre: [['endurance', 1]], desc: 'Walk 5% faster a level.' },
   { id: 'dexterity', name: 'Dexterity', levels: 4, units: 80, fx: { mine: .1, craft: .1 }, desc: 'Hand mining and crafting 10% faster a level.' },
-  { id: 'reach_training', name: 'Long reach', levels: 3, units: 100, fx: { reach: 1 }, desc: '+1 tile of reach a level.' },
+  { id: 'reach_training', name: 'Long reach', levels: 3, units: 100, fx: { reach: 1 }, pre: [['dexterity', 2]], desc: '+1 tile of reach a level.' },
   { id: 'adapt_heat', name: 'Heat adaptation', levels: 2, units: 80, hazard: 'heat', crop: 'prickly_pear', desc: 'Halves the effect of heat a level.' },
   { id: 'adapt_cold', name: 'Cold adaptation', levels: 2, units: 80, hazard: 'cold', crop: 'snowberry', desc: 'Halves the effect of cold a level.' },
   { id: 'adapt_fumes', name: 'Fume tolerance', levels: 2, units: 80, hazard: 'fumes', crop: 'emberroot', desc: 'Halves the effect of toxic fumes a level.' },
   { id: 'adapt_spores', name: 'Neurotoxin resistance', levels: 2, units: 80, hazard: 'spores', crop: 'puffball', desc: 'Halves the effect of neurotoxic spores a level.' },
   { id: 'adapt_resonance', name: 'Resonance damping', levels: 2, units: 80, hazard: 'resonance', crop: 'prism_lily', desc: 'Halves the effect of resonance a level.' },
   { id: 'adapt_radiation', name: 'Radiation resistance', levels: 2, units: 100, hazard: 'radiation', crop: 'wormwood', desc: 'Halves the effect of radiation a level.' },
-  { id: 'photosynthesis', name: 'Photosynthetic skin', levels: 3, units: 120, mutation: true, crop: 'ghost_rye', fx: { sunHeal: 1.5 }, desc: 'Mutation: heal 1.5 health a second a level in daylight.' },
+  { id: 'photosynthesis', name: 'Photosynthetic skin', levels: 3, units: 120, mutation: true, crop: 'ghost_rye', fx: { sunHeal: 1.5 }, pre: [['recovery', 2]], desc: 'Mutation: heal 1.5 health a second a level in daylight.' },
   { id: 'night_eyes', name: 'Night eyes', levels: 2, units: 120, mutation: true, crop: 'wormwood', fx: { light: .6 }, desc: 'Mutation: your own light reaches 60% further a level.' },
-  { id: 'lead_lungs', name: 'Lead lungs', levels: 2, units: 150, mutation: true, crop: 'rust_potato', fx: { hazards: .25 }, desc: 'Mutation: every hazard is 25% weaker a level.' },
-  { id: 'adrenal', name: 'Adrenal gland', levels: 3, units: 120, mutation: true, crop: 'ghost_rye', fx: { sprint: .1 }, desc: 'Mutation: sprinting is 10% faster a level.' },
+  { id: 'lead_lungs', name: 'Lead lungs', levels: 2, units: 150, mutation: true, crop: 'rust_potato', fx: { hazards: .25 }, pre: [['adapt_radiation', 1]], desc: 'Mutation: every hazard is 25% weaker a level.' },
+  { id: 'adrenal', name: 'Adrenal gland', levels: 3, units: 120, mutation: true, crop: 'ghost_rye', fx: { sprint: .1 }, pre: [['stride', 1]], desc: 'Mutation: sprinting is 10% faster a level.' },
 ];
 export const MED = Object.fromEntries(MEDICAL.map(m => [m.id, m]));
+// The medical tree's sections, like TECH_CATS. Every level of an upgrade is its own node, needing the level before it;
+// an upgrade's first level needs what its `pre` lists ([upgrade, level] pairs).
+export const MED_CATS = [
+  { id: 'body', name: 'Body', color: '#e8e0e8' },
+  { id: 'adapt', name: 'Adaptations', color: '#9fd0ff' },
+  { id: 'mutation', name: 'Mutations', color: '#9be37a' },
+];
 export const MED_RULES = { growth: 1.8, time: 30, cost: { terrestrial_pack: 1, chlorophyll: 2 } };
 for (const m of MEDICAL) if (m.hazard) HAZARDS[m.hazard].adapt = m.id;
 
@@ -326,7 +333,11 @@ export const ENTITIES = {
   // `depth`: the deepest deposit layer a drill reaches (see DEPOSIT): 0 surface, 1 depth, 2 bedrock.
   burner_drill:     { name: 'Burner drill', kind: 'drill', rate: .25, depth: 0, burner: true, fuelStacks: 1, color: 0x6a5a48, vol: .8, glyph: 'bore', desc: 'Mines surface deposits without power. Burns coal or wood. Holds a full stack of fuel.' },
   drill:            { name: 'Electric drill', kind: 'drill', rate: .5, depth: 1, power: 90, color: 0x5d6b43, vol: 1, glyph: 'bore', desc: 'Mines the deposit under it, down to its depth layer, and pushes ore forward.' },
-  big_drill:        { name: 'Big drill', kind: 'drill', rate: .6, depth: 2, power: 240, augSlots: 3, color: 0x8a6a3a, vol: 2, glyph: 'bore', desc: 'Reaches all the way down to bedrock. Three augment slots.' },
+  // Big mining drill: 2×2, one object. It works every deposit under its four tiles in turn: `rate` is for all four
+  // covered (four electric drills' worth), less over fewer, and its power follows how much it covers. Old saves' one-tile
+  // big drills stay one tile (`compact`), which counts as a quarter covered.
+  big_drill:        { name: 'Big mining drill', kind: 'drill', rate: 2, depth: 2, power: 400, augSlots: 3, size: [2, 2], big: true, multi: true, color: 0x8a6a3a, vol: 4, glyph: 'bore',
+    desc: '2×2. Mines the deposits under all four of its tiles, down to bedrock: four times an electric drill when ore covers it all, less over fewer. Up to 400 kW. Three augment slots. Ore comes out at the front, on its left.' },
   furnace:          { name: 'Stone furnace', kind: 'furnace', speed: 1, burner: true, color: 0x857a6d, vol: 1, glyph: 'heat', desc: 'Smelts. Burns coal.' },
   electric_furnace: { name: 'Electric furnace', kind: 'furnace', speed: 2, power: 180, color: 0x6a7480, vol: 1.5, glyph: 'heat', desc: 'Smelts twice as fast as a stone furnace, on 180 kW. No fuel needed.' },
   steel_furnace:    { name: 'Steel electric furnace', kind: 'furnace', speed: 3, power: 165, augSlots: 3, color: 0x8fa3b8, vol: 2, glyph: 'heat', desc: 'Smelts three times as fast as a stone furnace, on less power than an electric furnace (165 kW). Three augment slots.' },
@@ -340,15 +351,15 @@ export const ENTITIES = {
   wooden_chest:     { name: 'Wooden chest', kind: 'chest', cap: 16, color: 0x8a5a2c, vol: .3, glyph: 'keep', desc: '16 slots of storage.' },
   chest:            { name: 'Iron chest', kind: 'chest', cap: 32, color: 0x8b8f98, vol: .5, glyph: 'keep', desc: '32 slots of storage.' },
   frame:            { name: 'Hollow frame', kind: 'frame', color: 0x8f9aa6, vol: .75, glyph: 'hollow', desc: 'You can build inside it and on top of it.' },
-  small_pole:       { name: 'Small electric pole', kind: 'pole', volt: 0, supply: 2, wire: 7.5, top: 1.26, color: 0x8a5a2c, vol: .1, glyph: 'spark', desc: 'Powers machines in a 5x5 area. Connects to poles up to 7.5 tiles away.' },
-  medium_pole:      { name: 'Medium electric pole', kind: 'pole', volt: 0, supply: 3, wire: 9, top: 1.58, color: 0x8a929c, vol: .2, glyph: 'spark', desc: 'Powers a 7x7 area. Connects up to 9 tiles.' },
-  power_line:       { name: 'Power line', kind: 'pole', volt: 1, supply: 10, wire: 24, top: 2.9, color: 0x9aa8b8, vol: .3, glyph: 'spark', desc: 'High voltage. Powers everything in a 21x21 area and wires to other lines up to 24 tiles away.' },
+  small_pole:       { name: 'Small electric pole', kind: 'pole', volt: 0, supply: 4, wire: 7.5, top: 1.26, color: 0x8a5a2c, vol: .1, glyph: 'spark', desc: 'Powers machines in a {area} area. Connects to poles up to 7.5 tiles away.' },
+  medium_pole:      { name: 'Medium electric pole', kind: 'pole', volt: 0, supply: 5, wire: 9, top: 1.58, color: 0x8a929c, vol: .2, glyph: 'spark', desc: 'Powers a {area} area. Connects up to 9 tiles.' },
+  power_line:       { name: 'Power line', kind: 'pole', volt: 1, supply: 12, wire: 24, top: 2.9, color: 0x9aa8b8, vol: .3, glyph: 'spark', desc: 'High voltage. Powers everything in a {area} area and wires to other lines up to 24 tiles away.' },
   // volts[0] is the side that wires itself up; the other sides need a transformer cable
-  transformer:      { name: 'Transformer station', kind: 'pole', volts: [0, 1], supply: 1, wire: 7.5, top: 1.2, color: 0x4a6a8a, vol: .5, glyph: 'spark', desc: 'Steps power between voltages. Wires to low voltage poles nearby; link it to a power line with a transformer cable.' },
+  transformer:      { name: 'Transformer station', kind: 'pole', volts: [0, 1], supply: 3, wire: 7.5, top: 1.2, color: 0x4a6a8a, vol: .5, glyph: 'spark', desc: 'Steps power between voltages. Powers a {area} area. Wires to low voltage poles nearby; link it to a power line with a transformer cable.' },
   // Extra-low voltage: what generators feed. A generator pole only gathers generators' power; a step-up station wires
   // itself to generator poles and steps their power up into low voltage through a step-up cable.
-  generator_pole:   { name: 'Generator pole', kind: 'pole', volt: 2, supply: 2, wire: 7.5, top: 1.1, color: 0xb8a04a, vol: .1, glyph: 'spark', desc: 'Extra-low voltage. Steam engines and diesel generators in its 5×5 area feed it; machines can\'t draw from it. Wires to other generator poles and step-up stations up to 7.5 tiles away.' },
-  step_up:          { name: 'Step-up station', kind: 'pole', volts: [2, 0], supply: 1, wire: 7.5, top: 1, color: 0x8a7a3a, vol: .3, glyph: 'spark', desc: 'Steps generator power up into low voltage. Wires itself to generator poles nearby; link it to a low voltage pole with a step-up cable.' },
+  generator_pole:   { name: 'Generator pole', kind: 'pole', volt: 2, supply: 4, wire: 7.5, top: 1.1, color: 0xb8a04a, vol: .1, glyph: 'spark', desc: 'Extra-low voltage. Steam engines and diesel generators in its {area} area feed it; machines can\'t draw from it. Wires to other generator poles and step-up stations up to 7.5 tiles away.' },
+  step_up:          { name: 'Step-up station', kind: 'pole', volts: [2, 0], supply: 3, wire: 7.5, top: 1, color: 0x8a7a3a, vol: .3, glyph: 'spark', desc: 'Steps generator power up into low voltage. Wires itself to generator poles nearby; link it to a low voltage pole with a step-up cable.' },
   // Factorio's chain: one pump feeds 20 boilers, one boiler feeds 2 engines (rates in units per second).
   water_pump:       { name: 'Water pump', kind: 'pump', onWater: true, fluids: { water: 'out' }, rate: 1200, color: 0x3a7ab8, vol: .4, glyph: 'flow', desc: 'Place it on water. Pumps up to 1200 water/s into boilers next to it: enough for 20.' },
   // Boilers and steam engines are big: `size` is [width, depth] as built facing north (R turns them). `gen`: feeds only
@@ -358,6 +369,10 @@ export const ENTITIES = {
   steam_engine:     { name: 'Steam engine', kind: 'engine', fluids: { steam: 'in' }, out: 900, steam: 30, size: [2, 2], big: true, multi: true, gen: true, color: 0x7a8a6a, vol: 1.5, glyph: 'spark',
     desc: '2×2. Turns 30 steam/s into up to 900 kW. Steam goes in and through at the front and back, so engines chain end to end (touching ones join on any side). Feeds a generator pole\'s area only. Only works as hard as the network needs.' },
   solar:            { name: 'Solar panel', kind: 'solar', out: 60, color: 0x2a4a7a, vol: 1, glyph: 'shine', desc: 'Up to 60 kW in daylight, less at dusk and dawn, nothing at night.' },
+  // A radar keeps the map live (see explore.js) within `scan` tiles while it has power, and explores outward while it
+  // runs: `sweep` tiles a second, up to `reveal` tiles away.
+  radar:            { name: 'Radar', kind: 'radar', power: 300, scan: 48, reveal: 160, sweep: 1.5, color: 0x8a96a6, vol: .6, glyph: 'think',
+    desc: 'Keeps the map up to date for 48 tiles around it while it has power (300 kW), and slowly explores further, out to 160 tiles. Elsewhere the map only shows what was last seen.' },
   // Lamps come on by themselves when it gets dark. `light`: radius in tiles and colour of the pool of light.
   lamp:             { name: 'Lamp', kind: 'lamp', power: 5, light: { r: 7.5, color: 0xfff0d0 }, color: 0xc3cad3, vol: .1, glyph: 'shine', desc: 'Lights the ground around it at night (5 kW). Put it in a pole\'s area.' },
   brazier:          { name: 'Brazier', kind: 'lamp', burner: true, burn: .02, light: { r: 5.5, color: 0xffa04a, flicker: true }, color: 0x8f8373, vol: .1, glyph: 'heat', desc: 'Burns coal or wood to light the ground at night. A piece of coal lasts about a night.' },
@@ -395,10 +410,12 @@ export const ENTITIES = {
     desc: 'Place it on water. Pumps 3600 water/s, three water pumps\' worth: enough for 60 boilers and 120 steam engines, or two coolant towers. Only at full rate when its line is steel pipe all the way; through iron pipe it pumps 1200/s.' },
   green_lamp:       { name: 'Green lamp', kind: 'lamp', power: 5, light: { r: 7.5, color: 0x6aff7a }, color: 0x7ad88a, vol: .1, glyph: 'shine', desc: 'A lamp with a green light (5 kW). Lit green lamps next to a greenhouse make it grow 20% faster each, up to two.' },
   // Greenhouses are one room per group of touching greenhouse tiles (see multi.js): a greenhouse is 25 tiles, a panel
-  // one. Mining a room takes all of it; Ctrl + mining takes one tile.
-  greenhouse:       { name: 'Greenhouse', kind: 'greenhouse', size: [5, 5], multi: true, merge: true, tileMine: true, tileItem: 'greenhouse_panel', perItem: 25, water: 1.5, color: 0x7ad88a, vol: 2, glyph: 'keep',
+  // one. Mining a room takes all of it; Ctrl + mining takes one tile. `perTile`: every tile is worth its own share of an
+  // item (perItem tiles to an item), so mining gives back by the tile; anything else over several tiles is one object
+  // built from one item, and gives back exactly that one.
+  greenhouse:       { name: 'Greenhouse', kind: 'greenhouse', size: [5, 5], multi: true, merge: true, perTile: true, tileMine: true, tileItem: 'greenhouse_panel', perItem: 25, water: 1.5, color: 0x7ad88a, vol: 2, glyph: 'keep',
     desc: 'A 5×5 glass room for growing crops. Touching greenhouses join into one room. Put seeds in with an inserter (or by hand), lead water in with irrigation pipe on any side, and inserters take out the harvest and spare seeds. Ctrl + mine removes one tile.' },
-  greenhouse_panel: { name: 'Greenhouse panel', kind: 'greenhouse', as: 'greenhouse', size: [1, 1], multi: true, merge: true, tileMine: true, tileItem: 'greenhouse_panel', perItem: 1, water: 1.5, color: 0x8ae89a, vol: .1, glyph: 'keep',
+  greenhouse_panel: { name: 'Greenhouse panel', kind: 'greenhouse', as: 'greenhouse', size: [1, 1], multi: true, merge: true, perTile: true, tileMine: true, tileItem: 'greenhouse_panel', perItem: 1, water: 1.5, color: 0x8ae89a, vol: .1, glyph: 'keep',
     desc: 'One tile of greenhouse. Place it against a greenhouse to grow the room. 25 make a greenhouse.' },
   medical_lab:      { name: 'Medical lab', kind: 'medlab', speed: 1, power: 120, color: 0xe8e0e8, vol: 2, glyph: 'think', desc: 'Researches upgrades for every engineer in the world, using terrestrial packs, chlorophyll and crops. Choose them in research (T), Medical tab.' },
   // Nuclear. The leaching drill feeds sulfuric acid into the ground, which uranium needs.
@@ -411,10 +428,18 @@ export const ENTITIES = {
   coolant_tower:    { name: 'Coolant tower', kind: 'coolant', fluids: { water: 'in' }, cool: 1800, cap: 2000, color: 0xa8b0b8, vol: 2, glyph: 'flow',
     repair: { steel: 20, pipe: 10 }, scrap: { steel: 10 },
     desc: 'Put it against a uranium reactor and pipe water to it. One tower cools a reactor at full power, drawing up to 1800 water/s. Short of water, the reactor heats up and both break.' },
-  // A dam is one object: drag it across water, one tile of dam a tile. It needs some power to run, then gives a lot.
-  dam:              { name: 'Dam', kind: 'dam', multi: true, onWater: true, drag: true, merge: true, tileMine: false, onRoad: true, hv: true, power: 300, outTile: 180, current: 1, color: 0x8a8478, vol: 3, glyph: 'spark',
-    desc: 'Drag it across water: every tile is one dam. Needs 300 kW to run its gates; running, it gives 180 kW a tile on still water and more on a river\'s current. It is high voltage: power it with a power line, or a transformer station. Roads can go on top.' },
+  // A dam is one object: drag it across water, a strip `width` tiles wide (like a road), one item a tile. It needs some
+  // power to run, then gives a lot.
+  dam:              { name: 'Dam', kind: 'dam', multi: true, onWater: true, drag: true, width: 2, merge: true, perTile: true, tileMine: false, onRoad: true, hv: true, power: 300, outTile: 180, current: 1, color: 0x8a8478, vol: 3, glyph: 'spark',
+    desc: 'Drag it across water: it goes down two tiles wide, and every tile is one dam. Needs 300 kW to run its gates; running, it gives 180 kW a tile on still water and more on a river\'s current. It is high voltage: power it with a power line, or a transformer station. Roads can go on top.' },
 };
+// Poles: `supply` is how many tiles their powered area reaches out from the pole on every side (every pole's went up by
+// two). Descriptions name the area as {area}, filled in here so they always match the numbers.
+for (const d of Object.values(ENTITIES)) if (d.kind === 'pole') d.desc = d.desc.replace('{area}', `${d.supply * 2 + 1}×${d.supply * 2 + 1}`);
+// Direct wiring (research): a power cable from a pole that `wiresBuildings` straight to a machine, up to the cable's
+// `toBuilding` tiles away, powers it from that pole wherever it stands. Generator poles and stations never do.
+export const WIRE_TECH = 'direct_wiring';
+export const wiresBuildings = d => d?.kind === 'pole' && !d.volts && d.volt !== 2;
 // How fluids connect: `fluids` buildings join neighbours on every side. Boilers take pipes only at their drum ends
 // (water) and back (steam), so one pipe can't touch both. `ports` machines connect only at the listed sides.
 ENTITIES.boiler.pipeSides = { water: [1, 3], steam: [2] };
@@ -425,23 +450,27 @@ ENTITIES.boiler.through = ['water']; ENTITIES.steam_engine.through = ['steam'];
 ENTITIES.reactor.pipeSides = { water: [1, 3], steam: [0, 2] };   // pipes: water at the sides, steam front and back
 for (const id of ['water_pump', 'boiler', 'steam_engine']) ENTITIES[id].cap = 200;
 
-// What the engineer bumps into. Machines are solid squares; things smaller than a tile get a smaller shape, so a row
-// of them leaves room to squeeze past (the engineer is PLAYER.radius round: two rows of these always leave a gap
-// wider than that). `r`: a circle; `sq`: half the side of a square; 'pipe': a thin bar along each connected side;
-// null: walk over it. Anything not listed is a full square (`SOLID`).
-export const SOLID = .46;
-export const HIT_BY_KIND = { pipe: 'pipe', upipe: { sq: .2 }, fpump: { sq: .2 }, valve: { sq: .17 }, inserter: { r: .18 }, chest: { sq: .2 }, pole: { r: .12 },
-  lamp: { r: .14 }, rail: null, belt: null, underground: null, splitter: null, lift: null, dam: null };
-export const HIT_BY_TYPE = { transformer: { sq: .3 }, step_up: { sq: .26 }, power_line: { sq: .2 }, brazier: { r: .2 }, wooden_chest: { sq: .2 }, chest: { sq: .2 }, burner_inserter: { r: .18 } };
+// What the engineer bumps into. Machines are solid squares, a little inside their tile so you brush past their corners
+// (two touching machines still leave no gap); things smaller than a tile get a smaller shape, so a row of them leaves
+// room to squeeze past (the engineer is PLAYER.radius round: two rows of these always leave a gap wider than that, and
+// so do two parallel pipe lines). `r`: a circle; `sq`: half the side of a square; 'pipe': a thin bar along each
+// connected side; null: walk over it. Anything not listed is a full square (`SOLID`). Buildings over several tiles are
+// solid right across, walls and water too.
+export const SOLID = .43;
+export const HIT_BY_KIND = { pipe: 'pipe', upipe: { sq: .16 }, fpump: { sq: .16 }, valve: { sq: .13 }, inserter: { r: .13 }, chest: { sq: .19 }, pole: { r: .08 },
+  lamp: { r: .09 }, rail: null, belt: null, underground: null, splitter: null, lift: null, dam: null };
+export const HIT_BY_TYPE = { transformer: { sq: .26 }, step_up: { sq: .22 }, power_line: { sq: .16 }, brazier: { r: .15 }, wooden_chest: { sq: .18 }, chest: { sq: .19 }, burner_inserter: { r: .13 } };
+// Trees and rocks: a circle each.
+export const FEATURE_HIT = { tree: .17, rock: .38 };
 export const hitOf = type => { const def = ENTITIES[type]; return type in HIT_BY_TYPE ? HIT_BY_TYPE[type] : def && def.kind in HIT_BY_KIND ? HIT_BY_KIND[def.kind] : { sq: SOLID }; };
-export const PIPE_HIT = .15;   // half the width of a pipe's bar
+export const PIPE_HIT = .12;   // half the width of a pipe's bar
 
 // Working machines glow at night: [radius, colour, flickers]. Depots keep a light on for the vehicles.
 const GLOW = { furnace: [2.4, 0xff7a2a, 1], electric_furnace: [2, 0xff8a3a], steel_furnace: [2.2, 0xffa04a], crafting_station: [1.4, 0xffd88a], boiler: [2.6, 0xff7a2a, 1], burner_drill: [1.6, 0xff7a2a, 1],
   assembler: [1.4, 0x9fe8f2], assembler2: [1.6, 0x9fe8f2], lab: [2.2, 0x58c8d8], transmitter: [3.5, 0x7ef6ff], refinery: [2.4, 0xff8a3a, 1],
   chem_plant: [1.6, 0x9fe8f2], fuel_generator: [1.8, 0xffaa3a, 1], steam_engine: [1.2, 0x7ef6ff], vehicle_factory: [2, 0xfff0d0],
   train_station: [3, 0xffe0a0], truck_depot: [3, 0xffe0a0], port: [3, 0xffe0a0], medical_lab: [2.2, 0xd8f0ff], centrifuge: [1.8, 0x9be37a],
-  reactor: [4.5, 0x9be37a], leach_drill: [1.4, 0xd8e04a], greenhouse: [3, 0x7aff8a] };
+  reactor: [4.5, 0x9be37a], leach_drill: [1.4, 0xd8e04a], greenhouse: [3, 0x7aff8a], radar: [1.2, 0x7ef6ff] };
 for (const [id, [r, color, flicker]] of Object.entries(GLOW)) ENTITIES[id].light = { r, color, flicker: !!flicker, machine: true };
 // The day runs on a clock: `length` real seconds a full 24 hours (24 minutes: a minute an hour), and a world starts at
 // hour `start`. The sun rises at `sunrise` and sets at `sunset` (hours) and climbs and sinks smoothly in between, so the
@@ -457,6 +486,9 @@ export const DITHER = { ghost: .25, preview: .6, blueprint: .5, glass: .4, groun
 // Levels of detail by zoom (pixels a tile takes on screen), shared by alt mode and the map. close: alt mode shows
 // icons, fill and progress bars, and the map shows a rendered close-up; near: icons and bars; tiles: icons only, the map
 // draws a pixel a tile; regions: no alt icons, the map draws whole regions at a quarter of that.
+// Exploring the map (explore.js): an engineer sees `view` tiles around them, which explores those tiles and keeps them
+// live on the map. Radars do the same further out (their `scan` and `reveal` in ENTITIES).
+export const EXPLORE = { view: 40 };
 export const LOD = [{ min: 16, id: 'close' }, { min: 8, id: 'near' }, { min: 1, id: 'tiles' }, { min: 0, id: 'regions' }];
 // Producers take augments: two slots unless the building sets `augSlots`.
 export const PRODUCER_KINDS = new Set(['drill', 'furnace', 'assembler', 'lab', 'oilpump', 'medlab']);
@@ -518,12 +550,17 @@ const MACHINE_STACKS = { lamp: 50, brazier: 50, belt: 100, fast_belt: 100, expre
 for (const [id, it] of Object.entries(ITEMS)) it.stack = it.shape === 'machine' ? (MACHINE_STACKS[id] ?? 50) : (STACKS[it.shape] ?? 50);
 
 // `radius`: the engineer's round footprint. Small things (HIT_BY_KIND) leave gaps wider than it, so rows of them can be squeezed past.
-export const PLAYER = { speed: 6.5, reach: 10, mineReach: 3, inventory: 80, radius: .22,
+// `slide`: brushing a corner, the engineer is nudged up to this far sideways around it instead of stopping dead.
+export const PLAYER = { speed: 6.5, reach: 10, mineReach: 3, inventory: 80, radius: .22, slide: .34,
   // health comes back `regen` a second once `regenDelay` seconds pass without a hit (faster while well fed);
   // sprinting multiplies speed by `sprint` and burns stamina, and an empty bar has to refill to `rested` first
   health: 100, regen: 2, fedRegen: 6, regenDelay: 5, stamina: 100, sprint: 1.55, sprintCost: 20, staminaRegen: 16, staminaDelay: .8, rested: 25,
   hitSpeed: 1.5, hitDamage: 9 };   // vehicles moving faster than hitSpeed hurt you: hitDamage per tile a second
 
+// Trading between engineers (trade.js): accept works only `wait` seconds after the last change to either offer, and a
+// trade is called off when the two are more than `reach` tiles apart.
+// A guest whose input hasn't arrived for `quiet` seconds counts as gone (a closed tab can take a while to be noticed).
+export const TRADE = { wait: 3, reach: 16, quiet: 5 };
 export const BELT_KINDS = new Set(['belt', 'underground', 'splitter', 'lift']);
 
 const R = (id, inp, time, extra = {}) => ({ id, in: inp, out: { [id]: 1 }, time, cat: 'craft', hand: true, ...extra });
@@ -585,14 +622,15 @@ export const RECIPES = [
   R('solar', { steel: 5, circuit: 15, copper_plate: 5 }, 10, { tech: 'solar' }),
   R('brazier', { stone: 5, iron_plate: 1 }, .5),
   R('lamp', { iron_plate: 2, cable: 3, circuit: 1 }, .5),
+  R('radar', { circuit: 5, gear: 5, iron_plate: 10 }, 2),   // from the start, as in Factorio: it needs power, which comes early
   R('transmitter', { adv_circuit: 20, steel: 20, lens: 10, abyssal_alloy: 10 }, 10, { tech: 'signal_theory' }),
   { ...R('fast_underground', { underground: 2, gear: 8 }, 1, { tech: 'logistics2' }), out: { fast_underground: 2 } },
   { ...R('express_underground', { fast_underground: 2, steel: 4, circuit: 2 }, 1, { tech: 'logistics3' }), out: { express_underground: 2 } },
   R('bus_belt', { fast_belt: 1, belt: 1, iron_plate: 2 }, .5, { tech: 'bus_belts' }),
   { ...R('bus_underground', { bus_belt: 6, steel: 4 }, 1, { tech: 'bus_belts' }), out: { bus_underground: 2 } },
-  R('big_drill', { drill: 2, steel: 20, adv_circuit: 5, gear: 20 }, 4, { tech: 'deep_drilling' }),
+  R('big_drill', { drill: 4, steel: 20, adv_circuit: 5, gear: 10 }, 6, { tech: 'deep_drilling' }),   // four drills' worth, plus what reaches bedrock
   // fluids and oil
-  R('pipe', { iron_plate: 1 }, .5, { tech: 'fluid_handling' }),
+  R('pipe', { iron_plate: 1 }, .5),   // from the start: boilers, pumps and engines join by pipe
   { ...R('underground_pipe', { pipe: 10, iron_plate: 5 }, 1, { tech: 'fluid_handling' }), out: { underground_pipe: 2 } },
   R('pump', { circuit: 2, gear: 1, pipe: 1 }, 1, { tech: 'fluid_handling' }),
   R('valve', { pipe: 2, gear: 1, circuit: 1 }, .5, { tech: 'fluid_handling' }),
@@ -697,6 +735,8 @@ export const TECHS = [
   T('logistics2', 'Logistics 2', [r, g], 50, 15, ['logistics', 'logistic_science'], ['fast_belt']),
   T('electric_distribution', 'Electric distribution', [r, g], 40, 10, ['steel', 'logistic_science'], ['medium_pole']),
   T('high_voltage', 'High voltage', [r, g], 60, 15, ['electric_distribution'], ['power_line', 'transformer', 'transformer_cable']),
+  // electric poles (not generator poles or stations) run power cables straight to machines
+  T('direct_wiring', 'Direct wiring', [r, g], 40, 10, ['electric_distribution'], ['cables from poles to machines']),
   T('solar', 'Solar energy', [r, g], 60, 10, ['steel', 'logistic_science'], ['solar']),
   // electric furnaces come with red science, right after steel; the steel electric furnace is their green upgrade
   T('electric_smelting', 'Electric smelting', [r], 50, 15, ['steel'], ['electric_furnace']),
@@ -715,7 +755,7 @@ export const TECHS = [
   T('factory_planning', 'Factory planning', [r], 30, 10, [], ['factories']),
   T('roads', 'Roads', [r], 20, 10, [], ['gravel_road', 'cobble_road', 'path_tile']),
   T('road_power', 'Powered roads', [r, g], 60, 15, ['roads', 'electric_distribution'], ['road_conduit']),
-  T('fluid_handling', 'Fluid handling', [r, g], 50, 10, ['steel', 'logistic_science'], ['pipe', 'underground_pipe', 'pump', 'valve']),
+  T('fluid_handling', 'Fluid handling', [r, g], 50, 10, ['steel', 'logistic_science'], ['underground_pipe', 'pump', 'valve']),
   // exactly these seven, nothing more: Factorio-sized pipes and pumps, and the fluid storage and barreling that go with them
   T('advanced_fluids', 'Advanced fluids', [r, g, b], 120, 20, ['fluid_handling', 'precision_science'], ['steel_pipe', 'underground_steel_pipe', 'steel_irrigation_pipe', 'underground_steel_irrigation', 'hp_pump', 'storage_tank', 'barreler']),
   T('soil_science', 'Soil science', [r, g], 40, 10, ['logistic_science'], ['shovel']),
@@ -760,7 +800,7 @@ export const TECH_CATS = [
 const TECH_CAT = {
   production: ['automation', 'automation2', 'electric_smelting', 'advanced_smelting', 'crafting_stations', 'steel', 'deep_drilling', 'augments', 'augments_2', 'augments_3', 'augments_4', 'augments_5', 'factory_planning'],
   logistics: ['logistics', 'logistics2', 'logistics3', 'long_arms', 'fast_inserter', 'filter_inserter', 'lifts', 'bus_belts'],
-  power: ['electric_distribution', 'high_voltage', 'solar', 'hydro_power', 'nuclear_power', 'road_power'],
+  power: ['electric_distribution', 'direct_wiring', 'high_voltage', 'solar', 'hydro_power', 'nuclear_power', 'road_power'],
   fluids: ['fluid_handling', 'advanced_fluids', 'oil_processing', 'advanced_oil', 'uranium_processing'],
   transport: ['roads', 'vehicles', 'railways', 'shipping'],
   military: ['tanks'],

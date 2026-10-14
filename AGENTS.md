@@ -25,6 +25,8 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
   `ensureChunks(x, z, r)` makes chunks without walking there.
 - Clear test data afterwards: the keys are `depthworks.save.v3` (slot 1), `depthworks.save.v3.2` … `.5` (slots 2–5), `depthworks.saves` (the slot index),
   `depthworks.nick`, `depthworks.volume`, `depthworks.keys`, `depthworks.settings` and `depthworks.worldopts` in localStorage.
+- **Trading without a second tab:** make a fake engineer, `S.players.set('p2', newPlayer('p2', 'Bob'))` (state.js), put them
+  near you, and drive their side with `tradeAction(bob, op)` from `/src/trade.js`.
 
 ## Architecture
 
@@ -37,7 +39,7 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 | `src/multi.js` | Buildings over several tiles (greenhouse rooms, dams, big boilers and steam engines): footprints (turned by direction for `big` ones), joining touching ones, splitting, walls and doors |
 | `src/farm.js` | Weedy patches and the shovel, greenhouses, water shared over irrigation |
 | `src/plants.js` | Dams, uranium reactors and coolant towers, repairs |
-| `src/body.js` | Biome hazards and exposure, medical lab research, `playerMods` (everything that changes the engineer's numbers) |
+| `src/body.js` | Biome hazards and exposure, medical lab research and its tree and queue (`MED_NODES`, `medAction`), `playerMods` (everything that changes the engineer's numbers) |
 | `src/copypaste.js` | The clipboard: copying and pasting settings between buildings, belt lines, routes and stops |
 | `src/sim.js` | All game rules: machines and their augments (`machineStats`), drills and deposit layers, lamps, crafting stations, power networks, voltages and road grids, cables, research and its queue, precision, crafting (free in sandbox), the engineer, collision, health and stamina, building (and auto-craft on place), slots and Ctrl+click transfer modes, map marks, factory reassignment |
 | `src/belts.js` | Belts: lanes (2, or 3 on bus belts), lines (runs of tiles simulated as one), the nodes where lines end (splitters, bus channels, side-loads, other belts), outputs (taps) on single tiles, line settings, networks |
@@ -50,9 +52,11 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 | `src/scene.js` | Rendering: camera, post pass (outlines, night and the light buffer), the interface pass after it, terrain, clutter, particles, entity meshes, blueprints, picking (buildings, vehicles, engineers), arrows, preview, alt-mode icons and bars, open chests, tunnels, road conduits, the map's close-up |
 | `src/models.js` | Procedural models, toon materials, the stippled see-through path (`dither`), ghost/preview/blueprint variants, engineer, inserter IK, the crafting station's arm |
 | `src/ui.js` | HUD and panels (HTML), quickbars, vitals, the pause menu and settings, hide UI, key binding screen, drag and drop, chat, name tags, goals, the Shift+click selection bar, an engineer's details |
-| `src/research.js` | The research window: the tech tree laid out left to right by section, pan/zoom/search, the queue panel |
+| `src/research.js` | The research window: one tree engine for two sources (technologies, medical upgrades a level a node), laid out left to right by section, right-angle lines with shared trunks and merge buses, pan/zoom/search, the queue panel |
+| `src/explore.js` | What the map knows: explored tiles (bits per chunk, saved compactly), live areas (engineers' view, working radars), radar sweeps |
+| `src/trade.js` | Trading between engineers: offers, the wait after a change, both accepts, an atomic checked swap on the host |
 | `src/blueprint.js` | Blueprints: planned buildings in `world.bps`, placing, building and clearing them, sync and saves |
-| `src/map.js` | Minimap and big map: chunk-cached drawing from a dirty set and a per-chunk building index, regions when zoomed out, the rendered close-up when zoomed in, view modes (terrain, resources, production, power, factories), markers and areas |
+| `src/map.js` | Minimap and big map: chunk-cached drawing from a dirty set and a per-chunk building index, only explored tiles, only live tiles redrawn (each chunk keeps its last-seen pixels), regions when zoomed out, the rendered close-up when zoomed in (the whole minimap), view modes (terrain, resources, production, power, factories), markers and areas |
 | `src/input.js` | Key bindings: actions, defaults, rebinding (saved in localStorage); mouse combos like `Shift+Mouse0` |
 | `src/main.js` | Boot, title screen (slots, load game, host/join), input, game loop (paused while the menu is open in solo) |
 | `src/audio.js`, `src/signal.js`, `src/icons.js` | Sound, the alien conversation, pixel icons |
@@ -172,6 +176,19 @@ so players can rebind them. Add new actions to `ACTIONS`.
 35. **Ore looks follow wear:** a deposit's stage is `oreStage(oreWear(o))` (ORE_STAGES, the same for every ore);
     `depleteOre` emits `orestage` when it changes, and terrain.js repaints.
 36. **Detail by zoom** is `lodAt(pixels per tile)` (state.js, `LOD` in data), shared by alt mode and the map.
+37. **Multi-tile refunds:** a building over several tiles is one object and gives back the one item it was built from.
+    Only kinds marked `perTile` in data (greenhouses, dams) give back by the tile, the same way Ctrl + mining one tile does.
+38. **The map shows what was seen** (explore.js). Never draw a tile that isn't explored, and only redraw tiles that are
+    live (`isLive`); anything that should reveal or watch the map goes through `reveal` and the live areas, not by
+    drawing chunks directly. `world.explored` is saved with the world.
+39. **The camera only turns in depth mode.** Flat mode follows the engineer, facing north. Depth mode orbits, tilts and
+    pans (`camLeft`, `camRight`, `camLower`, `camHigher`, `camPan`), and leaving it tweens back (`resetCamera` in main.js).
+40. **Selection is many** (`S.picks`, refs by anchor; ui.js). Anything that acts on "the selected building" should act on
+    every one it fits (`fastTransferMany`, the `pastemany` action).
+41. **Trades move nothing until both accept** (trade.js). Offers are promises; the swap is checked on copies of both
+    inventories and applied in one step on the host, or not at all.
+42. **The placement preview is solid and tinted** (`setPreview(root, 'ok' | 'bad' | 'bp')`); only planning a blueprint
+    (Shift, or a blueprint in hand) uses the stippled look, through the same dither path as blueprints.
 
 ## Style
 

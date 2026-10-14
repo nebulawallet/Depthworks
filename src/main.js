@@ -1,5 +1,5 @@
-import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE } from './data.js';
-import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID, recipeUnlocked } from './state.js';
+import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE, TECH, WIRE_TECH } from './data.js';
+import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID, recipeUnlocked, isResearched } from './state.js';
 import { newWorld, ensureChunks } from './worldgen.js';
 import { stockFish } from './fish.js';
 import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo, mineTargetAt, planCraft, depositLayer, machineStats } from './sim.js';
@@ -7,7 +7,7 @@ import { bpAt } from './blueprint.js';
 import { sizeOf } from './multi.js';
 import { toolCursor } from './icons.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
-import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI, openMenu, setMenuTab, setSetting, pickTargetFor, clearPick, openPlayer } from './ui.js';
+import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI, openMenu, setMenuTab, setSetting, pickTargetFor, clearPick, openPlayer, isPicked } from './ui.js';
 import { save, load, loadData, hasSave, wipeSave, slotList, freeSlot, latestSlot, exportSave, exportSlot, importSave } from './save.js';
 import { doAction, host, join, netTick, leave, rememberFriends, cleanName } from './net.js';
 import './signal.js';
@@ -17,6 +17,8 @@ import { copyBuilding } from './copypaste.js';
 import { roadAt } from './transport.js';
 import { setClip } from './copypaste.js';
 import { updateMap, resetMap } from './map.js';
+import { exploredFromJSON } from './explore.js';
+import { myTrade } from './trade.js';
 
 const $ = id => document.getElementById(id);
 let chartT = 0, started = false, hover = null, building = false, rmb = false, lastPaint = null, lastPlacedCell = null;
@@ -29,7 +31,8 @@ $('nick').addEventListener('input', () => { try { localStorage.setItem(NICK_KEY,
 
 // ---------------------------------------------------------------- game start
 function enterWorld(fresh) {
-  Object.assign(S.cam, { x: S.player.x, z: S.player.z, yaw: 0, yawT: 0, pitch: .82, pitchT: .82, ppu: 20, ppuT: 20 });
+  Object.assign(S.cam, { x: S.player.x, z: S.player.z, yaw: 0, yawT: 0, pitch: .82, pitchT: .82, ppu: 20, ppuT: 20, panX: 0, panZ: 0, panXT: 0, panZT: 0 });
+  delete S.cam.free;   // saves from when there was a free camera
   S.mode = 'flat'; S.layer = 0;
   buildTerrain(); remeshAll(); applyGhostAll(); resetMap(); initUI(); resize();
   started = S.started = true; document.body.classList.add('ingame'); closeModals();
@@ -49,6 +52,7 @@ function begin(fresh, sandbox = false, slot = S.slot, opts = {}) {
     world.roads.clear(); world.ents.clear(); world.frames.clear(); world.bps.clear(); world.lines = []; world.beltDirty = world.powerDirty = world.fluidDirty = world.railDirty = true;
     S.stats = { made: {} }; S.goalsDone = new Set(); S.med = { levels: {}, current: null, progress: {}, mutations: false };
     newWorld(opts);   // its own seed: biomes, coastlines, lakes and rivers of its own
+    exploredFromJSON([]);   // a new world: nothing seen yet (the engineer sees round them as soon as it starts)
     Object.assign(S.player, { x: SPAWN.x, z: SPAWN.z, face: 0, fac: 1, veh: null, hp: PLAYER.health, sta: PLAYER.stamina, tired: false });
     startingInventory(); stockFish();
     freshBars();
@@ -216,23 +220,25 @@ setInterval(() => { if (started) saveNow(true); }, 30000);
 addEventListener('beforeunload', () => { if (started) save(); leave(); });
 
 // ---------------------------------------------------------------- mode + layers
+// The camera. Outside depth mode it follows the engineer, looking north, and nothing turns it. In depth mode it can
+// orbit a quarter turn at a time (camLeft / camRight), tilt in steps (camLower / camHigher) and pan freely with a
+// middle-button drag (camPan); a middle click that doesn't drag is still the pipette. Leaving depth mode tweens it back
+// to the default view. Every key is rebindable (input.js).
+const TILTS = [.35, .55, .75, .95, 1.15, 1.35], FLAT_PITCH = .82, DEPTH_PITCH = .55;
 function toggleMode() {
   const C = S.cam;
-  if (S.mode === 'flat') { S.mode = 'depth'; if (!C.free) C.pitchT = .55; }
-  else { S.mode = 'flat'; S.layer = 0; if (!C.free) { C.pitchT = .82; C.yawT = Math.round(C.yawT / (Math.PI * 2)) * Math.PI * 2; } }
+  if (S.mode === 'flat') { S.mode = 'depth'; C.pitchT = DEPTH_PITCH; }
+  else { S.mode = 'flat'; S.layer = 0; resetCamera(); }
   applyGhostAll(); renderHotbar();
-  toast(S.mode === 'depth' ? 'DEPTH MODE · PgUp/PgDn or Shift+wheel: layer · [ ] orbit · V pitch' : 'FLAT MODE', 2200);
+  toast(S.mode === 'depth' ? `DEPTH MODE · ${keyName('layerUp')}/${keyName('layerDown')}: layer · ${keyName('camLeft')} ${keyName('camRight')}: orbit · ${keyName('camLower')} ${keyName('camHigher')}: tilt · drag ${keyName('camPan')}: pan · ${keyName('depthGrid')}: grid` : 'FLAT MODE', 2600);
 }
-// Two ways to turn the camera: fixed (the default: flat mode looks north, depth mode turns a quarter at a time with
-// [ and ]) or free (hold the middle mouse button and drag: sideways turns it, up and down tilts it, in either mode).
-// A middle click that doesn't drag is still the pipette. Going back to fixed snaps to the nearest quarter.
-const PITCH = [.3, 1.35];
-function toggleCamera() {
-  const C = S.cam; C.free = !C.free;
-  if (!C.free) { C.yawT = S.mode === 'flat' ? Math.round(C.yawT / (Math.PI * 2)) * Math.PI * 2 : Math.round(C.yawT / (Math.PI / 2)) * Math.PI / 2; C.pitchT = S.mode === 'depth' ? .55 : .82; }
-  toast(C.free ? `FREE CAMERA · hold ${keyName('freeRotate')} and drag to turn and tilt · ${keyName('cameraMode')}: fixed` : 'FIXED CAMERA', 2600);
+// Back to the default view: facing north (the nearest whole turn, so it unwinds the short way), the usual tilt, no pan.
+function resetCamera() { const C = S.cam; C.yawT = Math.round(C.yawT / (Math.PI * 2)) * Math.PI * 2; C.pitchT = FLAT_PITCH; C.panXT = C.panZT = 0; }
+function tilt(by) {
+  const C = S.cam, i = TILTS.reduce((b, t, k) => Math.abs(t - C.pitchT) < Math.abs(TILTS[b] - C.pitchT) ? k : b, 0);
+  C.pitchT = TILTS[Math.max(0, Math.min(TILTS.length - 1, i + by))];
 }
-let rot = null;   // a middle-button drag: { x, y, yaw, pitch, moved }
+let rot = null;   // a middle-button drag: { x, y, panX, panZ, moved }
 function setLayer(l) {
   const [lo, hi] = layerRange();
   if (l < lo || l > hi) { toast(layerLockReason(l)); return; }
@@ -248,11 +254,11 @@ addEventListener('keydown', e => {
   keys.add(e.code);
   const c = e.code;
   if (is('depthMode', c)) { e.preventDefault(); toggleMode(); return; }
-  if (is('cameraMode', c)) { toggleCamera(); return; }
   if (c === 'Escape') {
     if (cancelCursor()) return;
     if (S.linkFrom) { S.linkFrom = null; renderHotbar(); return; }
-    if (S.pick) { clearPick(); return; }
+    if (S.picks.length) { clearPick(); return; }
+    if (myTrade()) { doAction({ a: 'trade', do: 'cancel' }); return; }   // closing a trade calls it off
     // Esc closes whatever is open, then empties the hand, and only then opens the menu
     if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else if (S.sel) selectItem(null); else if (S.clip) setClip(null); else openMenu('settings');
     return;
@@ -291,13 +297,18 @@ addEventListener('keydown', e => {
     else { S.dy = S.dy === 0 ? 1 : S.dy === 1 ? -1 : 0; toast('inserter pitch: ' + ['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]); }
     renderHotbar(); return;
   }
-  const layerKey = ['layerUp', 'layerDown', 'orbitLeft', 'orbitRight'].find(a => is(a, c));
-  if (layerKey) {
-    if (S.mode !== 'depth') { toast('that is a depth control: press Tab'); return; }
-    if (layerKey === 'layerUp') setLayer(S.layer + 1);
-    if (layerKey === 'layerDown') setLayer(S.layer - 1);
-    if (layerKey === 'orbitLeft') S.cam.yawT = Math.round(S.cam.yawT / (Math.PI / 2)) * Math.PI / 2 - Math.PI / 2;
-    if (layerKey === 'orbitRight') S.cam.yawT = Math.round(S.cam.yawT / (Math.PI / 2)) * Math.PI / 2 + Math.PI / 2;
+  const depthKey = ['layerUp', 'layerDown', 'camLeft', 'camRight', 'camLower', 'camHigher', 'depthGrid'].find(a => is(a, c));
+  if (depthKey) {
+    e.preventDefault();
+    if (S.mode !== 'depth') { toast(`that is a depth control: press ${keyName('depthMode')}`); return; }
+    const C = S.cam, quarter = Math.round(C.yawT / (Math.PI / 2)) * Math.PI / 2;
+    if (depthKey === 'layerUp') setLayer(S.layer + 1);
+    if (depthKey === 'layerDown') setLayer(S.layer - 1);
+    if (depthKey === 'camLeft') C.yawT = quarter - Math.PI / 2;
+    if (depthKey === 'camRight') C.yawT = quarter + Math.PI / 2;
+    if (depthKey === 'camLower') tilt(-1);
+    if (depthKey === 'camHigher') tilt(1);
+    if (depthKey === 'depthGrid') { setSetting('depthGrid', S.settings.depthGrid === false); toast(S.settings.depthGrid ? 'depth grid on' : 'depth grid off', 1200); }
   }
 });
 addEventListener('keyup', e => { keys.delete(e.code); if (is('pickup', e.code)) S.player.pickup = false; });
@@ -356,10 +367,13 @@ const planOn = () => planning || S.bpHand;
 view.addEventListener('contextmenu', e => e.preventDefault());
 view.addEventListener('pointermove', e => {
   setMouse(e);
-  if (rot) {   // free camera: drag to turn and tilt
-    const dx = e.clientX - rot.x, dy = e.clientY - rot.y;
+  if (rot) {   // depth mode: drag to pan, the ground following the mouse
+    const dx = e.clientX - rot.x, dy = e.clientY - rot.y, C = S.cam;
     if (Math.hypot(dx, dy) > 4) rot.moved = true;
-    if (rot.moved && S.cam.free) { S.cam.yawT = S.cam.yaw = rot.yaw - dx * .008; S.cam.pitchT = S.cam.pitch = Math.max(PITCH[0], Math.min(PITCH[1], rot.pitch + dy * .005)); }
+    if (rot.moved && S.mode === 'depth') {
+      const k = 1 / (C.ppu * S.pix), sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), fwd = dy * k / Math.max(.3, Math.sin(C.pitch));
+      C.panXT = C.panX = rot.panX - cy * dx * k + sy * fwd; C.panZT = C.panZ = rot.panZ + sy * dx * k + cy * fwd;
+    }
   }
 });
 view.addEventListener('pointerleave', () => { mouse.set(9, 9); S.mouseClient = null; });
@@ -367,26 +381,28 @@ view.addEventListener('pointerdown', e => {
   if (!started) return;
   if (S.modal && S.modal !== 'title') closeModals();
   setMouse(e); hover = pick();
-  if (is('freeRotate', combo(e)) || e.button === 1) { e.preventDefault(); rot = { x: e.clientX, y: e.clientY, yaw: S.cam.yawT, pitch: S.cam.pitchT, moved: false, button: e.button }; return; }
+  if (is('camPan', combo(e)) || e.button === 1) { e.preventDefault(); rot = { x: e.clientX, y: e.clientY, panX: S.cam.panX || 0, panZ: S.cam.panZ || 0, moved: false, button: e.button }; return; }
   // Shift + left click: with something to build in hand it plans a blueprint (below); with an empty hand it pastes
   // copied settings, or with nothing copied, selects what is under the cursor for transfer modes
-  const placing = e.shiftKey && e.button === 0 && ENTITIES[S.sel];
-  if (!placing && !(e.shiftKey && e.button === 0 && !S.sel && !S.clip) && clipClick(combo(e))) { e.preventDefault(); return; }
+  // with a selection going, Shift + click keeps adding to it (or taking out) even with settings copied: paste onto it
+  // from its bar
+  const placing = e.shiftKey && e.button === 0 && ENTITIES[S.sel], selecting = e.shiftKey && e.button === 0 && !S.sel && (!S.clip || S.picks.length);
+  if (!placing && !selecting && clipClick(combo(e))) { e.preventDefault(); return; }
   if (e.button === 2) { rmb = true; return; }    // hold right-click to mine
   if (e.button !== 0 || !hover) return;
   if (e.shiftKey && !S.sel) { pickTargetFor(hover); return; }
   if (hover.player && !S.sel) { openPlayer(hover.player); sfx('open'); return; }
-  if (hover.veh && e.ctrlKey && S.sel) { doAction({ a: 'fast', veh: hover.veh, sel: S.sel, mode: S.pick?.veh === hover.veh ? S.pickMode : null }); renderHotbar(); return; }
+  const hv = hover.veh && world.vehicles.find(x => x.id === hover.veh);
+  if (hv && e.ctrlKey && (S.sel || isPicked(hv))) { fastClick(hv); return; }
   if (hover.veh && !S.sel) { const v = world.vehicles.find(x => x.id === hover.veh); if (v) { if (Math.hypot(v.x - S.player.x, v.z - S.player.z) > PLAYER.reach + 1) toast('out of reach'); else { openEntity(v); sfx('open'); } } return; }
   if (ITEMS[S.sel]?.food) { doAction({ a: 'eat', it: S.sel }); sfx('craft'); renderHotbar(); return; }
   const ent = world.ents.get(key(hover.x, hover.y, hover.z));
   if (ITEMS[S.sel]?.tool === 'link') { linkClick(ent); return; }
   if (e.ctrlKey && ent) {                                         // Ctrl+click fast transfer (in the selection's mode)
     if (distTo(hover.x, hover.z) > PLAYER.reach) { toast('out of reach'); return; }
-    const picked = S.pick && !S.pick.veh && S.pick.x === ent.x && S.pick.y === ent.y && S.pick.z === ent.z;
-    doAction({ a: 'fast', x: ent.x, y: ent.y, z: ent.z, sel: S.sel, mode: picked && S.sel ? S.pickMode : null });
-    renderHotbar(); return;
+    fastClick(ent); return;
   }
+  if (!S.sel && !ent && !e.shiftKey && S.picks.length && !bpAt(hover.x, hover.y, hover.z)) { clearPick(); return; }   // a click on empty ground clears the selection
   if (!S.sel && !ent && bpAt(hover.x, hover.y, hover.z)) { doAction({ a: 'bpbuild', x: hover.x, y: hover.y, z: hover.z }); sfx('place'); return; }   // build a planned building
   planning = e.shiftKey && !!ENTITIES[S.sel];
   building = true; lastPaint = null; lastPlacedCell = null;
@@ -413,6 +429,14 @@ function clipClick(code) {
   if (is('pasteSettings', code) && S.clip) { pasteAt(pickTarget()); return true; }
   return false;
 }
+// Ctrl + click: on something selected, it acts on the whole selection (sharing the held stack out, or emptying them
+// all); on anything else, on that alone.
+function fastClick(t) {
+  const many = isPicked(t) && S.picks.length > 1, mode = isPicked(t) && S.sel ? S.pickMode : null;
+  if (many) doAction({ a: 'fastmany', list: S.picks.map(r => r.veh ? { veh: r.veh } : [r.x, r.y, r.z]), sel: S.sel, mode });
+  else doAction(t.isVeh ? { a: 'fast', veh: t.id, sel: S.sel, mode } : { a: 'fast', x: t.x, y: t.y, z: t.z, sel: S.sel, mode });
+  renderHotbar();
+}
 function copyAt(c) {
   if (!c) return;
   const e = world.ents.get(key(c.x, c.y, c.z)), r = c.y === 0 && roadAt(c.x, c.z);
@@ -425,9 +449,11 @@ function pasteAt(c) {
   if (distTo(c.x, c.z) > PLAYER.reach + 2) { toast('out of reach'); sfx('error'); return; }
   doAction({ a: 'paste', x: c.x, y: c.y, z: c.z, clip: S.clip }); sfx('place');
 }
-// With a cable in hand: click one pole, then another. Clicking a linked pair again takes the cable down.
+// With a cable in hand: click one pole, then another (or, with Direct wiring, a machine). Clicking a linked pair again
+// takes the cable down.
 function linkClick(ent) {
-  if (ent?.kind !== 'pole') { toast('cables go between poles: click a pole'); sfx('error'); return; }
+  const toMachine = !!ITEMS[S.sel]?.toBuilding && isResearched(WIRE_TECH) && !!ENTITIES[ent?.type]?.power && ent.kind !== 'pole';
+  if (ent?.kind !== 'pole' && !(toMachine && S.linkFrom)) { toast(toMachine ? 'click the pole first, then the machine' : ITEMS[S.sel]?.toBuilding && !isResearched(WIRE_TECH) && ENTITIES[ent?.type]?.power ? `cables go between poles: research ${TECH[WIRE_TECH].name} to wire machines` : 'cables go between poles: click a pole'); sfx('error'); return; }
   if (distTo(ent.x, ent.z) > PLAYER.reach) { toast('out of reach'); sfx('error'); return; }
   const at = [ent.x, ent.y, ent.z], from = S.linkFrom;
   S.linkFrom = from ? null : at;
@@ -508,13 +534,14 @@ function paintConduit(c) {
   if (conduitTiles.length >= 8) doAction({ a: 'conduit', tiles: conduitTiles.splice(0) });
 }
 
-// Things laid by dragging across tiles (dams): a straight run from where the drag started, placed on release as one.
+// Things laid by dragging across tiles (dams): a straight run from where the drag started, `width` tiles wide across it
+// (like a road), placed on release as one.
 let dragFrom = null;
 function paintDrag(c, first) {
   if (c.y !== 0) return;
   if (first) dragFrom = c;
-  const dx = c.x - dragFrom.x, dz = c.z - dragFrom.z, along = Math.abs(dx) >= Math.abs(dz), n = Math.max(Math.abs(dx), Math.abs(dz)), tiles = [];
-  for (let i = 0; i <= Math.min(n, 64); i++) tiles.push(along ? [dragFrom.x + Math.sign(dx) * i, dragFrom.z] : [dragFrom.x, dragFrom.z + Math.sign(dz) * i]);
+  const dx = c.x - dragFrom.x, dz = c.z - dragFrom.z, along = Math.abs(dx) >= Math.abs(dz), n = Math.max(Math.abs(dx), Math.abs(dz)), tiles = [], w = ENTITIES[S.sel].width || 1;
+  for (let i = 0; i <= Math.min(n, 64); i++) for (let k = 0; k < w; k++) tiles.push(along ? [dragFrom.x + Math.sign(dx) * i, dragFrom.z + k] : [dragFrom.x + k, dragFrom.z + Math.sign(dz) * i]);
   S.dragTiles = tiles;
   S.dragErr = canPlace(S.sel, c.x, 0, c.z, 0, 0, { tiles, reach: true, fac: S.player.fac }); S.dragOk = !S.dragErr;
 }

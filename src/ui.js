@@ -4,7 +4,7 @@ import { S, world, inv, invGet, bus, key, DIRS, DIR_NAMES, itemName, recipeUnloc
 import { playerMods, maxHealth, maxStamina, reachOf, hazardAt, resistance, medLevel, unitsFor, unitCost, medAvailable } from './body.js';
 import { seedsNeeded, FARM, patchName } from './farm.js';
 import { damRating, REACTOR } from './plants.js';
-import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, slotsOf, voltsOf, nets, machineStats, depositLayer, hasTool, toolStat, toolLevel, barrelMode, TRANSFER_MODES, modesFor, stationChests } from './sim.js';
+import { maxCraftable, techAvailable, isActive, powerSummary, entSlots, slotsOf, voltsOf, nets, machineStats, depositLayer, hasTool, toolStat, toolLevel, barrelMode, TRANSFER_MODES, modesFor, stationChests, drillDeposits } from './sim.js';
 import { renderTree, setTreeToast } from './research.js';
 import { bpAt } from './blueprint.js';
 import { segItems, lanesOf, laneName, lineName, lineItems, lineWarn, lineAugs } from './belts.js';
@@ -13,12 +13,14 @@ import { fishTarget } from './fish.js';
 import { openLogistics, renderLogistics, drawLogistics, showBeltLine, lineEndHTML } from './logistics.js';
 import { iconHTML, iconURL, fmtN, toolCursor } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
-import { ROAD_POWER, ELV } from './data.js';
+import { ROAD_POWER, ELV, WIRE_TECH } from './data.js';
 import { project } from './scene.js';
 import { doAction, chat, netInfo } from './net.js';
 import { ACTIONS, keyName, keyNames, rebind, resetKeys, MOUSE_ACTIONS, combo, is } from './input.js';
 import { CLIP_UI, clipFromPanel, pasteToPanel, copyBuilding, setClip } from './copypaste.js';
 import { renderSide, openMapView } from './map.js';
+import { myTrade, offerList } from './trade.js';
+import { TRADE } from './data.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -100,19 +102,20 @@ function renderMenu() {
   for (const p of m.querySelectorAll('[data-tab]')) p.classList.toggle('on', p.dataset.tab === menuTab);
   if (menuTab === 'controls') renderKeys();
   if (menuTab === 'settings') {
-    for (const c of m.querySelectorAll('[data-set]')) c.checked = c.dataset.set === 'altMode' ? S.altMode : c.dataset.set === 'camFree' ? !!S.cam.free : !!S.settings[c.dataset.set];
+    for (const c of m.querySelectorAll('[data-set]')) c.checked = c.dataset.set === 'altMode' ? S.altMode : !!S.settings[c.dataset.set];
     $('pmGame').innerHTML = `${S.sandbox ? 'Sandbox world. ' : ''}${S.net.role === 'client' ? 'You are a guest: the host saves this world.' : `Saving to slot ${S.slot}, every 30 seconds and when you quit. Export to file keeps a copy outside the browser.`}${S.net.role === 'host' ? ` Invite code: <b>${esc(S.net.code || '…')}</b>` : ''}`;
   }
 }
 // Interface settings, kept in this browser.
 const SETTINGS_KEY = 'depthworks.settings';
-S.settings = { goals: true, minimap: true, altInserters: true };
+S.settings = { goals: true, minimap: true, altInserters: true, depthGrid: true };
 try { Object.assign(S.settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch { /* storage unavailable */ }
 export function applySettings() { $('goals').classList.toggle('off', !S.settings.goals); $('minimap').classList.toggle('off', !S.settings.minimap); }
 export function setSetting(k, v) {
-  if (k === 'altMode') S.altMode = v; else if (k === 'camFree') S.cam.free = v; else S.settings[k] = v;
+  if (k === 'altMode') S.altMode = v; else S.settings[k] = v;
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(S.settings)); } catch { /* storage unavailable */ }
   applySettings();
+  bus.emit('settings');
 }
 applySettings();
 
@@ -181,9 +184,9 @@ export function renderHotbar() {
   const forFac = ent && !ent.shared && (world.factories.length > 1 || isResearched('factory_planning')) ? ` · for ${facChip(S.player.fac, 'factories')}` : '';
   const hand = S.sel ? `${iconHTML(S.sel, invGet(S.sel))} <b>${itemName(S.sel)}</b>` + (S.bpHand ? ' <span class="tag">blueprint</span>' : '') + (ent ? ` · facing ${DIR_NAMES[S.dir]}${forFac}${S.bpHand ? ' · click to plan it' : ' · Shift: plan a blueprint'}`
     : it?.tool === 'conduit' ? ' · drag over road tiles to lay power in them'
-    : tool ? (S.linkFrom ? ' · now click the other pole · Esc cancels' : ' · click a pole, then another, to string a cable')
+    : tool ? (S.linkFrom ? ` · now click the other pole${it.toBuilding && isResearched(WIRE_TECH) ? ' or a machine' : ''} · Esc cancels` : ` · click a pole, then another${it.toBuilding && isResearched(WIRE_TECH) ? ' (or a machine)' : ''}, to string a cable`)
     : it?.road ? ` · drag to lay · R turns it (${S.dir % 2 ? 'east-west' : 'north-south'})` : it?.vehicle ? ` · click to put it down · R turns it · facing ${DIR_NAMES[S.dir]}`
-    : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : ` · Ctrl+click a machine to put it in${S.pick && S.pickMode ? ` (${TRANSFER_MODES[S.pickMode].name.toLowerCase()} mode on the selection)` : ''} · Z drops one`)
+    : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : ` · Ctrl+click a machine to put it in${S.picks.length && S.pickMode ? ` (${TRANSFER_MODES[S.pickMode].name.toLowerCase()} mode on the selection)` : ''}${S.picks.length > 1 ? ` · Ctrl+click a selected one: shared over all ${S.picks.length}` : ''} · Z drops one`)
     + (ent?.kind === 'lift' ? ` · ${S.dy === -1 ? 'down' : 'up'}` : '')
     + (ent?.kind === 'inserter' && S.mode === 'depth' ? ` · ${['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]}` : '')
     : '';
@@ -212,6 +215,7 @@ let cursor = null;   // { ref, it, n, mode: 'drag' | 'held', moved, x, y, button
 const ghost = document.createElement('div'); ghost.id = 'cursorStack'; document.body.append(ghost);
 function readRef(ref) {
   if (ref.startsWith('p:')) { const sl = inv.slots[+ref.slice(2)]; return { it: sl?.it || null, n: sl?.n || 0 }; }
+  if (ref.startsWith('t:')) return { it: null, n: 0 };   // trade offers are dropped onto, never picked up
   const sl = panelEnt && slotsOf(panelEnt).find(x => x.id === ref.slice(2));
   return { it: sl?.it || null, n: sl?.n || 0 };
 }
@@ -225,6 +229,7 @@ function showGhost(x, y) {
 export function cancelCursor() { if (!cursor) return false; cursor = null; showGhost(); refreshSlots(); return true; }
 function dropOn(ref, n) {
   if (!cursor || ref === cursor.ref) return;
+  if (ref.startsWith('t:')) { if (cursor.ref.startsWith('p:')) doAction({ a: 'trade', do: 'add', it: cursor.it, n }); return; }   // into your trade offer
   if (ref.startsWith('e:') && !panelEnt) return;
   doAction({ a: 'move', from: wire(cursor.ref), to: wire(ref), n });
   bus.emit('uiclick');
@@ -249,6 +254,7 @@ document.addEventListener('pointerdown', ev => {
     showGhost(ev.clientX, ev.clientY); refreshSlots(); return;
   }
   const sl = readRef(ref); if (!sl.it) return;
+  if (ev.shiftKey && myTrade() && ref.startsWith('p:')) { doAction({ a: 'trade', do: 'add', it: sl.it, n: sl.n }); bus.emit('uiclick'); return; }
   if (ev.shiftKey) { doAction({ a: 'shift', from: wire(ref), ent: panelEnt ? (panelEnt.isVeh ? { v: panelEnt.id } : [panelEnt.x, panelEnt.y, panelEnt.z]) : null }); bus.emit('uiclick'); refreshSlots(); return; }
   cursor = { ref, it: sl.it, n: ev.button === 2 ? Math.ceil(sl.n / 2) : sl.n, mode: 'drag', moved: false, x: ev.clientX, y: ev.clientY, button: ev.button };
   showGhost(ev.clientX, ev.clientY); refreshSlots();
@@ -262,7 +268,7 @@ addEventListener('pointerup', ev => {
   if (!cursor || cursor.mode !== 'drag') return;
   const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-slot]');
   if (cursor.moved) { if (target) dropOn(target.dataset.slot, cursor.n); cursor = null; }
-  else if (cursor.ref.startsWith('p:') && holdable(cursor.it) && !panelEnt && cursor.button === 0) {
+  else if (cursor.ref.startsWith('p:') && holdable(cursor.it) && !panelEnt && !myTrade() && cursor.button === 0) {
     selectItem(cursor.it); closeModals(); cursor = null;              // clicking a building in your bag picks it up to build with
   } else cursor.mode = 'held';                                         // picked up: click another slot to put it down
   showGhost(ev.clientX, ev.clientY); refreshSlots();
@@ -319,28 +325,19 @@ function renderResearch() {
   if (resTab === 'med') { renderMedical(); return; }
   const cur = TECH[S.research.current], q = S.research.queue || [];
   const head = resTabsHTML() + `<div class="dim rhead">${cur ? `Researching <b>${cur.name}</b>${q.length > 1 ? `, then ${q.length - 1} more queued` : ''}. Labs need: ${Object.keys(cur.cost).map(p => itemName(p)).join(', ')}.` : q.length ? 'The queue is waiting: what is next needs more precision.' : 'Pick technologies to queue. Labs pull the packs they need from what you feed them.'}</div>`;
-  renderTree($('resBody'), head); $('resBody')._html = null;
+  renderTree($('resBody'), head, 'tech'); $('resBody')._html = null;
 }
 setTreeToast(m => toast(m, 2200));
 const resTabsHTML = () => `<div class="tabs"><div class="tab ${resTab === 'tech' ? 'on' : ''}" data-act="restab:tech">Technology</div><div class="tab ${resTab === 'med' ? 'on' : ''}" data-act="restab:med"${tipAttr('Upgrades for every engineer, researched in medical labs')}>Medical</div></div>`;
-// Medical research: upgrades for every engineer, levels bought with lots of terrestrial packs and chlorophyll.
+// Medical research: the same tree, queue and controls as technologies (research.js), with upgrades for every engineer
+// bought level by level with terrestrial packs, chlorophyll and crops.
 function renderMedical() {
-  const cur = MED[S.med.current], p = S.player, here = hazardAt(p.x, p.z);
-  const card = u => {
-    const lvl = medLevel(u.id), max = lvl >= u.levels, locked = u.mutation && !S.med.mutations, need = unitsFor(u), got = S.med.progress[u.id] || 0, active = S.med.current === u.id;
-    const cost = Object.entries(unitCost(u)).map(([it, n]) => iconHTML(it, n)).join('');
-    return `<div class="tech ${max ? 'done' : locked ? 'locked' : ''} ${active ? 'active' : ''}" data-act="med:${u.id}"${tipAttr(`<b>${u.name}</b><div class="dim">${u.desc}</div>${u.hazard ? `<div>against <b style="color:${HAZARDS[u.hazard].color}">${HAZARDS[u.hazard].name.toLowerCase()}</b>: ${HAZARDS[u.hazard].desc}</div>` : ''}`)}>
-      <div class="tn">${u.name}${u.mutation ? ' <span class="tag">mutation</span>' : ''}</div>
-      <div class="tc">${cost} <span class="dim">a unit · ${max ? 'done' : `${got}/${need} units`}</span></div>
-      <div class="dim">level ${lvl}/${u.levels}${u.crop ? ` · needs ${itemName(u.crop).toLowerCase()}` : ''}</div>${locked ? '<div class="warn">find irradiated seeds first</div>' : ''}
-      <div class="bar"><i style="width:${max ? 100 : got / need * 100}%"></i></div></div>`;
-  };
-  const groups = [['Body', MEDICAL.filter(u => !u.hazard && !u.mutation)], ['Adaptations', MEDICAL.filter(u => u.hazard)], ['Mutations', MEDICAL.filter(u => u.mutation)]];
-  setHTML($('resBody'), resTabsHTML() + `<div class="dim" style="margin-bottom:6px">${cur ? `Medical labs are researching <b>${cur.name}</b>.` : 'Pick an upgrade. Medical labs take terrestrial packs, chlorophyll and, for adaptations and mutations, a crop. Every engineer in the world gets what they find.'}
-    ${here ? ` You stand in <b style="color:${HAZARDS[here].color}">${HAZARDS[here].name.toLowerCase()}</b>: ${HAZARDS[here].desc} Resistance ${Math.round(resistance(here) * 100)}%.` : ''}</div>`
-    + groups.map(([n, list]) => `<h4>${n}</h4><div class="techs">${list.map(card).join('')}</div>`).join(''));
+  const cur = MED[S.med.current], q = S.med.queue || [], p = S.player, here = hazardAt(p.x, p.z);
+  const head = resTabsHTML() + `<div class="dim rhead">${cur ? `Medical labs are researching <b>${cur.name} ${medLevel(cur.id) + 1}</b>${q.length > 1 ? `, then ${q.length - 1} more queued` : ''}.` : q.length ? 'The queue is waiting: what is next needs something first.' : 'Queue upgrades. Medical labs take terrestrial packs, chlorophyll and, for adaptations and mutations, a crop. Every engineer in the world gets them.'}${here ? ` You stand in <b style="color:${HAZARDS[here].color}">${HAZARDS[here].name.toLowerCase()}</b>: resistance ${Math.round(resistance(here) * 100)}%.` : ''}</div>`;
+  renderTree($('resBody'), head, 'med'); $('resBody')._html = null;
 }
 bus.on('medical', id => { if (id) toast(`Medical upgrade: ${MED[id].name} level ${medLevel(id)}`, 3500, 'good'); if (S.modal === 'research') renderResearch(); });
+bus.on('medqueue', () => { if (S.modal === 'research') renderResearch(); });
 
 // ---------------------------------------------------------------- machine window (machine slots + your inventory)
 let panelEnt = null;
@@ -423,7 +420,7 @@ function beltHTML(e) {
 const repairHTML = def => `<h4>Repair</h4><div class="warn">Broken. Repairs need ${Object.entries(def.repair).map(([it, n]) => `${iconHTML(it, n)}`).join(' ')}; mined, it gives only scrap.</div><div class="btns"><button data-act="repair">repair</button></div>`;
 function statusLine(e) {
   const ok = isActive(e) && S.T - e.lastActive < 1;
-  return `<div class="status ${ok ? 'ok' : 'idle'}">● ${e.status || (ok ? 'working' : 'idle')}</div>`;
+  return `<div class="status ${ok ? 'ok' : 'idle'}">● ${e.status || (ok ? 'working' : 'idle')}${e.wired ? ' <span class="dim">· powered by a cable from a pole</span>' : ''}</div>`;
 }
 // The machine's own slots, grouped like Factorio's panels (Fuel / Input / Result ...), with a progress bar between.
 function machineSlotsHTML(e, progress) {
@@ -516,13 +513,15 @@ function renderEntity() {
       break;
     case 'furnace': body += machineSlotsHTML(e, e.prog) + augHTML(e, `smelting speed ${fmtX(def.speed)}`); break;
     case 'drill': {
-      const o = world.ores.get(key(e.x, e.y, e.z)), st = machineStats(e), L = o && depositLayer(o);
-      body += `<h4>Deposit</h4>${o ? depositHTML(o) : '<span class="warn">nothing to mine here</span>'}`;
-      body += `<div class="${o && o.layer > st.depth ? 'warn' : 'dim'}">reaches down to ${DEPOSIT[st.depth].name.toLowerCase()}${o && o.layer > st.depth ? `: too shallow for this deposit. A depth augment ${o.layer - st.depth > 1 ? '2' : '1'} or a bigger drill reaches it` : ''}</div>`;
+      const st = machineStats(e), dd = drillDeposits(e, st), ores = (e.foot || [[e.x, e.z]]).map(([x, z]) => world.ores.get(key(x, e.y, z))).filter(Boolean);
+      const o = dd.list[0]?.[2] || ores[0], L = o && depositLayer(o), deep = dd.deep, tiles = def.size ? def.size[0] * def.size[1] : 1;
+      body += `<h4>Deposit${ores.length > 1 ? 's' : ''}</h4>${ores.length ? [...new Map(ores.map(q => [q.type + q.layer, q])).values()].map(depositHTML).join('<br>') : '<span class="warn">nothing to mine here</span>'}`;
+      if (tiles > 1) body += `<div class="dim">${dd.list.length} of its ${e.foot ? tiles : 1} tile${e.foot ? 's' : ''} ${dd.list.length === 1 ? 'has' : 'have'} ore it can mine: ${pct(dd.cover)} of its full rate${e.foot ? '' : ' (a one-tile big drill from an older save)'}</div>`;
+      body += `<div class="${deep ? 'warn' : 'dim'}">reaches down to ${DEPOSIT[st.depth].name.toLowerCase()}${deep ? `: too shallow for ${dd.list.length ? 'some of these deposits' : 'this deposit'}. A depth augment ${deep.layer - st.depth > 1 ? '2' : '1'} or a bigger drill reaches it` : ''}</div>`;
       body += `<h4>Mining</h4>${pbar(e.timer)}` + machineSlotsHTML(e);
-      const rate = def.rate * st.speed * (L?.speed ?? 1) * 60 * (1 + (L?.double ?? 0) + st.prod);
+      const rate = def.rate * dd.cover * st.speed * (L?.speed ?? 1) * 60 * (1 + (L?.double ?? 0) + st.prod);
       body += `<div class="dim">${rate.toFixed(1)}/min${L && L.speed < 1 ? ` (the ${L.name.toLowerCase()} layer is slower to dig${L.double ? `, but 1 in ${Math.round(1 / L.double)} cycles gives two` : ''})` : ''} · pushes ore toward ${DIR_NAMES[e.dir]}</div>`;
-      body += augHTML(e, `${(def.rate * 60).toFixed(0)}/min on the surface`);
+      body += augHTML(e, `${(def.rate * 60).toFixed(0)}/min on the surface${tiles > 1 ? ' with ore under every tile' : ''}`);
       break;
     }
     case 'chest': body += `<div class="dim">${e.store.used()}/${def.cap} slots used</div>` + machineSlotsHTML(e); break;
@@ -533,6 +532,7 @@ function renderEntity() {
       break;
     }
     case 'solar': body += `<div>Up to ${def.out} kW in daylight.</div>`; break;
+    case 'radar': body += `<div class="dim">${def.power} kW · keeps the map live for ${def.scan} tiles around it · has explored out to ${Math.floor(e.scanR ?? def.scan)} of ${def.reveal} tiles${(e.scanR ?? def.scan) < def.reveal ? `, ${def.sweep} more a second while it runs` : ''}</div><div class="dim">Elsewhere the map shows only what was last seen there.</div>`; break;
     case 'lamp':
       if (def.burner) body += `<div class="dim">${e.lit ? 'lit' : daylight() > .2 ? 'it lights itself when it gets dark' : 'out of fuel'} · a piece of coal lasts about a night</div>` + machineSlotsHTML(e)
         + `<div class="btns"><button data-act="putfuel"${tipAttr('Put the coal (or wood) you carry into it')}>add fuel from inventory</button></div>`;
@@ -567,7 +567,7 @@ function renderEntity() {
     case 'coolant': body += `<h4>Cooling</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.cool)} / ${def.cool} water/s</div><h4>Water</h4>${fluidHTML(e)}` + (e.broken ? repairHTML(def) : ''); break;
     case 'medlab': {
       const u = MED[S.med.current];
-      body += `<h4>Medical research</h4>${u ? `${u.name} · level ${medLevel(u.id) + 1} · ${S.med.progress[u.id] || 0}/${unitsFor(u)} units${pbar(e.prog || 0)}` : '<span class="dim">none: press T, Medical tab</span>'}`;
+      body += `<h4>Medical research</h4>${u ? `${u.name} · level ${medLevel(u.id) + 1} · ${S.med.progress[u.id] || 0}/${unitsFor(u)} units${pbar(e.prog || 0)}` : `<span class="dim">${S.med.queue?.length ? 'the queue waits for something first' : 'nothing queued'}: press T, Medical tab</span>`}`;
       body += machineSlotsHTML(e) + augHTML(e, `research speed ${fmtX(def.speed)}`);
       break;
     }
@@ -738,13 +738,16 @@ function act(a, ev) {
     }
     case 'cancel': doAction({ a: 'cancel', i: +arg }); renderInventory(); return;
     case 'restab': resTab = arg; renderResearch(); return;
-    case 'med': { const u = MED[arg]; if (!medAvailable(u)) { toast(u.mutation && !S.med.mutations ? 'find irradiated seeds first' : 'fully researched'); return; } doAction({ a: 'med', id: arg }); S.med.current = arg; renderResearch(); toast('medical research: ' + u.name); return; }
     case 'tech': doAction({ a: 'research', id: arg, do: 'queue' }); renderResearch(); return;
     case 'close': closeEntity(); return;
     case 'putfuel': if (e) { const f = ['coal', 'wood', 'solid_fuel'].find(it => invGet(it) > 0); if (f) doAction({ a: 'fast', x: e.x, y: e.y, z: e.z, sel: f, mode: 'fuel' }); else toast('no coal or wood in inventory'); renderEntity(); } return;
     case 'pickmode': S.pickMode = S.pickMode === arg ? null : arg; renderPick(); renderHotbar(); return;
     case 'pickclear': clearPick(); return;
+    case 'pickpaste': if (S.clip) { const list = pickTargets().filter(t => !t.isVeh); if (list.length) doAction({ a: 'pastemany', list: list.map(t => [t.x, t.y, t.z]), clip: S.clip }); else toast('nothing selected takes settings'); } return;
     case 'closeplayer': S.viewPlayer = null; renderPlayer(); return;
+    case 'tradecancel': doAction({ a: 'trade', do: 'cancel' }); return;
+    case 'tradeaccept': { const t = myTrade(); if (t) doAction({ a: 'trade', do: 'accept', on: !t.okMe }); return; }
+    case 'tradeoff': doAction({ a: 'trade', do: 'set', it: arg, n: 0 }); return;
     case 'copycode': return;
   }
   if (!e) return;
@@ -970,35 +973,63 @@ bus.on('hurt', n => {
   bus.emit('float', '-' + Math.round(n), S.player.x, 1.3, S.player.z);
 });
 bus.on('respawn', (x, z) => { S.player.x = x; S.player.z = z; S.player.vx = S.player.vz = 0; });
-// ---------------------------------------------------------------- Shift + click selection: transfer modes
-// Shift + click a building or vehicle with an empty hand to select it. A few buttons show beside it, one per kind of
-// slot it has (fuel, input, store, augments); pick one, and Ctrl + click on it with something in hand puts it only
-// there (store spreads the stack evenly over its storage). Esc or Shift + click on nothing clears the selection.
-const pickTarget = () => S.pick?.veh ? vehicleById(S.pick.veh) : S.pick ? world.ents.get(key(S.pick.x, S.pick.y, S.pick.z)) : null;
+// ---------------------------------------------------------------- Shift + click selection: many buildings at once
+// Shift + click buildings or vehicles with an empty hand to put them in the selection, or take them out again: it can
+// hold many, and a building over several tiles is one. The bar over it counts them and offers a button per kind of slot
+// they have (fuel, input, store, augments); pick one, and Ctrl + click any of them with something in hand shares the
+// stack out over the whole selection in that mode (an even share each, as much as each takes). With settings copied,
+// "paste to all" applies them to every selected building they fit. Esc, the ✕, or a click on empty ground clears it.
+S.picks = [];
+const refOf = e => e.isVeh ? { veh: e.id } : { x: e.x, y: e.y, z: e.z };
+const sameRef = (a, b) => a.veh ? a.veh === b.veh : !b.veh && a.x === b.x && a.y === b.y && a.z === b.z;
+export const pickEnt = r => r.veh ? vehicleById(r.veh) : world.ents.get(key(r.x, r.y, r.z)) || null;
+// The selection as it stands: things that are gone (mined, driven off) drop out by themselves.
+export function pickTargets() { S.picks = S.picks.filter(r => { const e = pickEnt(r); return !!e && (r.veh || (e.x === r.x && e.z === r.z)); }); return S.picks.map(pickEnt); }
+export const isPicked = e => !!e && S.picks.some(r => sameRef(r, refOf(e)));
 export function pickTargetFor(h) {
   const e = h?.veh ? vehicleById(h.veh) : h && world.ents.get(key(h.x, h.y, h.z));
-  if (!e || e.kind === 'frame' || !modesFor(e).length) { if (S.pick) clearPick(); else if (e) toast('nothing goes into that'); return; }
-  S.pick = e.isVeh ? { veh: e.id } : { x: e.x, y: e.y, z: e.z }; S.pickMode = null;
-  renderPick(); bus.emit('uiclick');
+  if (!e || e.kind === 'frame') { if (S.picks.length) clearPick(); return; }
+  const r = refOf(e), i = S.picks.findIndex(q => sameRef(q, r));
+  if (i >= 0) S.picks.splice(i, 1); else { S.picks.push(r); S.pickLast = r; }
+  if (!S.picks.length) S.pickMode = null;
+  renderPick(); renderHotbar(); bus.emit('uiclick');
 }
-export function clearPick() { S.pick = null; S.pickMode = null; renderPick(); renderHotbar(); }
+export function clearPick() { S.picks = []; S.pickMode = null; S.pickLast = null; renderPick(); renderHotbar(); }
+const pickModes = list => Object.keys(TRANSFER_MODES).filter(m => list.some(t => modesFor(t).includes(m)));
 export function renderPick() {
-  const el = $('pickbar'), t = pickTarget();
-  if (!t) { if (S.pick) S.pick = null; el.style.display = 'none'; return; }
-  const name = t.isVeh ? itemName(t.type) : ENTITIES[t.type].name;
-  setHTML(el, `<b>${esc(name)}</b> <span class="dim">Ctrl + click it with an item:</span> ${modesFor(t).map(m => `<button data-act="pickmode:${m}" class="${S.pickMode === m ? 'on' : ''}"${tipAttr(`<b>${TRANSFER_MODES[m].name} mode</b><div class="dim">${TRANSFER_MODES[m].desc}</div>`)}>${TRANSFER_MODES[m].name}</button>`).join('')}<span class="x" data-act="pickclear"${tipAttr('clear the selection (Esc)')}>✕</span>`);
+  const el = $('pickbar'), list = pickTargets();
+  if (!list.length) { el.style.display = 'none'; return; }
+  if (S.pickMode && !pickModes(list).includes(S.pickMode)) S.pickMode = null;
+  const names = [...new Set(list.map(t => t.isVeh ? itemName(t.type) : ENTITIES[t.type].name))];
+  const name = list.length === 1 ? names[0] : `${list.length} selected <span class="dim">${esc(names.slice(0, 3).join(', '))}${names.length > 3 ? '…' : ''}</span>`;
+  const modes = pickModes(list).map(m => `<button data-act="pickmode:${m}" class="${S.pickMode === m ? 'on' : ''}"${tipAttr(`<b>${TRANSFER_MODES[m].name} mode</b><div class="dim">${TRANSFER_MODES[m].desc}${list.length > 1 ? ' The stack is shared out evenly over the selection.' : ''}</div>`)}>${TRANSFER_MODES[m].name}</button>`).join('');
+  const paste = S.clip ? `<button data-act="pickpaste"${tipAttr(`Paste ${esc(S.clip.from)}'s settings onto every selected building they fit`)}>paste to ${list.length > 1 ? 'all' : 'it'}</button>` : '';
+  setHTML(el, `<b>${list.length === 1 ? esc(name) : name}</b> ${modes ? `<span class="dim">Ctrl + click ${list.length > 1 ? 'one' : 'it'} with an item:</span> ${modes}` : ''}${paste}<span class="x" data-act="pickclear"${tipAttr('clear the selection (Esc, or click empty ground)')}>✕</span>`);
   el.style.display = '';
 }
+// The bar sits over the building picked last (or the first still selected).
 function placePick() {
-  const el = $('pickbar'), t = pickTarget(); if (!t || el.style.display === 'none') return;
+  const el = $('pickbar'); if (el.style.display === 'none') return;
+  const t = (S.pickLast && pickEnt(S.pickLast)) || pickTargets()[0]; if (!t) return;
   const [x, y] = project(t.isVeh ? t.rx ?? t.x : t.x + .5, (t.y || 0) + 1.4, t.isVeh ? t.rz ?? t.z : t.z + .5);
   el.style.left = Math.max(8, Math.min(innerWidth - el.offsetWidth - 8, x - el.offsetWidth / 2)) + 'px'; el.style.top = Math.max(8, y - el.offsetHeight - 6) + 'px';
 }
 
-// ---------------------------------------------------------------- an engineer's details (click one)
-export function openPlayer(id) { S.viewPlayer = id; renderPlayer(); }
+// ---------------------------------------------------------------- an engineer: trading, or your own details
+// Clicking another engineer opens a trade with them (trade.js), with a small header about them; clicking yourself shows
+// your details.
+export function openPlayer(id) {
+  S.viewPlayer = id;
+  if (id !== S.player.id && !myTrade()) doAction({ a: 'trade', do: 'open', with: id });
+  renderPlayer();
+}
+let hadTrade = false;
 function renderPlayer() {
-  const el = $('playerInfo'), p = S.viewPlayer && S.players.get(S.viewPlayer);
+  const el = $('playerInfo'), t = myTrade();
+  if (t) { hadTrade = true; renderTrade(el, t); return; }
+  if (hadTrade) { hadTrade = false; S.viewPlayer = null; }   // the trade ended (done, cancelled, too far): the window goes
+  el.classList.remove('trading');
+  const p = S.viewPlayer && S.players.get(S.viewPlayer);
   if (!p) { S.viewPlayer = null; el.style.display = 'none'; return; }
   const hp = p.hp ?? maxHealth(p), mh = maxHealth(p), st = p.sta ?? maxStamina(p), ms = maxStamina(p), held = p.local ? S.sel : p.sel, v = p.veh && vehicleById(p.veh);
   const doing = v ? `driving a ${itemName(v.type).toLowerCase()}` : p.mining ? (p.mining.blocked ? `trying to mine ${p.mining.name.toLowerCase()} (${p.mining.blocked})` : `mining ${p.mining.name.toLowerCase()}`) : p.sprinting ? 'sprinting' : p.moving ? 'walking' : 'standing';
@@ -1015,6 +1046,24 @@ function renderPlayer() {
   el.style.display = '';
 }
 
+// The trade window: who with, both offers side by side (yours takes drops from your inventory below), the wait after
+// any change, and both accepts.
+function renderTrade(el, t) {
+  const p = S.players.get(t.with), mh = p ? maxHealth(p) : 1, dist = p ? Math.round(Math.hypot((p.rx ?? p.x) - S.player.x, (p.rz ?? p.z) - S.player.z)) : 0;
+  const cells = (list, mine) => list.map(([it, n], i) => mine
+    ? `<div class="cell" data-slot="t:${i}" data-act="tradeoff:${it}"${tipAttr(`<b>${itemName(it)}</b> × ${n}<div class="dim">click: take it back out of your offer</div>`)}>${iconHTML(it, n)}</div>`
+    : `<div class="cell"${tipAttr(`<b>${itemName(it)}</b> × ${n}`)}>${iconHTML(it, n)}</div>`).join('');
+  const mine = offerList(t.mine), theirs = offerList(t.theirs), wait = t.wait > 0;
+  const status = wait ? `<span class="warn">offers changed: accept in ${Math.ceil(t.wait)} s</span>` : t.okMe && t.okThem ? '<span class="okc">both accepted: trading…</span>' : t.okMe ? `<span class="dim">you accepted · waiting for ${esc(t.name)}</span>` : t.okThem ? `<span class="okc">${esc(t.name)} accepted</span>` : '<span class="dim">check both offers, then accept</span>';
+  setHTML(el, `<div class="eph"><i class="dot" style="background:${hexCol(p?.color)}"></i> <b>Trade with ${esc(t.name)}</b> <span class="dim">${dist} tiles away${p ? ` · health ${Math.round(p.hp ?? mh)}/${mh}` : ''}</span><span class="x" data-act="tradecancel"${tipAttr('cancel the trade: nothing changes hands')}>✕</span></div>
+    <div class="tradecols"><div><h4>Your offer ${t.okMe ? '<span class="okc">✓</span>' : ''}</h4><div class="grid tradeoffer">${cells(mine, true)}<div class="cell emptyc" data-slot="t:new"${tipAttr('drag a stack from your inventory here')}><span class="dim">+</span></div></div></div>
+      <div><h4>${esc(t.name)}'s offer ${t.okThem ? '<span class="okc">✓</span>' : ''}</h4><div class="grid">${cells(theirs, false) || '<span class="dim">nothing yet</span>'}</div></div></div>
+    <div class="row">${status}</div>
+    <div class="btns"><button data-act="tradeaccept" class="${t.okMe ? 'on' : ''}"${wait ? ' disabled' : ''}${tipAttr('Both must accept, after the wait. Any change to an offer clears both accepts.')}>${t.okMe ? 'accepted (click to take it back)' : 'accept'}</button><button data-act="tradecancel">cancel</button></div>
+    <h4>Your inventory</h4>${invGridHTML()}<div class="dim tiny">drag stacks into your offer (shift+click adds a whole stack) · items only change hands when both accept · walking ${TRADE.reach}+ tiles apart calls it off</div>`);
+  el.classList.add('trading'); el.style.display = '';
+}
+bus.on('trade', () => { if (S.viewPlayer || myTrade()) renderPlayer(); });
 export function updateUI(dt, hover) {
   updateVitals();
   placePick();
@@ -1023,7 +1072,7 @@ export function updateUI(dt, hover) {
   if (S.modal === 'logistics') drawLogistics();
   if ((slowT += dt) < .2) return;
   slowT = 0;
-  renderStatus(); renderGoals(); renderHotbar(); updateSignalText(); renderCoop(); renderPlayer(); if (S.pick) renderPick();
+  renderStatus(); renderGoals(); renderHotbar(); updateSignalText(); renderCoop(); renderPlayer(); if (S.picks.length) renderPick();
   if (panelEnt && Math.hypot(panelEnt.x + .5 - S.player.x, panelEnt.z + .5 - S.player.z) > PLAYER.reach + 2) closeEntity();   // walked away
   if (panelEnt) renderEntity();
   if (S.modal === 'inventory') renderInventory();

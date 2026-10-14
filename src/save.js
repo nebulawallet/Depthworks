@@ -10,6 +10,7 @@ import { loadTransport, vehToJSON, unitToJSON } from './transport.js';
 import { stockFish, findBodies, fishToList, fishFromList, poolsToList, poolsFromList } from './fish.js';
 import { loadWorldGen, resetWorldMaps, editsToJSON } from './worldgen.js';
 import { medToJSON, medFromJSON } from './body.js';
+import { exploredToJSON, exploredFromJSON, exploreOldSave } from './explore.js';
 
 // Five save slots. Slot 1 keeps the key saves always used, so older saves show up there. A small index of names
 // and dates sits beside them, so the title screen can list slots without reading whole worlds.
@@ -22,7 +23,7 @@ const writeMeta = m => { try { localStorage.setItem(META, JSON.stringify(m)); } 
 const rawSlot = n => { try { return localStorage.getItem(slotKey(n)); } catch { return null; } };
 const FIELDS = ['recipe', 'filter', 'inp', 'out', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'bufN', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit',
   'fac', 'fa', 'fluid', 'mode', 'dname', 'prio', 'vlimit', 'rules', 'fuelFluid', 'sig', 'aug', 'pbar', 'sf', 'chL', 'chR', 'midOff',
-  'seed', 'seeds', 'grow', 'water', 'running', 'output', 'heat', 'broken', 'sort', 'compact', 'arm', 'bout'];
+  'seed', 'seeds', 'grow', 'water', 'running', 'output', 'heat', 'broken', 'sort', 'compact', 'arm', 'bout', 'scanR'];
 // Belt settings that change how lines are put together: when a friend's copy changes, their lines get rebuilt.
 const BELT_SHAPE = ['aug', 'sf', 'chL', 'chR', 'midOff', 'sort', 'bout'];
 const ORE_V = 2;   // ores as [key, type, amount, layer, base] (see newDeposit); older saves had [key, type, amount]
@@ -136,7 +137,7 @@ export function serialize() {
   const gen = !!world.gen;
   return JSON.stringify({
     v: 3, T: S.T, sandbox: S.sandbox, player: { x: S.player.x, z: S.player.z, face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed, hp: Math.round(S.player.hp) }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam,
-    seed: S.seed, med: medToJSON(), gen: world.gen, edits: gen ? editsToJSON() : undefined, barrel: BARREL_SIZE,
+    seed: S.seed, med: medToJSON(), explored: exploredToJSON(), gen: world.gen, edits: gen ? editsToJSON() : undefined, barrel: BARREL_SIZE,
     tiles: gen ? undefined : packTiles(), waterGen: WATER_GEN, links: world.links, marks: world.marks,
     research: { done: [...S.research.done], current: S.research.current, queue: S.research.queue || [], progress: S.research.progress, extra: [...(S.research.extra || [])] }, bps: bpsToJSON(),
     signal: { stage: S.signal.stage, pulses: S.signal.pulses, taught: [...S.signal.taught], seen: [...S.signal.seen], log: S.signal.log },
@@ -256,6 +257,7 @@ export function loadData(d, asGuest = false) {
     bus.emit('remesh', e);
   }
   bpsFromJSON(d.bps);
+  if (Array.isArray(d.explored)) exploredFromJSON(d.explored); else exploreOldSave();   // saves from before exploring: what was near counts as seen
   stockFish();
   if (d.fish) { fishFromList(d.fish); findBodies(); }
   poolsFromList(d.fishPools, true);

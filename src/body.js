@@ -5,9 +5,11 @@
 // upgrades are global: every engineer in the world gets them. playerMods(p) adds everything up; game rules read
 // speed, mining, crafting, reach, stamina and health through it.
 import { HAZARDS, MEDICAL, MED, MED_RULES, BIOMES, EXPOSURE_TIME, ITEMS, PLAYER } from './data.js';
+// Medical research works like technology research: a tree of nodes (every level of every upgrade) and a queue that
+// medical labs work down. S.med.current is the upgrade of the first queued node that can run (nextMed).
 import { S, world, biomeIndexAt, daylight, bus } from './state.js';
 
-S.med = { levels: {}, current: null, progress: {}, mutations: false };
+S.med = { levels: {}, current: null, progress: {}, mutations: false, queue: [] };
 export const medLevel = id => S.med.levels[id] || 0;
 
 // ---------------------------------------------------------------- hazards
@@ -76,7 +78,7 @@ export function medTick(e, dt, def, st, sat, demand) {
   S.med.progress[u.id] = (S.med.progress[u.id] || 0) + 1;
   if (S.med.progress[u.id] >= unitsFor(u)) {
     S.med.progress[u.id] = 0; S.med.levels[u.id] = medLevel(u.id) + 1;
-    if (!medAvailable(u)) S.med.current = null;
+    nextMed();
     bus.emit('medical', u.id);
   }
 }
@@ -87,5 +89,54 @@ export function medAccepts(e, it, manual) {
 }
 // The items a medical lab's slots hold: the unit cost, and the current upgrade's crop.
 export const medSlotItems = () => { const u = MED[S.med.current]; return Object.keys({ ...MED_RULES.cost, ...(u?.crop ? { [u.crop]: 1 } : {}) }); };
-export const medToJSON = () => ({ levels: S.med.levels, current: S.med.current, progress: S.med.progress, mutations: S.med.mutations });
-export function medFromJSON(d) { S.med = { levels: { ...(d?.levels || {}) }, current: d?.current ?? null, progress: { ...(d?.progress || {}) }, mutations: !!d?.mutations }; }
+export const medToJSON = () => ({ levels: S.med.levels, current: S.med.current, progress: S.med.progress, mutations: S.med.mutations, queue: S.med.queue || [] });
+// Saves from before the medical queue had one current upgrade: its next level becomes the queue.
+export function medFromJSON(d) {
+  S.med = { levels: { ...(d?.levels || {}) }, current: d?.current ?? null, progress: { ...(d?.progress || {}) }, mutations: !!d?.mutations, queue: [] };
+  S.med.queue = Array.isArray(d?.queue) ? d.queue.filter(id => MED_NODE[id]) : S.med.current && MED[S.med.current] ? [`${S.med.current}:${medLevel(S.med.current) + 1}`].filter(id => MED_NODE[id]) : [];
+  nextMed();
+}
+
+// ---------------------------------------------------------------- the medical tree and queue
+// Nodes: { id: 'upgrade:level', up, level, name, cat, pre: [node ids] }.
+export const MED_NODES = [], MED_NODE = {};
+for (const u of MEDICAL) for (let l = 1; l <= u.levels; l++) {
+  const n = { id: `${u.id}:${l}`, up: u.id, level: l, name: u.levels > 1 ? `${u.name} ${l}` : u.name, cat: u.mutation ? 'mutation' : u.hazard ? 'adapt' : 'body',
+    pre: l > 1 ? [`${u.id}:${l - 1}`] : (u.pre || []).map(([p, pl]) => `${p}:${pl}`) };
+  MED_NODES.push(n); MED_NODE[n.id] = n;
+}
+export const medNodeDone = n => medLevel(n.up) >= n.level;
+export const medNodeAvailable = n => medLevel(n.up) === n.level - 1 && n.pre.every(p => medNodeDone(MED_NODE[p])) && (!MED[n.up].mutation || S.med.mutations);
+export function nextMed() {
+  const M = S.med;
+  M.queue = (M.queue || []).filter(id => MED_NODE[id] && !medNodeDone(MED_NODE[id]));
+  M.current = M.queue.map(id => MED_NODE[id]).find(medNodeAvailable)?.up ?? null;
+}
+// A node and everything it still needs, prerequisites first.
+export function medPath(id) {
+  const out = [], seen = new Set();
+  const visit = k => { const n = MED_NODE[k]; if (!n || seen.has(k) || medNodeDone(n)) return; seen.add(k); for (const p of n.pre) visit(p); out.push(k); };
+  visit(id); return out;
+}
+const medDepends = (a, b) => MED_NODE[a].pre.some(p => p === b || medDepends(p, b));
+// The same queue rules as research (researchAction in sim.js): 'now', 'queue', 'remove', 'move'.
+export function medAction(op) {
+  const M = S.med, n = MED_NODE[op.id];
+  M.queue ||= [];
+  if (!n || medNodeDone(n)) return;
+  if (op.do === 'remove') { if (!M.queue.includes(op.id)) return; M.queue = M.queue.filter(q => q !== op.id && !medDepends(q, op.id)); }
+  else if (op.do === 'move') {
+    const q = M.queue, i = q.indexOf(op.id); if (i < 0) return;
+    let j = i;
+    for (let k = 0; k < Math.abs(op.by | 0); k++) {
+      const m = j + Math.sign(op.by); if (m < 0 || m >= q.length) break;
+      if (op.by < 0 ? medDepends(op.id, q[m]) : medDepends(q[m], op.id)) break;
+      [q[j], q[m]] = [q[m], q[j]]; j = m;
+    }
+  } else {
+    const path = medPath(op.id).filter(id => op.do === 'now' || !M.queue.includes(id));
+    M.queue = op.do === 'now' ? [...path, ...M.queue.filter(q => !path.includes(q))] : [...M.queue, ...path];
+  }
+  nextMed();
+  bus.emit('medqueue');
+}

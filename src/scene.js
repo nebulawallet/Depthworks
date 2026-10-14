@@ -6,9 +6,10 @@ import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECI
 import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, nightDepth, lodAt, tilesOf } from './state.js';
 import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown, oreChanged } from './terrain.js';
 import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat } from './models.js';
-import { canPlace, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats } from './sim.js';
+import { canPlace, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
 import { portEdges } from './fluids.js';
 import { bpAt } from './blueprint.js';
+import { REACTOR } from './plants.js';
 import { footprint, sizeOf } from './multi.js';
 import { playerMods } from './body.js';
 import { visibleOnBelt, laneOffset, lineWarn, lanesOf } from './belts.js';
@@ -90,11 +91,13 @@ export function resize() {
 }
 addEventListener('resize', resize); resize();
 
-scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x5a4632, 1.25));
+const hemi = new THREE.HemisphereLight(0xc4d6ff, 0x5a4632, 1.25); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0d0, 2.7);
 sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -.002; sun.shadow.normalBias = .02;
 Object.assign(sun.shadow.camera, { left: -36, right: 36, top: 36, bottom: -36, near: 1, far: 180 });
 scene.add(sun, sun.target);
+// The lights also reach the interface layer, so the placement preview is shaded like the world (everything else there is unlit).
+hemi.layers.enable(UI_LAYER); sun.layers.enable(UI_LAYER);
 
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _c = new THREE.Color();
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -229,8 +232,9 @@ export function applyGhostAll() {
   for (const e of world.ents.values()) applyGhost(e);
   for (const e of world.frames.values()) applyGhost(e);
   setDepthView(S.mode === 'depth', S.layer);
-  layerGrid.visible = S.mode === 'depth'; layerGrid.position.y = S.layer + .012;
+  layerGrid.visible = S.mode === 'depth' && S.settings?.depthGrid !== false; layerGrid.position.y = S.layer + .012;   // on the interface layer: Hide UI hides it too
 }
+bus.on('settings', () => { layerGrid.visible = S.mode === 'depth' && S.settings?.depthGrid !== false; });
 
 // ---------------------------------------------------------------- items on belts and on the ground (instanced)
 const instItems = {};
@@ -319,7 +323,7 @@ function updateItems() {
 const wireMats = new Map(), wireMat = color => wireMats.get(color) || wireMats.set(color, new THREE.LineBasicMaterial({ color })).get(color);
 const wireLines = [];
 let supplyMesh = null;
-const poleTop = p => (ENTITIES[p.type].top ?? 1.26) + p.y;
+const poleTop = p => p.kind === 'pole' ? (ENTITIES[p.type].top ?? 1.26) + p.y : p.y + Math.min(.9, heightOf(p));   // a machine on a cable: its roof
 const SUPPLY_COLORS = [0x4aa3ff, 0xa8d8ff];
 bus.on('power', () => {
   wireLines.forEach(l => { scene.remove(l); l.geometry.dispose(); }); wireLines.length = 0;
@@ -332,7 +336,7 @@ bus.on('power', () => {
       pts.push(ax + off + (bx - ax) * t, ay + (by - ay) * t - Math.sin(t * Math.PI) * sag, az + (bz - az) * t);
   };
   for (const [a, b, v] of world.wires || []) span(a, b, VOLTAGES[v]?.wire ?? 0xb8683a, v > 0 ? [-.46, 0, .46] : [-.24, .24]);
-  for (const [a, b, kind] of world.cables || []) span(a, b, ITEMS[kind]?.color ?? 0xd88a4a, [0]);
+  for (const [a, b, kind] of world.cables || []) span(a, b.foot ? { ...b, x: b.foot[0][0], z: b.foot[0][1] } : b, ITEMS[kind]?.color ?? 0xd88a4a, [0]);
   for (const [color, pts] of byColor) {
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     const l = new THREE.LineSegments(geo, wireMat(color)); l.layers.set(1); scene.add(l); wireLines.push(l);
@@ -533,10 +537,11 @@ function animate(dt) {
       case 'tank': if (P.level) { const f = Math.min(1, (e.fa?.[0] || 0) / ENTITIES[e.type].cap); P.level.emissiveIntensity = .2 + f; } break;
       case 'lab': if (active) P.ring.rotation.y += dt * 2; P.glow.emissiveIntensity = active ? 1 + .5 * Math.sin(S.T * 4) : .2; break;
       case 'lamp': if (P.glow) P.glow.emissiveIntensity = e.lit ? (ENTITIES[e.type].burner ? 1.6 + .4 * Math.sin(S.T * 17 + e.x) : 2.2) : .05; break;
+      case 'radar': if (P.dish) P.dish.rotation.y = e.spin || 0; if (P.glow) P.glow.emissiveIntensity = active ? (Math.sin(S.T * 6) > .6 ? 2 : .4) : .05; break;
       case 'transmitter': P.spin.rotation.y += dt * .5; P.glow.emissiveIntensity = .3 + e.prog * 3; break;
       case 'boiler': P.glow.emissiveIntensity = (e.load || 0) > 0 ? 1.4 + .5 * Math.sin(S.T * 21 + e.x) : .05; smoking = (e.load || 0) > .05; dark = true; break;
       case 'engine': P.fly.rotation.x += dt * 12 * (e.load || 0); P.glow.emissiveIntensity = (e.load || 0) > 0 ? .4 + e.load : .05; break;
-      case 'pump': P.fly.rotation.x += dt * 9 * (e.load || 0); break;
+      case 'pump': P.fly.rotation.x += dt * 9 * (e.load || 0); if (P.glow) P.glow.emissiveIntensity = (e.load || 0) > 0 ? .6 + e.load : .1; break;
       case 'greenhouse':
         if (P.plants) P.plants.scale.y = e.seeds ? .15 + .85 * (e.grow || 0) : .05;
         P.roof.visible = S.mode === 'depth';   // the roof shows only in depth mode, so the room reads from above
@@ -548,11 +553,17 @@ function animate(dt) {
         const h = (e.heat || 0) / 100, crit = h > .85 && !e.broken;
         P.glow.emissiveIntensity = e.broken ? 0 : (e.load || 0) > 0 ? 1 + e.load : .2;
         P.heat.emissiveIntensity = e.broken ? .3 : crit ? (Math.sin(S.T * 12) > 0 ? 2.5 : .2) : h * 1.6;   // flashes red when critical
+        if (P.beacon) {   // the beacon: dark broken, red flashing critical, amber hot, green working, dim idle
+          const warn = h * 100 >= REACTOR.warn, col = e.broken ? 0x16181d : crit ? 0xff2a1a : warn ? 0xffa53d : 0x9be37a;
+          P.beacon.emissive.setHex(col);
+          P.beacon.emissiveIntensity = e.broken ? 0 : crit ? (Math.sin(S.T * 12) > 0 ? 3 : .1) : warn ? 1.4 + .6 * Math.sin(S.T * 5) : (e.load || 0) > 0 ? 1.2 : .25;
+        }
         smoking = (e.load || 0) > .05 || e.broken; dark = !!e.broken;
         if (crit && Math.random() < dt * 4) burst(e.x + .5, 1, e.z + .5, 3, 0xff6a3a, .8, .05);
         break;
       }
-      case 'coolant': smoking = (e.load || 0) > .02; P.glow.emissiveIntensity = e.broken ? 1.5 : 0; dark = !!e.broken; break;
+      case 'coolant': smoking = (e.load || 0) > .02; P.glow.emissiveIntensity = e.broken ? 1.5 : (e.cooled ?? 1) < .98 && (e.load || 0) > 0 ? (Math.sin(S.T * 8) > 0 ? 1.5 : .1) : 0; dark = !!e.broken;
+        if (P.water) P.water.emissiveIntensity = e.broken ? 0 : .15 + Math.min(1, (e.load || 0)) * 1.2; break;   // short of water: the light blinks
     }
     if (smoking && !e.ghost) {
       e.smokeT = (e.smokeT || 0) + dt;
@@ -612,7 +623,8 @@ export function updateCamera(dt) {
   const C = S.cam, k = 1 - Math.pow(.0005, dt);
   C.yaw += (C.yawT - C.yaw) * k; C.pitch += (C.pitchT - C.pitch) * k;
   C.ppu += (C.ppuT - C.ppu) * (1 - Math.pow(.00001, dt)); if (Math.abs(C.ppu - C.ppuT) < .02) C.ppu = C.ppuT;
-  if (S.started) { const f = 1 - Math.pow(.00002, dt); C.x += (S.player.x - C.x) * f; C.z += (S.player.z - C.z) * f; }
+  C.panX = (C.panX || 0) + ((C.panXT || 0) - (C.panX || 0)) * k; C.panZ = (C.panZ || 0) + ((C.panZT || 0) - (C.panZ || 0)) * k;   // depth mode's pan, tweened home when it ends
+  if (S.started) { const f = 1 - Math.pow(.00002, dt); C.x += (S.player.x + C.panX - C.x) * f; C.z += (S.player.z + C.panZ - C.z) * f; }
   C.y += ((S.mode === 'depth' ? S.layer : 0) - C.y) * k;
   const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), dist = 120, cp = Math.cos(C.pitch);
   _t.set(C.x, C.y, C.z);
@@ -762,8 +774,9 @@ function ioHints(type, x, y, z, dir, dy) {
     return `Inserter: takes from the blue arrow, puts into the orange one${def.burner ? ' (needs fuel)' : ''}`;
   }
   if (kind === 'drill') {
-    const t = at(x + dx, y, z + dz);
-    arrow(x + dx, y, z + dz, dir, COL.OUT);
+    const [fx, fz] = drillFront(def.big ? fakeAt(type, x, y, z, dir) : { x, z, dir }), t = at(fx, y, fz);
+    arrow(fx, y, fz, dir, COL.OUT);
+    if (def.big) markTiles(fakeAt(type, x, y, z, dir).foot.filter(([tx, tz]) => world.ores.has(key(tx, y, tz))), 0xffd23f, y);   // the ore it would cover
     return t ? `Drill pushes ore into the ${ENTITIES[t.type].name.toLowerCase()} at the orange arrow` : 'Drill: ore comes out at the orange arrow. Put a belt, chest or furnace there (R rotates)';
   }
   if (kind === 'belt' || kind === 'underground' || kind === 'splitter' || kind === 'lift') {
@@ -805,6 +818,7 @@ function ioHints(type, x, y, z, dir, dy) {
   if (kind === 'greenhouse') return 'Greenhouse: touching greenhouses join into one room. Lead irrigation pipe to any side, put seeds in, take the harvest out with inserters. Walk in through the gaps in the walls';
   if (kind === 'reactor') { fluidHint2At(x, y, z); return 'Uranium reactor: water pipes join at its left and right, steam at front and back. Put coolant towers against it, and keep them watered'; }
   if (kind === 'coolant') return 'Coolant tower: put it against a uranium reactor and pipe water to it';
+  if (kind === 'radar') return `Radar: with power it keeps the map live for ${def.scan} tiles around it, and explores out to ${def.reveal}. Put it in a pole's area`;
   if (kind === 'medlab') return 'Medical lab: feed it terrestrial packs, chlorophyll and the crop the upgrade needs. Choose upgrades in research (T), Medical';
   if (kind === 'rail') return 'Rail: drag to lay track. Rails join every rail next to them; three or four make a junction. Use rail signals to let several trains share track';
   // fluids pass between side-by-side buildings: point at the neighbours that would join up
@@ -851,10 +865,10 @@ function updateAltArrows() {
     const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
     const ins = S.settings?.altInserters !== false, put = y => (px, pz, d, c) => { if (n >= 2048) return; altArrows.setMatrixAt(n, _m.compose(V(px, y + .05, pz), _q.setFromEuler(_e.set(0, -d * Math.PI / 2, 0)), V(.38, 1, .38))); _c.setHex(c); altArrows.setColorAt(n++, _c); };
     for (const e of world.ents.values()) {
-      if (e.foot && ENTITIES[e.type].big && !e.ghost && Math.abs(e.x - cx) <= R && Math.abs(e.z - cz) <= R) { portArrows(e, put(e.y)); continue; }
+      if (e.foot && ENTITIES[e.type].big && e.kind !== 'drill' && !e.ghost && Math.abs(e.x - cx) <= R && Math.abs(e.z - cz) <= R) { portArrows(e, put(e.y)); continue; }
       if ((e.kind !== 'inserter' && e.kind !== 'drill') || (e.kind === 'inserter' && !ins) || e.ghost || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R || n >= 2048) continue;
-      const [dx, dz] = DIRS[e.dir], off = e.kind === 'drill' ? .62 : .36;
-      _m.compose(V(e.x + .5 + dx * off, e.y + (e.kind === 'drill' ? .03 : .13), e.z + .5 + dz * off), _q.setFromEuler(_e.set(0, -e.dir * Math.PI / 2, 0)), V(.42, 1, .42));
+      const [dx, dz] = DIRS[e.dir], off = e.kind === 'drill' ? .62 : .36, [ax, az] = e.kind === 'drill' && e.foot ? drillFront(e).map((v, i) => v - DIRS[e.dir][i]) : [e.x, e.z];
+      _m.compose(V(ax + .5 + dx * off, e.y + (e.kind === 'drill' ? .03 : .13), az + .5 + dz * off), _q.setFromEuler(_e.set(0, -e.dir * Math.PI / 2, 0)), V(.42, 1, .42));
       altArrows.setMatrixAt(n, _m); _c.setHex(e.kind === 'drill' ? COL.OUT : 0xffffff); altArrows.setColorAt(n++, _c);
     }
   }
@@ -877,6 +891,7 @@ const heightOf = e => e ? (e.belt ? .22 : e.kind === 'pole' ? (ENTITIES[e.type]?
 function updatePreview(hover) {
   nH = nX = 0; S.hint = '';
   updateHover(hover);
+  tileMarks.count = nMarks; tileMarks.instanceMatrix.needsUpdate = true; if (tileMarks.instanceColor) tileMarks.instanceColor.needsUpdate = true;   // after hints, which may add their own
   hintArrows.count = nH; hintCross.count = nX;
   for (const im of [hintArrows, hintCross]) { im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }
   updateAltArrows();
@@ -1033,9 +1048,10 @@ function updateHover(hover) {
   updateRoadPreview(hover);
   updatePending();
   hoverMarks(hover);
-  const picked = S.pick && !S.pick.veh && world.ents.get(key(S.pick.x, S.pick.y, S.pick.z));   // Shift + click selection
-  if (picked) markTiles(tilesOf(picked), 0x7ef6ff, picked.y);
-  tileMarks.count = nMarks; tileMarks.instanceMatrix.needsUpdate = true; if (tileMarks.instanceColor) tileMarks.instanceColor.needsUpdate = true;
+  for (const r of S.picks || []) {   // the Shift + click selection: every tile of every building in it, and its vehicles
+    if (r.veh) { const v = vehicleById(r.veh); if (v) markTiles([[Math.floor(v.rx ?? v.x), Math.floor(v.rz ?? v.z)]], 0x7ef6ff, 0); continue; }
+    const e = world.ents.get(key(r.x, r.y, r.z)); if (e) markTiles(tilesOf(e), 0x7ef6ff, e.y);
+  }
   if (VEHICLES[S.sel] || ROADS[S.sel] || ITEMS[S.sel]?.tool === 'signal' || ENTITIES[S.sel]?.drag) { updateToolHover(hover); return; }
   const sel = S.sel && ENTITIES[S.sel] ? S.sel : null;
   const kind = sel && ENTITIES[sel].kind;
@@ -1083,8 +1099,10 @@ function updateHover(hover) {
   const off = ENTITIES[sel].multi ? preview.userData.off : [0, 0];
   preview.position.set(x + off[0] + .5, y, z + off[1] + .5);
   // out of it is only a problem when there is nothing to craft one from
-  const err = canPlace(sel, x, y, z, S.dir, dy, { reach: true, noInv: true }) || (!invGet(sel) && !planCraft(sel, 1) && !S.player.pending?.length ? 'none' : null);
-  marker.material.color.setHex(err ? 0xff5a4a : 0x9be37a);
+  const plan = S.bpHand || keys.has('ShiftLeft') || keys.has('ShiftRight');
+  const err = plan ? canPlace(sel, x, y, z, S.dir, dy, { noInv: true, bp: true }) : canPlace(sel, x, y, z, S.dir, dy, { reach: true, noInv: true }) || (!invGet(sel) && !planCraft(sel, 1) && !S.player.pending?.length ? 'none' : null);
+  marker.material.color.setHex(err ? 0xff5a4a : plan ? 0x7ef6ff : 0x9be37a);
+  setPreview(preview, plan ? 'bp' : err ? 'bad' : 'ok');   // stippled only while planning a blueprint; the bracket takes the same colour
   S.hint = ioHints(sel, x, y, z, S.dir, dy);
 }
 
@@ -1138,7 +1156,7 @@ function updateToolHover(hover) {
   if (ENTITIES[S.sel]?.drag) {
     const def = ENTITIES[S.sel];
     ok = !S.dragTiles && y === 0 && isWater(x, z) && !world.ents.get(key(x, 0, z));
-    hint = S.dragTiles ? `${def.name}: ${S.dragTiles.length} tile${S.dragTiles.length > 1 ? 's' : ''}${S.dragOk ? '' : ` · ${S.dragErr}`}` : `${def.name}: drag across water, one ${def.name.toLowerCase()} a tile. Running, it gives ${def.outTile} kW a tile, more on a river`;
+    hint = S.dragTiles ? `${def.name}: ${S.dragTiles.length} tile${S.dragTiles.length > 1 ? 's' : ''}${S.dragOk ? '' : ` · ${S.dragErr}`}` : `${def.name}: drag across water. It goes down ${def.width || 1} tiles wide, one ${def.name.toLowerCase()} a tile. Running, it gives ${def.outTile} kW a tile, more on a river`;
   } else if (VEHICLES[S.sel]) {
     const st = vstats(S.sel), r = world.ents.get(key(x, 0, z));
     let a = Math.atan2(DIRS[S.dir][0], DIRS[S.dir][1]);

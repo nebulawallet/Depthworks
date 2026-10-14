@@ -15,11 +15,39 @@ glyphs, and something answers using only the mechanisms it has heard.
 
 ## Where the last session left off
 
-Everything is committed and pushed (`main` at "Add research queue and tree, power tiers, blueprints, crafting stations and more").
-The owner has not played it by hand yet: start with "Not verified" below, then their feedback.
+The newest work is **not committed yet**: it waits for the owner's "push" (`main` is still at "Add research queue and
+tree, power tiers, blueprints, crafting stations and more"). The owner has not played any of it by hand.
 
-This session worked through a long list from the owner (research, power, interaction, visuals, map, camera, crafting
-stations, belt outputs). In short:
+This session worked through another long list from the owner. In short:
+
+- **Fixes:** chlorophyll can be hand-crafted from seeds again (hand crafting never understood the `'#seed'` group;
+  cancelling gives back the very seeds it took). Pipes are available from the start (the recipe itself was locked
+  behind Fluid handling, not just shown that way). Multi-tile buildings give back one item (a boiler gave 2, a steam
+  engine 4); only `perTile` kinds (greenhouses, dams) give back by the tile.
+- **Building:** dams go down two tiles wide. Big mining drills are 2×2 (4× an electric drill over full ore, power by
+  coverage, bedrock, 3 augment slots). Every pole's supply area is 2 tiles wider; Direct wiring (research) runs power
+  cables from electric poles straight to machines. The placement preview is a solid ghost tinted green / red, stippled
+  only while planning a blueprint (Shift, or a blueprint in hand).
+- **Looks:** new icons for everything that had none (dam, reactor, coolant tower, greenhouse and panel, medical lab,
+  centrifuge, leaching drill, big drill, radar) and distinct ones for steel and irrigation pipes, the high pressure pump
+  and uranium; no more blank or magenta fallbacks. New or reworked models: dam (deck, gates, turbine houses, lit spill),
+  reactor (warning beacon: green, amber, flashing red, dark when broken; scorched when broken), coolant tower (basin
+  light, blinks short of water, cracked when broken), high pressure pump, steel and irrigation pipe bands, greenhouse
+  doorways, medical lab, radar, big drill.
+- **Map:** the map shows only what has been seen, keeps only live tiles up to date (near engineers and working radars),
+  and dims the rest. Radars (from the start, 300 kW) keep 48 tiles live and explore out to 160. Explored tiles save per
+  chunk. The minimap zooms from ½ to 32 pixels a tile; zoomed in, its whole frame is the close-up with nothing over it.
+- **Research:** one tree engine for technologies and medical upgrades (medical now has a tree a level a node, and a
+  queue like research). Lines are right-angled with rounded corners, one trunk out of each node and one bus into each.
+- **Camera:** free camera mode is gone. Depth mode orbits (`;` `'`), tilts (`-` `[`), pans (middle drag), and the grid
+  can be turned off (`N`); leaving depth mode tweens back to the default view.
+- **Hands and co-op:** Shift + click builds a selection of many; transfer modes and Ctrl + click share a stack over it,
+  "paste to all" pastes settings onto it. Clicking another engineer opens a trade.
+- **Collision:** smaller shapes for small things, machine squares a little inside their tile, and sliding round corners.
+
+### The session before
+
+A long list from the owner (research, power, interaction, visuals, map, camera, crafting stations, belt outputs):
 
 - **Research:** a queue (labs work down it; queuing a tech queues what it needs first; reorder and remove from the
   panel; saved and synced) and a new research window, research.js: a left-to-right tree in sections (`TECH_CATS`),
@@ -67,7 +95,7 @@ stations, belt outputs). In short:
 | Rendering | Chunks around the camera only (terrain.js): a coarse picture at once, full detail painted a few tiles a frame, texture detail by zoom (16/8/4 texels a tile), flora hidden zoomed out, models only for buildings in shown chunks |
 | Biomes | 11, defined in data (BIOMES): climate, ground, ores and patterns, trees, flora, weedy patches, oil, three crops. Biomes are large (climate scale 520 tiles by default) and ore patches big (starter patches 1.7× the old size). The landing site has livable biomes all around. Borders wander in a smooth warp, and each tile's ground colour is a 13-tile blur of the biomes actually around it (groundColors), on the ground and the map alike. Hazards in six (heat, cold, fumes, spores, resonance, radiation): exposure builds and fades, never kills, adaptations cut it |
 | Water | Ocean rim at the world's edge and low land, lake blobs, rivers along noise channels in some regions, each river tile with a flow direction. Nothing within 44 tiles of the landing site. No walking or building on water except pumps and dams |
-| Multi-tile objects | Greenhouse rooms and dams are one object over many tiles (`foot`, multi.js); touching ones join. Mining takes the whole; Ctrl + mining takes one tile where data allows (greenhouses, paths), and a cut room splits in two. Roads: each drag is one road, mined whole |
+| Multi-tile objects | Greenhouse rooms, dams, 2×1 boilers, 2×2 steam engines and big drills are one object over many tiles (`foot`, multi.js); touching rooms and dams join. Mining takes the whole and gives back one item, except `perTile` kinds (greenhouses, dams) which give back by the tile; Ctrl + mining takes one tile where data allows (greenhouses, paths), and a cut room splits in two. Roads: each drag is one road, mined whole |
 | Tools | Axe (trees), pickaxe (ore, rock), shovel (weedy patches, Soil science). Speed and sweep research lines per tool. Cursor shows the tool; the engineer swings the right one |
 | Farming | Weedy patches per biome give that biome's seeds. Greenhouses (25 tiles a greenhouse, panels for single tiles) grow one crop from its seeds with irrigation water, shared by need over a network; harvest and spare seeds to inserters. Green lamps speed them. Chlorophyll from any seeds; terrestrial science packs |
 | Medical lab | Global upgrades (body, six adaptations, four mutations after irradiated seeds), long research with terrestrial packs, chlorophyll and crops; Medical tab in research |
@@ -79,14 +107,14 @@ stations, belt outputs). In short:
 | Routes | One logistics window (L) for rail lines, truck routes and sea lanes: depot or waypoint stops, load / unload / both / pass, cargo filters, leave conditions (full, empty, time, idle, cargo has, depot has, next stop has room) joined by and/or, loops. Depots by name, priority, vehicle limit, import/export rules |
 | Factories | Several factories in one world (after Factory planning research). Belts, inserters, drills, power, pipes and underground pairs never cross factories. Shown in alt mode tags, panels, hover info and a map view; reassigned per building or with the map's Assign tool |
 | Fish | Fish swim near engineers; every chunk's water keeps a population with logistic regrowth (caught up when someone returns). Catch by hand (hold right-click), eat for a speed buff, cook in furnaces. Boat nets catch past a stack and tear at two |
-| Map | Minimap, big map (M) with zoom/pan, markers, labelled areas, terrain/resources/production/power views |
+| Map | Minimap, big map (M) with zoom/pan, markers, labelled areas, terrain/resources/production/power views. Only explored tiles are drawn; only live ones (near engineers and working radars) are kept up to date, the rest dimmed as last seen. Radars. The minimap's close-up fills it |
 | Interface | One compact quickbar row with a 1/2/3 switch (X cycles), health and stamina bars beside it, Hide UI (H). Pause menu (F1, or Esc once nothing else is open): resume, settings (volume, building icons, goals list, minimap), controls and key rebinding, how to play, save, export, save and quit. It pauses solo games. Rendering is fixed at the normal pixel size |
-| Research | 48 techs plus 18 tool upgrades in 9 sections, 4 science pack tiers, gated by precision for depth. A queue (saved, synced), and a left-to-right tree window with search |
+| Research | 49 techs plus 18 tool upgrades in 9 sections, 4 science pack tiers, gated by precision for depth. A queue (saved, synced), and a left-to-right tree window with search. The medical tab is the same tree, with a queue of its own |
 | Depth | Layers −2..4, hollow frames, ghosting, lazily painted underground floors |
 | Alien conversation | 9 scripted exchanges plus ambient replies, glyph animations, clarity that grows |
 | Look | Pixel-snapped camera, toon shading, outline post pass, ore piles, trees/rocks, particles |
 | Sound | All synthesised (Web Audio), proximity machine loops, volume slider. A high-shelf cut above 5 kHz on everything; labs and transmitters hum low instead of the old high beating tones |
-| Co-op | Peer-to-peer (PeerJS), invite codes, nicknames, chat, host-authoritative sync. Played by the owner with a friend on another network. Messages travel as JSON text (see below) |
+| Co-op | Peer-to-peer (PeerJS), invite codes, nicknames, chat, trading (click another engineer), host-authoritative sync. Played by the owner with a friend on another network. Messages travel as JSON text (see below) |
 | Save | Five slots in localStorage (slot 1 is the old save key), autosave every 30 s to the slot in play, a Load game screen (load, export, delete), Load from file, Export to file from the pause menu. Old formats still load (older saves gain water, cables, marks, quickbars, oil wells, fish, deposit layers, and everything joins the main factory) |
 | Day and night | A 24-minute day on a clock shown in the status panel (a minute an hour; the sun rises at 05:30, sets at 20:00 and climbs and sinks smoothly in between, so the light and its warmth change all day): solar follows daylight, the world dims to moonlight through a light buffer in the post pass. Lamps (5 kW) and braziers (fuel) light the ground; working machines, depots, engineers and moving vehicles glow |
 | Hosting | Public repo, served from GitHub Pages off `main`. After a push, players need Ctrl+F5 once to get fresh modules |
@@ -170,7 +198,31 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
   line and a filter inserter; co-op host and guest building identical chunks, a guest's greenhouse and a dug patch
   syncing.
 
-- **This session, in the browser pane (two tabs for co-op, an old build in a worktree for old saves):**
+- **This session, in the browser pane (two tabs for co-op, the last commit in a worktree for an old save):**
+  - Chlorophyll: 2 crafts from 8 wheat seeds; a cancelled craft from mixed wheat and flax gave back exactly what it took.
+  - Refunds: a 2×1 boiler and a 2×2 steam engine each give back 1; a big drill gives back 1.
+  - Big drill on four iron tiles, on solar: mining at ~1.8/s (2/s at full power), 400 kW, ore into a chest at its front left.
+  - Direct wiring: refused before the research, then an assembler 10 tiles from a small pole runs on the cable
+    (`wired`); a generator pole is refused; mining the assembler gives the cable back.
+  - Multi-select: four furnaces selected (a fifth toggled out), 50 coal in fuel mode went 13/13/12/12.
+  - Camera: depth mode, orbit, tilt and pan applied; leaving depth mode brought yaw, tilt and pan back to the default.
+  - Map: a radar on solar explored from 48 out to 71 tiles in 20 s; explored, live (clear) and stale (dim) areas seen
+    in a screenshot; the minimap close-up fills the frame with no overlays.
+  - Research: the tech tree's new lines and forks, and the medical tree (queuing Recovery 2 queued Vitality 1 and
+    Recovery 1 first), seen in screenshots.
+  - Trades (a fake second engineer, then two real tabs over PeerJS): early accept refused; a late change cleared both
+    accepts and restarted the wait; the swap after both accepted; "no room" refused with nothing moved; walking apart
+    and closing the guest's tab both called it off with nothing moved.
+  - Collision (rows of 10, walking 3 s): two touching pipe rows, steel beside irrigation, inserter beside chest, pole
+    beside filter inserter all pass; a single pipe line and two touching furnace rows block; brushing a furnace corner
+    and walking straight into a pole slide past.
+  - Placement preview: solid and shaded (green), stippled with Shift held. Models of the reactor, coolant towers,
+    greenhouse, medical lab, pipes, dam and big drill seen in screenshots.
+  - An old save from the last commit loads: its one-tile big drill stays one tile (`compact`) and refunds one, the wider
+    pole area reaches a machine it didn't before, medical "current" became a queue, explored area appears round the
+    engineer and the buildings, and it saves and loads back.
+
+- **The session before, in the browser pane (two tabs for co-op, an old build in a worktree for old saves):**
   - Steam chain on the new tier: pump → 2×1 boiler → 2×2 engines → generator pole → step-up station → step-up cable →
     small pole → assembler: 'working'. Without the cable the assembler has no power. One boiler at full fire gives
     exactly 1800 kW, shared by three engines at 67% (two engines' worth: the ratio holds).
@@ -201,6 +253,14 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
     ore; stippled ghosts, previews, blueprints and see-through ground in depth mode with tunnel traffic below.
 
 ## Not verified (treat as risks)
+
+- **The newest work by hand.** Everything this session was driven from the console and screenshots in an 800×600 pane:
+  not felt by hand are the depth-mode pan and tilt, corner sliding while walking, the trade window's drag and drop with
+  a real mouse, Shift-selecting many with real clicks, the research lines on a big screen, and the map's dimming.
+- **Exploring huge worlds:** a radar explores out to 160 tiles, making chunks as the map needs them (two a frame while
+  in view). Not measured on a slow machine, nor with many radars at once.
+- **Co-op for the newest pieces:** guests' explored maps are their own after joining (they get the host's at join, then
+  explore locally); a guest's Direct wiring cable and multi-select were not tried from a guest.
 
 - **This session's work by hand at length.** Everything above was driven from code and screenshots in an 800×600
   pane. Not felt by hand: the free camera's feel (and how much it shimmers), the research window on a big screen, pole
@@ -255,7 +315,47 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
   first guesses.
 - **Old worlds stay 96×96.** Only new worlds are big; an old save can't grow.
 
-## Judgment calls, latest session (confirm with the owner)
+## Judgment calls, newest session (confirm with the owner)
+
+- **Big mining drill numbers:** 2/s over four ore tiles (exactly four electric drills), less over fewer (rate and power
+  both follow how many tiles have ore it can reach). Up to 400 kW against four drills' 360 kW, 3 augment slots against
+  their 8, one output, and it costs four electric drills plus 20 steel, 5 advanced circuits and 10 gears (Deep drilling,
+  blue science). So per tile it is never better on power or augments; what it buys is bedrock, one output and fewer
+  inserters. Ore comes out at the front, on its left as it faces (a 2-wide front has no middle).
+- **Old big drills stay one tile** (`compact`, like old boilers): they mine their one tile at a quarter of the rate
+  (0.5/s, close to the old 0.6) and draw a quarter of the power.
+- **Dams two wide:** 180 kW and one item per tile as before, so a span costs and gives twice what a one-wide dam did,
+  and old one-wide dams keep their output. They need at least two tiles along.
+- **Pole areas +2 everywhere**, stations included (transformer and step-up station: 7×7). Wire reach is unchanged, so
+  pole drags are still spaced by wire reach (small poles 7 apart, 9×9 areas overlapping).
+- **"Direct wiring"** is the name for cables to buildings: Power section, after Electric distribution, red and green
+  packs (40). Small and medium poles and power lines can; generator poles, step-up and transformer stations can't. The
+  power cable item does it (up to 12 tiles to the machine's nearest tile), one cable a machine; click the pole first.
+- **Pipes from the start, only pipes:** underground pipes, pumps and valves stay in Fluid handling.
+- **Radar:** no research (as in Factorio), 300 kW, 48 tiles live, explores outward 1.5 tiles a second to 160.
+  An engineer sees (explores and keeps live) 40 tiles round them. Switching the map's view mode redraws every explored
+  tile once from what is known now, rather than keeping a separate last-seen picture per mode. Vehicles show on the map
+  only where it is live. Saves from before exploring count the area round the engineer and every building as seen.
+- **Medical tree:** a node per level of each upgrade. To make it a tree, a few first levels now need others: Recovery
+  needs Vitality 1, Stride needs Endurance 1, Long reach needs Dexterity 2, Photosynthetic skin needs Recovery 2, Adrenal
+  gland needs Stride 1, Lead lungs needs Radiation resistance 1. Adaptations stay roots.
+- **Tree lines:** many far-apart prerequisites are handled by merging every line into one bus beside the node it enters
+  (and forking every line out of one trunk). Lines from another section are fainter; hovering lights the path and fades
+  the rest. Line width stays the same at every zoom.
+- **Camera keys:** `-` tilts lower, `[` higher, in six steps. The grid toggle is `N` (also in settings). The old free
+  camera (C) and the `[` `]` orbit keys are gone; saved rebinds of those are simply dropped.
+- **Selection vs. paste:** with a selection going, Shift + click keeps adding and removing even with settings copied;
+  pasting onto it is the "paste to all" button on its bar. With no selection, Shift + click pastes as before. A plain
+  click on empty ground (empty hand) also clears the selection.
+- **Trading:** offers stay in their owner's inventory until the swap (no escrow), so cancelling can never lose items.
+  The wait is 3 s, trades end beyond 16 tiles, and a guest silent for 5 s counts as gone (PeerJS can take a long time to
+  notice a closed tab). Esc or ✕ cancels. Clicking yourself still shows your own details.
+- **Placement preview:** the model tinted green or red (the bracket too), no tile highlight over it. The scene's two
+  lights now also reach the interface layer, so the preview is shaded; every other interface overlay is unlit anyway.
+- **Collision:** small things shrank (inserters, poles, lamps, valves, braziers, chests a little), trees too; one-tile
+  machines are .43 instead of .46 a side, so touching ones still leave no gap. Sliding nudges up to .34 tiles sideways.
+
+## Judgment calls, the session before last (confirm with the owner)
 
 - **The low tier is "extra-low voltage"** (ELV), below low voltage, to fit "Low voltage / High voltage". Its pieces:
   generator pole, step-up station, step-up cable, all craftable from the start from wood, copper cable, plates and
@@ -298,7 +398,7 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 - **Research clicks:** click queues (with prerequisites), Ctrl+click researches first, right-click unqueues. Moving an
   item stops at its prerequisites and dependents.
 
-## Judgment calls, the session before (confirm with the owner)
+## Judgment calls, older (confirm with the owner)
 
 - Barrels hold 10 (asked for) instead of 50. Old saves get five barrels for each filled one, and the barrel stack went
   from 10 to 50 so slots carry the same fluid. Filled barrels on belts keep one there and drop four beside it.

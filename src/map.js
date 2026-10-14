@@ -6,6 +6,11 @@
 // its own buildings. The minimap shows the area around you (wheel zooms it); the big map (M, or click the minimap)
 // zooms and pans over everything, holds markers and labelled areas, and switches views: terrain, resources,
 // production, power and factories.
+//
+// Exploring (explore.js): a tile is drawn only once someone has seen it, and is redrawn only while it is live (near an
+// engineer or a working radar); everywhere else the picture keeps what was last seen there, dimmed a little so live and
+// stale read apart. Each chunk keeps its own pixels for that. Explored chunks that aren't in memory (after loading a
+// save) are made again as the view needs them, a couple a frame.
 import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, BIOMES } from './data.js';
 import { S, world, bus, key, GRID, LAYER_MAX, factoryOf, CHUNK, chunkKey, tileAt, tilesOf, lodAt } from './state.js';
 import { nets, voltsOf } from './sim.js';
@@ -14,6 +19,8 @@ import { doAction } from './net.js';
 import { iconHTML, fmtN } from './icons.js';
 import { FEATURES } from './data.js';
 import { groundColors } from './worldgen.js';
+import { isLive, chunkLive, liveAreas } from './explore.js';
+import { chunkOf } from './state.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -97,7 +104,8 @@ function mapChunk(k) {
 }
 const markDirty = k => { if (world.chunks.has(k)) dirty.add(k); };
 const dirtyAt = (x, z) => markDirty(chunkKey(Math.floor(x / CH), Math.floor(z / CH)));
-const dirtyAll = () => { for (const k of world.chunks.keys()) dirty.add(k); };
+// A new view mode redraws every explored tile once in it (`redo`), stale ones from what is known now.
+const dirtyAll = () => { for (const k of world.chunks.keys()) { dirty.add(k); const c = chunks.get(k); if (c) c.redo = true; } };
 // buildings by chunk: chunkKey -> Set of buildings (and frames) with a tile in it
 const byChunk = new Map();
 const chunksOf = e => new Set(tilesOf(e).map(([x, z]) => chunkKey(Math.floor(x / CH), Math.floor(z / CH))));
@@ -115,13 +123,16 @@ function noticeNewChunks() {
 }
 function buildChunk(k, c) {
   const wc = world.chunks.get(k); if (!wc) return;
+  const ex = world.explored.get(k), live = chunkLive(wc.cx, wc.cz), redo = c.redo; c.redo = false;
   const tops = new Map();   // the highest building on each tile of this chunk
   for (const e of byChunk.get(k) || []) if (e.y >= 0) for (const [x, z] of tilesOf(e)) { const t = tops.get(x + ',' + z); if (!t || e.y > t.y || (e.y === t.y && t.kind === 'frame')) tops.set(x + ',' + z, e); }
-  const img = c.ctx.createImageData(CH, CH), d = img.data;
+  const img = c.img ||= c.ctx.createImageData(CH, CH), d = img.data, seen = c.seen ||= new Uint8Array(CH * CH);
   for (let dz = 0; dz < CH; dz++) for (let dx = 0; dx < CH; dx++) {
-    const x = wc.x0 + dx, z = wc.z0 + dz; if (x >= GRID || z >= GRID) continue;
-    const col = tileColor(x, z, wc, tops), j = (dz * CH + dx) * 4;
-    d[j] = col[0]; d[j + 1] = col[1]; d[j + 2] = col[2]; d[j + 3] = 255;
+    const x = wc.x0 + dx, z = wc.z0 + dz, i = dz * CH + dx, j = i * 4; if (x >= GRID || z >= GRID) continue;
+    if (!ex || !(ex.full || ex[i >> 3] & (1 << (i & 7)))) { d[j + 3] = 0; seen[i] = 0; continue; }   // never seen: blank
+    if (seen[i] && !redo && !(live && isLive(x, z))) continue;   // seen before, not watched now: as it was
+    const col = tileColor(x, z, wc, tops);
+    d[j] = col[0]; d[j + 1] = col[1]; d[j + 2] = col[2]; d[j + 3] = 255; seen[i] = 1;
   }
   c.ctx.putImageData(img, 0, 0); c.built = true;
   regDirty.add(regionKey(k));
@@ -138,8 +149,21 @@ function buildRegion(rk) {
 }
 // Redraw stale chunks (and then regions) for at most `ms` milliseconds, nearest the view first.
 let wantView = null;
+// Explored chunks in view that aren't in memory are made again from the seed, nearest first, a couple at a time.
+let viewRect = null;
+function loadExplored() {
+  if (!viewRect) return;
+  const [x0, z0, x1, z1] = viewRect, want = [];
+  for (let cx = Math.max(0, Math.floor(x0 / CH)); cx <= Math.floor(x1 / CH); cx++) for (let cz = Math.max(0, Math.floor(z0 / CH)); cz <= Math.floor(z1 / CH); cz++) {
+    const k = chunkKey(cx, cz); if (world.explored.has(k) && !world.chunks.has(k) && cx * CH < GRID && cz * CH < GRID) want.push([cx, cz]);
+  }
+  const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+  want.sort((a, b) => Math.hypot(a[0] * CH - mx, a[1] * CH - mz) - Math.hypot(b[0] * CH - mx, b[1] * CH - mz));
+  for (const [cx, cz] of want.slice(0, 2)) chunkOf(cx * CH, cz * CH);
+}
 function refreshChunks(ms) {
   if (!indexed) reindex();
+  loadExplored();
   noticeNewChunks();
   const t0 = performance.now(), v = wantView || { cx: S.player.x, cz: S.player.z };
   const dist = k => Math.hypot((k % 4096) * CH + 16 - v.cx, Math.floor(k / 4096) * CH + 16 - v.cz);
@@ -161,8 +185,13 @@ bus.on('patch', (x, z) => dirtyAt(x, z));
 bus.on('marks', () => { if (S.modal === 'map') renderSide(true); });
 bus.on('roads', list => { for (const [x, z] of list || []) dirtyAt(x, z); });
 bus.on('factories', () => { if (mode === 'factories') dirtyAll(); });
-export function resetMap() { chunks.clear(); regions.clear(); dirty.clear(); regDirty.clear(); byChunk.clear(); indexed = false; seenVersion = -1; hist.length = 0; selected = null; }
-// Production and power colours change as machines work: only chunks with buildings in them are redrawn for that.
+bus.on('explored', list => { for (const k of list) markDirty(k); });   // newly seen tiles get drawn
+// Live chunks are redrawn now and then even with nothing announced, so what they show keeps up (ore dug, machines
+// working); everything else waits until someone or a radar is near again.
+function dirtyLive() { for (const k of chunks.keys()) if (chunkLive(k % 4096, Math.floor(k / 4096))) markDirty(k); }
+export function resetMap() { viewRect = null; chunks.clear(); regions.clear(); dirty.clear(); regDirty.clear(); byChunk.clear(); indexed = false; seenVersion = -1; hist.length = 0; selected = null; }
+// Production and power colours change as machines work: only chunks with buildings in them are redrawn for that (and
+// only their live tiles change).
 const dirtyBuilt = () => { for (const [k, set] of byChunk) if (set.size) markDirty(k); };
 
 // ---------------------------------------------------------------- drawing
@@ -170,19 +199,43 @@ const dirtyBuilt = () => { for (const [k, set] of byChunk) if (set.size) markDir
 export function drawMapView(ctx, W, H, v, big, overlay) { wantView = v; refreshChunks(4); drawWorld(ctx, W, H, v, big, overlay); }
 // The close-up: the rendered scene around the view's middle, two screen pixels to a rendered one (as the game draws).
 const glimpse = { yaw: 0, pitch: .82, t: -1, cv: null, key: '' };
+// On the minimap it fills the whole frame; on the big map it is a framed square in the middle. Returns whether it drew.
 function drawGlimpse(ctx, W, H, v, big) {
   const size = big ? Math.min(W, H) * .72 : Math.min(W, H), x0 = (W - size) / 2, y0 = (H - size) / 2;
   if (!glimpseReady(v.cx, v.cz)) {
     if (big) { ctx.fillStyle = 'rgba(11,13,18,.75)'; ctx.fillRect(x0, y0 + size / 2 - 14, size, 28); ctx.fillStyle = '#7d8796'; ctx.font = '18px VT323, monospace'; ctx.textAlign = 'center'; ctx.fillText('too far away to see up close', W / 2, y0 + size / 2 - 9); ctx.textAlign = 'left'; }
-    return;
+    return false;
+  }
+  if (!big) {   // the minimap: the whole frame is the close-up
+    const depth = S.mode === 'depth', yaw = depth ? S.cam.yaw : 0, pitch = depth ? S.cam.pitch : .82;
+    const key3 = [v.cx.toFixed(2), v.cz.toFixed(2), v.ppt, W, H, yaw.toFixed(3), pitch.toFixed(3), S.layer].join();
+    if (key3 !== glimpse.key || S.T - glimpse.t > .12) { glimpse.cv = renderGlimpse(v.cx, v.cz, W / 2, H / 2, v.ppt / 2, yaw, pitch); glimpse.t = S.T; glimpse.key = key3; }
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(glimpse.cv, 0, 0, W, H);
+    return true;
   }
   const depth = S.mode === 'depth', yaw = depth ? glimpse.yaw : S.cam.yaw, pitch = depth ? glimpse.pitch : .82;
   const key2 = [v.cx.toFixed(2), v.cz.toFixed(2), v.ppt, size, yaw.toFixed(3), pitch.toFixed(3), S.layer].join();
   if (key2 !== glimpse.key || S.T - glimpse.t > .12) { glimpse.cv = renderGlimpse(v.cx, v.cz, size / 2, size / 2, v.ppt / 2, yaw, pitch); glimpse.t = S.T; glimpse.key = key2; }
   ctx.imageSmoothingEnabled = false; ctx.drawImage(glimpse.cv, x0, y0, size, size);
-  if (big) { ctx.strokeStyle = '#7ef6ff'; ctx.lineWidth = 2; ctx.strokeRect(x0 + 1, y0 + 1, size - 2, size - 2); }
+  ctx.strokeStyle = '#7ef6ff'; ctx.lineWidth = 2; ctx.strokeRect(x0 + 1, y0 + 1, size - 2, size - 2);
+  return true;
+}
+// Stale parts of the map are dimmed a little; live circles (engineers, radars) stay clear, with a faint rim.
+const dimCv = document.createElement('canvas'), dimCtx = dimCv.getContext('2d');
+function drawLive(ctx, W, H, sx, sz, ppt) {
+  if (dimCv.width !== W || dimCv.height !== H) { dimCv.width = W; dimCv.height = H; }
+  dimCtx.globalCompositeOperation = 'source-over'; dimCtx.clearRect(0, 0, W, H);
+  dimCtx.fillStyle = 'rgba(6,8,14,.34)'; dimCtx.fillRect(0, 0, W, H);
+  dimCtx.globalCompositeOperation = 'destination-out'; dimCtx.fillStyle = '#000';
+  const areas = liveAreas();
+  for (const a of areas) { dimCtx.beginPath(); dimCtx.arc(sx(a.x), sz(a.z), a.r * ppt, 0, Math.PI * 2); dimCtx.fill(); }
+  ctx.drawImage(dimCv, 0, 0);
+  ctx.lineWidth = 1;
+  for (const a of areas) { ctx.strokeStyle = a.radar ? 'rgba(126,246,255,.32)' : 'rgba(216,224,234,.18)'; ctx.setLineDash(a.radar ? [4, 4] : []); ctx.beginPath(); ctx.arc(sx(a.x), sz(a.z), a.r * ppt, 0, Math.PI * 2); ctx.stroke(); }
+  ctx.setLineDash([]);
 }
 function drawWorld(ctx, W, H, v, big, overlay) {
+  viewRect = [v.cx - W / 2 / v.ppt, v.cz - H / 2 / v.ppt, v.cx + W / 2 / v.ppt, v.cz + H / 2 / v.ppt];
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#0b0d12'; ctx.fillRect(0, 0, W, H);
   const sx = x => (x - v.cx) * v.ppt + W / 2, sz = z => (z - v.cz) * v.ppt + H / 2, lod = lodAt(v.ppt);
@@ -198,8 +251,10 @@ function drawWorld(ctx, W, H, v, big, overlay) {
       const c = chunks.get(chunkKey(cx, cz)); if (!c?.built) continue;
       const size = CH * v.ppt; ctx.drawImage(c.cv, Math.floor(sx(cx * CH)), Math.floor(sz(cz * CH)), Math.ceil(size), Math.ceil(size));
     }
-    if (lod === 'close' && mode === 'terrain' && !overlay) drawGlimpse(ctx, W, H, v, big);
+    // zoomed right in: the close-up. On the minimap it is the whole picture, with nothing drawn over it
+    if (lod === 'close' && mode === 'terrain' && !overlay && drawGlimpse(ctx, W, H, v, big) && !big) return;
   }
+  if (world.gen || world.explored.size) drawLive(ctx, W, H, sx, sz, v.ppt);
   ctx.strokeStyle = '#2a3140'; ctx.lineWidth = 1; ctx.strokeRect(Math.floor(sx(0)) + .5, Math.floor(sz(0)) + .5, GRID * v.ppt, GRID * v.ppt);
   if (mode === 'power') for (const n of nets) {   // supply areas, one colour per network
     ctx.fillStyle = `hsla(${(n.id * 137) % 360}, 80%, 60%, .16)`;
@@ -221,8 +276,8 @@ function drawWorld(ctx, W, H, v, big, overlay) {
     if (big) { ctx.fillStyle = '#000'; ctx.fillText(m.name, x + 9, z - 15); ctx.fillStyle = m.color; ctx.fillText(m.name, x + 8, z - 16); }
   }
   // vehicles: a rotated block in their colour
-  for (const vh of world.vehicles) {
-    const fr = FRAMES[VEHICLES[vh.type]?.frame]; if (!fr) continue;
+  for (const vh of world.vehicles) {   // only where the map is live: elsewhere nobody knows where they are now
+    const fr = FRAMES[VEHICLES[vh.type]?.frame]; if (!fr || !isLive(Math.floor(vh.rx ?? vh.x), Math.floor(vh.rz ?? vh.z))) continue;
     ctx.save(); ctx.translate(sx(vh.rx ?? vh.x), sz(vh.rz ?? vh.z)); ctx.rotate(-(vh.ra ?? vh.ang));
     const w = Math.max(3, v.ppt * .5), l = Math.max(4, v.ppt * fr.len);
     ctx.fillStyle = '#000'; ctx.fillRect(-w / 2 - 1, -l / 2 - 1, w + 2, l + 2);
@@ -241,13 +296,13 @@ function drawWorld(ctx, W, H, v, big, overlay) {
 
 // ---------------------------------------------------------------- minimap
 // Wheel zooms it; zoomed all the way in it shows the rendered close-up around you. A click opens the big map.
-const mini = $('minimap'), mctx = mini.getContext('2d'), MINI_ZOOM = [1, 2, 4, 8, 16, 24];
+const mini = $('minimap'), mctx = mini.getContext('2d'), MINI_ZOOM = [.5, 1, 2, 4, 8, 16, 24, 32];
 let miniT = 0, liveT = 0, miniPpt = 4;
 mini.addEventListener('pointerdown', e => { e.preventDefault(); bus.emit('openmap'); });
 mini.addEventListener('wheel', e => { e.preventDefault(); const i = MINI_ZOOM.indexOf(miniPpt); miniPpt = MINI_ZOOM[Math.max(0, Math.min(MINI_ZOOM.length - 1, i + (e.deltaY < 0 ? 1 : -1)))]; miniT = 1; }, { passive: false });
 export function updateMap(dt) {
   if (!S.started) return;
-  if ((liveT += dt) > 1) { liveT = 0; if (mode === 'production' || mode === 'power') dirtyBuilt(); sampleStats(); }
+  if ((liveT += dt) > 1) { liveT = 0; if (mode === 'production' || mode === 'power') dirtyBuilt(); dirtyLive(); sampleStats(); }
   if (S.modal !== 'map') wantView = null;
   const open = S.modal === 'map';
   refreshChunks(open ? 6 : 2);
@@ -398,7 +453,7 @@ function modeHTML() {
     return `<h4>Factories</h4>${world.factories.map(f => `<div class="mrow${S.player.fac === f.id ? ' on' : ''}" data-map="fac:${f.id}"><i style="background:${f.color}"></i>${esc(f.name)} <span class="dim">${counts.get(f.id) || 0}</span></div>`).join('')}
       <div class="dim">Click one to build for it. The Assign tool drags buildings into the one you build for.</div>`;
   }
-  if (mode === 'terrain') return `<h4>Legend</h4><div class="legend"><i style="background:#${TILES[1].map.toString(16)}"></i>water <i style="background:#${TILES[2].map.toString(16)}"></i>river <i style="background:#2f5a2a"></i>trees <i style="background:#231c2a"></i>oil <i style="background:#9a8a76"></i>rail</div>${world.gen ? '<div class="dim">Only explored parts of the world are drawn.</div>' : ''}`;
+  if (mode === 'terrain') return `<h4>Legend</h4><div class="legend"><i style="background:#${TILES[1].map.toString(16)}"></i>water <i style="background:#${TILES[2].map.toString(16)}"></i>river <i style="background:#2f5a2a"></i>trees <i style="background:#231c2a"></i>oil <i style="background:#9a8a76"></i>rail</div><div class="dim">Only what has been seen is drawn. Inside the clear circles (round you and every working radar) the map is live; elsewhere it shows what was last seen there, a little dimmer.</div>`;
   if (mode === 'resources') {
     const by = {};
     for (const [k, o] of world.ores) { const y = +k.split(',')[1], r = by[o.type] ||= { 0: 0, '-1': 0, '-2': 0, tiles: 0 }; r[y] += o.amount; r.tiles++; }

@@ -11,10 +11,19 @@ const hex = (c, k = 1) => {
 export function iconCanvas(id) {
   if (cache[id]) return cache[id];
   const c = document.createElement('canvas'); c.width = c.height = 16;
-  const g = c.getContext('2d', { willReadFrequently: true }), it = ITEMS[id] || (FLUIDS[id] ? { color: FLUIDS[id].color, shape: 'fluid' } : { color: 0xff00ff, shape: 'ore' }), col = it.color;
+  const g = c.getContext('2d', { willReadFrequently: true }), it = ITEMS[id] || (FLUIDS[id] ? { color: FLUIDS[id].color, shape: 'fluid' } : { color: 0x7d8796, shape: 'crate' }), col = it.color;   // unknown ids get a plain crate, not a glaring placeholder
   const px = (x, y, k = 1, w = 1, h = 1, cc = col) => { g.fillStyle = typeof k === 'string' ? k : hex(cc, k); g.fillRect(x, y, w, h); };
   switch (it.shape) {
     case 'ore': {
+      if (it.mineFluid) {   // uranium: dark rock shot through with glowing green crystals
+        for (let y = 3; y < 14; y++) for (let x = 2; x < 14; x++) {
+          const d = Math.hypot(x - 7.5, (y - 8.5) * 1.2);
+          if (d < 5.6 + hash01(id + x + 'r' + y) * .8) px(x, y, y > 10 ? '#2e3a2c' : '#465244');
+        }
+        for (const [x, y] of [[4, 6], [8, 4], [10, 8], [6, 10], [9, 11]]) { px(x, y, 1, 2, 2); px(x, y, 1.6, 1, 1); }
+        px(7, 7, '#e8ffd8');
+        break;
+      }
       for (let y = 3; y < 14; y++) for (let x = 2; x < 14; x++) {
         const d = Math.hypot(x - 7.5, (y - 8.5) * 1.2);
         if (d < 5.6 + hash01(id + x + 'r' + y) * .8) px(x, y, .7 + hash01(id + x * 3 + y) * .6 - (y > 10 ? .2 : 0));
@@ -36,6 +45,7 @@ export function iconCanvas(id) {
     case 'coil': px(4, 2, .8, 8, 12); for (let y = 3; y < 13; y += 2) px(4, y, 1.25, 8, 1); px(3, 2, '#5b4a10', 10, 1); px(3, 13, '#5b4a10', 10, 1); break;
     case 'pack': px(6, 1, '#c8d0da', 4, 3); px(5, 4, '#c8d0da', 6, 2); for (let y = 6; y < 15; y++) { const w = Math.min(12, 6 + (y - 6) * 2); px(8 - w / 2, y, y < 9 ? 1.25 : 1, w, 1); } px(6, 9, '#ffffff'); break;
     case 'machine': drawMachine(px, it.entity, col); break;
+    case 'crate': px(3, 4, 1, 10, 10); px(3, 4, 1.3, 10, 1); px(3, 8, .7, 10, 1); px(7, 4, .7, 1, 10); break;
     case 'fluid': for (let y = 2; y < 15; y++) for (let x = 2; x < 14; x++) { const d = y < 8 ? Math.abs(x - 7.5) * 2.2 - (y - 2) : Math.hypot(x - 7.5, y - 9.5) * 1.6 - 6; if (d < 0) px(x, y, y < 9 ? 1.25 : .9); } px(5, 9, '#ffffff', 1, 2); break;
     case 'barrel': {
       const f = it.barrel ? FLUIDS[it.barrel].color : null;
@@ -63,7 +73,7 @@ export function iconCanvas(id) {
       break;
     }
     case 'vial': px(6, 1, '#c8d0da', 4, 2); px(7, 3, '#c8d0da', 2, 2); for (let y = 5; y < 15; y++) { const w = y < 7 ? 6 : 8; px(8 - w / 2, y, '#8a96a6', w, 1); px(9 - w / 2, y, y < 8 ? .7 : 1, w - 2, 1); } px(5, 8, '#ffffff', 1, 4); break;
-    case 'pellet': for (const [x, y] of [[3, 3], [9, 4], [5, 9], [10, 10]]) for (let a = 0; a < 4; a++) for (let b = 0; b < 4; b++) if (Math.hypot(a - 1.5, b - 1.5) < 2) px(x + a, y + b, a + b < 3 ? 1.35 : .9); break;
+    case 'pellet': for (const [x, y] of [[3, 3], [9, 4], [5, 9], [10, 10]]) for (let a = 0; a < 4; a++) for (let b = 0; b < 4; b++) if (Math.hypot(a - 1.5, b - 1.5) < 2) px(x + a, y + b, a + b < 2 ? '#f0ffe0' : a + b < 4 ? 1.35 : .9); break;
     case 'cell': px(4, 1, '#5c6470', 8, 14); px(5, 2, '#2c3038', 6, 12); for (let y = 3; y < 13; y += 3) px(6, y, 1, 4, 2); px(6, 3, 1.4, 4, 1); px(4, 1, '#939ca8', 8, 1); break;
     case 'road': {
       const r = col >> 16 & 255;
@@ -99,9 +109,17 @@ function drawVehicle(px, frame, col) {
 function drawMachine(px, ent, col) {
   const def = ENTITIES[ent], kind = def.model || def.kind;
   switch (kind) {
-    case 'pipe': px(1, 6, 1, 14, 4); px(1, 6, 1.3, 14, 1); px(0, 5, '#5c6470', 2, 6); px(14, 5, '#5c6470', 2, 6); px(7, 5, '#3a8ad8', 2, 2); break;
+    case 'pipe': {   // iron: plain; steel: darker, banded, heavy flanges; irrigation: green with a water drop
+      const steel = !!def.flow, fl = steel ? '#2c3038' : '#5c6470';
+      px(1, 6, 1, 14, 4); px(1, 6, 1.3, 14, 1); px(1, 9, .7, 14, 1);
+      px(0, 5, fl, 2, 6); px(14, 5, fl, 2, 6);
+      if (steel) { px(0, 4, fl, 2, 8); px(14, 4, fl, 2, 8); for (const x of [4, 8, 11]) px(x, 6, .6, 1, 4); }
+      if (def.irrigation) { px(6, 1, '#4aa3ff', 3, 2); px(5, 2, '#4aa3ff', 5, 2); px(6, 4, '#2a6ab8', 3, 1); px(6, 1, '#bfe4ff'); }
+      else px(7, 5, '#3a8ad8', 2, 2);
+      break;
+    }
     case 'station': px(1, 8, 1, 14, 5); px(1, 7, '#8a5a2c', 14, 2); px(2, 13, '#5e3b1a', 2, 3); px(12, 13, '#5e3b1a', 2, 3); px(3, 2, '#e5ad2e', 2, 6); px(3, 2, '#e5ad2e', 8, 2); px(10, 3, '#2c3038', 3, 2); break;
-    case 'upipe': px(1, 6, 1, 7, 4); px(1, 6, 1.3, 7, 1); px(7, 4, '#2c3038', 8, 9); px(8, 5, '#5c6470', 6, 2); px(10, 9, '#9be37a', 2, 2); break;
+    case 'upipe': px(1, 6, 1, 7, 4); px(1, 6, 1.3, 7, 1); px(7, 4, '#2c3038', 8, 9); px(8, 5, def.flow ? '#939ca8' : '#5c6470', 6, 2); px(10, 9, def.irrigation ? '#4aa3ff' : '#9be37a', 2, 2); if (def.flow) px(1, 8, .6, 7, 1); px(8, 12, '#16181d', 6, 1); break;
     case 'fpump': px(0, 6, '#939ca8', 16, 4); px(4, 3, 1, 8, 10); px(4, 3, 1.3, 8, 1); px(7, 5, '#ffffff', 2, 5); px(6, 6, '#ffffff', 4, 1); break;
     case 'valve': px(0, 7, '#939ca8', 16, 3); px(5, 5, 1, 6, 7); px(7, 1, '#2c3038', 2, 5); px(4, 1, '#d84a3a', 8, 2); break;
     case 'tank': px(2, 3, 1, 12, 12); px(3, 2, 1.25, 10, 2); for (const y of [6, 10]) px(2, y, .75, 12, 1); px(4, 5, '#3a8ad8', 1, 8); break;
@@ -124,7 +142,16 @@ function drawMachine(px, ent, col) {
     case 'splitter': px(1, 6, '#2b2f36', 6, 4); px(6, 2, 1, 4, 12); px(10, 1, '#2b2f36', 5, 4); px(10, 11, '#2b2f36', 5, 4); px(10, 6, '#2b2f36', 5, 4); break;
     case 'lift': for (let i = 0; i < 6; i++) px(2 + i * 2, 12 - i * 2, 1, 3, 2); px(7, 1, '#ffffff', 2, 5); px(6, 2, '#ffffff', 4, 1); break;
     case 'inserter': px(4, 12, '#34373e', 8, 3); px(7, 6, 1, 2, 6); px(7, 5, 1, 6, 2); px(12, 4, '#34373e', 3, 4); px(6, 10, .7, 4, 2); break;
-    case 'drill': if (def.depth >= 2) { px(4, 0, '#8c8f96', 1, 6); px(11, 0, '#8c8f96', 1, 6); px(4, 0, '#e5ad2e', 8, 2); }
+    case 'drill': if (def.size) {   // big mining drill: a wide deck, a tall derrick, the cutter turning under it
+        px(1, 9, 1, 14, 5); px(1, 9, 1.3, 14, 1); for (let x = 1; x < 15; x += 2) px(x, 13, x % 4 === 1 ? '#e5ad2e' : '#24262b', 1, 1);
+        px(3, 1, '#939ca8', 1, 8); px(12, 1, '#939ca8', 1, 8); px(3, 4, '#939ca8', 10, 1); px(6, 0, '#e5ad2e', 4, 2); px(7, 2, '#c3cad3', 2, 7);
+        px(4, 14, '#d8b24a', 8, 1); px(5, 15, '#d8b24a', 6, 1); px(2, 10, '#2c3038', 3, 2); break;
+      }
+      if (def.ports) {   // leaching drill: an electric drill with an acid tank on its back
+        px(2, 5, 1, 10, 8); px(2, 5, 1.3, 10, 1); px(5, 13, '#d8b24a', 4, 2); px(6, 15, '#d8b24a', 2, 1); px(4, 2, '#8c8f96', 6, 3);
+        px(11, 3, '#5c6470', 4, 9); px(12, 4, '#d8e04a', 2, 7); px(12, 4, '#f4f8a8', 2, 1); break;
+      }
+      if (def.depth >= 2) { px(4, 0, '#8c8f96', 1, 6); px(11, 0, '#8c8f96', 1, 6); px(4, 0, '#e5ad2e', 8, 2); }
       px(2, 4, 1, 12, 9); px(6, 13, '#d8b24a', 4, 2); px(7, 15, '#d8b24a', 2, 1); px(4, 1, '#8c8f96', 8, 3); px(2, 4, 1.3, 12, 1); break;
     case 'furnace': px(3, 3, 1, 10, 12); px(3, 3, 1.25, 10, 1); px(6, 9, '#ff7a2a', 4, 3); px(7, 10, '#ffd23f', 2, 2); px(10, 0, '#4a4440', 2, 3); break;
     case 'assembler': px(1, 4, 1, 14, 10); px(1, 4, 1.3, 14, 1); for (let a = 0; a < 8; a++) px(8 + Math.round(Math.cos(a * .785) * 3) - 1, 9 + Math.round(Math.sin(a * .785) * 3) - 1, '#c0c6cf', 2, 2); px(7, 8, '#222', 2, 2); break;
@@ -137,14 +164,47 @@ function drawMachine(px, ent, col) {
       if (ent === 'generator_pole') { px(7, 3, '#5e3b1a', 2, 12); px(3, 3, 1, 10, 2); px(3, 2, '#e5c83a', 2, 1); px(11, 2, '#e5c83a', 2, 1); px(6, 14, '#e5c83a', 4, 1); break; }
       if (ent === 'transformer') { px(3, 6, 1, 10, 9); for (let x = 4; x < 13; x += 2) px(x, 7, .7, 1, 7); px(4, 2, '#9fd0ff', 2, 4); px(7, 1, '#9fd0ff', 2, 5); px(10, 2, '#9fd0ff', 2, 4); px(3, 14, '#2c3038', 10, 1); break; }
       px(7, 2, 1, 2, 13); px(3, 3, 1, 10, 2); px(3, 2, '#c8d0da', 2, 1); px(11, 2, '#c8d0da', 2, 1); px(6, 14, .6, 4, 1); break;
-    case 'pump': px(2, 13, '#3a8ad8', 12, 2); px(3, 6, '#2c3038', 1, 7); px(12, 6, '#2c3038', 1, 7); px(2, 5, '#5c6470', 12, 2); px(4, 2, 1, 6, 4); px(8, 3, 1, 6, 2); px(13, 2, '#939ca8', 2, 4); break;
+    case 'pump': if (def.fullRate) {   // high pressure pump: a steel housing, a pressure gauge and a fat steel outlet
+        px(1, 13, '#3a8ad8', 14, 2); px(2, 7, '#2c3038', 12, 6); px(3, 4, 1, 10, 4); px(3, 4, 1.35, 10, 1); px(12, 2, '#5a6a7c', 4, 4); px(13, 3, '#939ca8', 2, 2);
+        for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) if (Math.hypot(x - 1, y - 1) < 1.6) px(5 + x, 8 + y, '#e8ecf2');
+        px(6, 9, '#d84a3a'); px(10, 9, '#ffd23f', 2, 2); break;
+      }
+      px(2, 13, '#3a8ad8', 12, 2); px(3, 6, '#2c3038', 1, 7); px(12, 6, '#2c3038', 1, 7); px(2, 5, '#5c6470', 12, 2); px(4, 2, 1, 6, 4); px(8, 3, 1, 6, 2); px(13, 2, '#939ca8', 2, 4); break;
     case 'boiler': px(2, 9, '#8f8373', 12, 6); px(6, 11, '#ff7a2a', 4, 2); for (let x = 1; x < 15; x++) px(x, 4, x % 5 ? 1 : .6, 1, 5); px(11, 0, '#645a4d', 2, 4); break;
     case 'engine': px(1, 12, '#2c3038', 14, 3); px(1, 5, 1, 9, 7); px(1, 5, 1.3, 9, 1); for (let x = 2; x < 10; x += 3) px(x, 6, .7, 1, 6); for (let y = 2; y < 15; y++) for (let x = 9; x < 16; x++) { const d = Math.hypot(x - 12, y - 8); if (d < 3.6 && d > 2.4) px(x, y, '#c3cad3'); } px(11, 7, '#2c3038', 2, 2); break;
     case 'lamp':
       if (def.burner) { px(4, 13, '#2c3038', 2, 3); px(10, 13, '#2c3038', 2, 3); px(3, 9, '#8f8373', 10, 4); px(3, 9, '#a89c8a', 10, 1); px(6, 4, '#ff8a3a', 4, 5); px(7, 2, '#ffd23f', 2, 4); break; }
       px(7, 4, '#5c6470', 2, 11); px(5, 14, '#2c3038', 6, 2); px(4, 1, '#2c3038', 8, 2); px(5, 3, '#fff0d0', 6, 3); px(6, 3, '#ffffff', 2, 1); break;
     case 'solar': for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) px(2 + x * 4, 3 + y * 4, 1.4, 3, 3); px(1, 14, '#888', 14, 1); break;
+    case 'radar': px(3, 13, '#2c3038', 10, 2); px(6, 9, 1, 4, 4); px(7, 5, '#5c6470', 2, 4);
+      for (let x = 1; x < 15; x++) { const y = 2 + Math.round(Math.pow((x - 7.5) / 6.5, 2) * 4); px(x, y, '#c3cad3', 1, 2); } px(7, 3, '#7ef6ff', 2, 2); break;
+    case 'centrifuge': px(2, 13, '#2c3038', 12, 2); for (let y = 3; y < 13; y++) px(4, y, y < 5 ? 1.3 : 1, 8, 1); px(3, 2, '#e5ad2e', 10, 1); px(5, 7, '#9be37a', 6, 3); px(7, 8, '#e8ffd8', 2, 1); break;
+    case 'greenhouse': {   // a glass house: frame posts, panes, a green roof and plants inside
+      const one = def.size?.[0] === 1;
+      px(1, 14, '#4a3424', 14, 2);
+      for (let y = 6; y < 14; y++) px(2, y, '#c8f8e0', 12, 1);
+      for (const x of one ? [2, 13] : [2, 7, 13]) px(x, 6, '#d8dde4', 1, 8);
+      for (let y = 1; y < 6; y++) { const w = 2 + (y - 1) * 3; px(8 - w / 2, y, y % 2 ? 1 : .85, w, 1); }
+      px(2, 6, '#d8dde4', 12, 1);
+      for (const x of [4, 9, 11]) { px(x, 10, '#3a8a3a', 1, 4); px(x - 1, 9, '#5ab84a', 3, 2); }
+      if (!one) px(7, 11, '#2c3038', 1, 3);   // a door
+      break;
+    }
+    case 'dam': px(0, 10, '#2f6a9a', 16, 6); px(0, 3, '#1f4a72', 16, 2); px(1, 4, 1, 14, 9); px(1, 4, 1.25, 14, 1); px(0, 4, '#5a5650', 1, 9); px(15, 4, '#5a5650', 1, 9);
+      for (const x of [3, 7, 11]) { px(x, 8, '#6a7a8a', 2, 4); px(x, 12, '#bfe4ff', 2, 2); }
+      px(2, 5, '#7ef6ff', 12, 1); break;
+    case 'medlab': px(1, 9, '#e8e4e8', 14, 6); px(1, 9, '#ffffff', 14, 1); px(1, 14, '#9aa1ad', 14, 1);
+      for (let y = 2; y < 9; y++) for (let x = 3; x < 13; x++) if (Math.hypot(x - 7.5, y - 9) < 6.2) px(x, y, '#9fe8f2');
+      for (let i = 0; i < 6; i++) { px(6 + Math.round(Math.sin(i) * 1.5), 3 + i, '#d84a8a'); px(9 - Math.round(Math.sin(i) * 1.5), 3 + i, '#7ef6ff'); }
+      px(6, 11, '#d83a3a', 4, 2); px(7, 10, '#d83a3a', 2, 4); break;
+    case 'reactor': px(1, 13, '#2c3038', 14, 2); for (let y = 3; y < 13; y++) { const w = y < 5 ? 8 + (y - 3) * 2 : 12; px(8 - w / 2, y, y < 5 ? '#c3cad3' : 1, w, 1); }
+      for (const x of [1, 14]) px(x, 4, '#939ca8', 1, 9);
+      px(5, 6, '#9be37a', 6, 4); px(6, 7, '#e8ffd8', 4, 2); px(7, 2, '#ff3a1a', 2, 1); for (const x of [4, 11]) px(x, 10, '#16181d', 1, 2); break;
+    case 'coolant': for (let y = 1; y < 15; y++) { const t = (y - 1) / 13, w = Math.round(11 - Math.sin(t * Math.PI) * 4 - t); px(8 - Math.floor(w / 2), y, y < 3 ? 1.2 : y % 4 === 0 ? .85 : 1, w, 1); }
+      px(4, 0, '#e8ecf2', 2, 1); px(8, 0, '#e8ecf2', 3, 1); px(6, 1, '#16181d', 4, 1); px(1, 15, '#2c3038', 14, 1); px(6, 12, '#3a8ad8', 4, 2); break;
     case 'transmitter': for (let x = 2; x < 14; x++) { const y = 3 + Math.round(Math.pow((x - 7.5) / 6, 2) * 4); px(x, y, '#cfd6df', 1, 2); } px(7, 6, '#9aa1ad', 2, 7); px(4, 13, 1, 8, 2); px(7, 2, '#7ef6ff', 2, 2); break;
+    default:   // anything without its own drawing still reads as a machine in its colour, never a blank
+      px(2, 4, 1, 12, 10); px(2, 4, 1.3, 12, 1); px(2, 13, .6, 12, 1); px(5, 7, '#2c3038', 6, 4); px(6, 8, 1.4, 4, 2);
   }
 }
 

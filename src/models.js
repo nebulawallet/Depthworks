@@ -76,7 +76,7 @@ export function ditherClone(m, opacity) {
 // A stippled material that isn't a copy of anything (glass, roofs): solid colour at `opacity`.
 export const ditherMat = (opts, opacity) => { const m = new THREE.MeshToonMaterial({ gradientMap: toonRamp, ...opts, transparent: true, opacity, depthWrite: false }); return dither(m); };
 
-const ghostCache = new WeakMap(), previewCache = new WeakMap(), bpCache = new WeakMap();
+const ghostCache = new WeakMap(), bpCache = new WeakMap();
 function variant(cache, m, opacity) {
   if (!cache.has(m)) cache.set(m, ditherClone(m, opacity));
   return cache.get(m);
@@ -91,8 +91,30 @@ export function setGhost(root, ghost) {
     o.layers.set(o.isSprite ? UI_LAYER : ghost || o.userData.overlay ? 1 : 0);   // glass and roofs never get outlines
   });
 }
-export function setPreview(root) {
-  root.traverse(o => { if (o.isMesh || o.isSprite) { o.material = variant(previewCache, o.material, DITHER.preview); o.castShadow = false; o.receiveShadow = false; o.layers.set(UI_LAYER); } });
+// The placement preview. Normally a plain ghost: the building drawn solid, tinted green where it can go and red where it
+// can't. Planning a blueprint (Shift, or a blueprint in hand) it takes the blueprint's stippled look instead, through the
+// same shared dither path. `look`: 'ok' | 'bad' | 'bp'.
+const TINT = { ok: 0x3aff5a, bad: 0xff3a2a }, tintCache = { ok: new WeakMap(), bad: new WeakMap() };
+function tinted(m, look) {
+  const cache = tintCache[look];
+  if (!cache.has(m)) {
+    const c = m.clone();
+    if (c.color) c.color = c.color.clone().lerp(new THREE.Color(TINT[look]), .45);   // the shading still shows through
+    if (c.emissive) { c.emissive = new THREE.Color(TINT[look]); c.emissiveIntensity = .08; }
+    if (m.userData.dither) { delete c.userData.dither; dither(c); }   // glass stays stippled, never blended
+    cache.set(m, c);
+  }
+  return cache.get(m);
+}
+export function setPreview(root, look = 'ok') {
+  if (root.userData.look === look) return;
+  root.userData.look = look;
+  root.traverse(o => {
+    if (!o.isMesh && !o.isSprite) return;
+    o.userData.pbase ||= o.material;
+    o.material = look === 'bp' ? variant(bpCache, o.userData.pbase, DITHER.blueprint) : o.isSprite ? o.userData.pbase : tinted(o.userData.pbase, look);
+    o.castShadow = false; o.receiveShadow = false; o.layers.set(UI_LAYER);
+  });
 }
 // Blueprints: the building, stippled, in the world (layer 1: no outlines, not clickable through the raycast of layer 0).
 export function setBlueprint(root) {
@@ -155,7 +177,7 @@ export function itemGeo(type) {
   return (itemGeoCache[shape] = (G[shape] || G.ore)());
 }
 export function itemMat(type) {
-  return itemMatCache[type] ||= new THREE.MeshToonMaterial({ color: ITEMS[type]?.color ?? 0xff00ff, emissive: ITEMS[type]?.emissive ?? 0, gradientMap: toonRamp });
+  return itemMatCache[type] ||= new THREE.MeshToonMaterial({ color: ITEMS[type]?.color ?? 0x7d8796, emissive: ITEMS[type]?.emissive ?? 0, gradientMap: toonRamp });
 }
 const spriteMatCache = {};
 export function iconSpriteMat(id) {
@@ -233,6 +255,9 @@ export function makeMesh(e) {
       if (sides.length === 1) sides.push((sides[0] + 2) % 4);
       for (const l of sides) pipeArm(l, pm);
       st(new THREE.SphereGeometry(.13, seg, Math.max(4, seg >> 1)), pm, 0, PIPE_Y, 0);
+      // steel pipe: heavy rings along each arm; irrigation pipe: a blue water band at the joint
+      if (def.flow) for (const l of sides) { const [dx, dz] = DIRS[l], ring = dx ? cyl(.125, .125, .04, seg).rotateZ(Math.PI / 2) : cyl(.125, .125, .04, seg).rotateX(Math.PI / 2); st(ring, M(C.dark), dx * .24, PIPE_Y, dz * .24); }
+      if (def.irrigation) st(cyl(.145, .145, .05, seg), M(0x3a8ad8), 0, PIPE_Y, 0);
       st(box(.1, .05, .1), band, 0, PIPE_Y + .13, 0);   // a sight glass showing what flows inside
       st(box(.06, PIPE_Y - .08, .06), dark, 0, (PIPE_Y - .08) / 2, 0);
       break;
@@ -545,6 +570,25 @@ export function makeMesh(e) {
         P.smoke = [.27, 1.02, .27];
         break;
       }
+      if (e.foot) {   // big mining drill, 2×2: a deck over all four tiles, a derrick, one wide cutting head, the chute front left
+        st(box(1.92, .3, 1.92), col, 0, .15, 0);
+        st(box(1.96, .06, 1.96), dark, 0, .33, 0);
+        for (let i = -4; i <= 4; i++) st(box(.18, .08, .02), M(i % 2 ? C.yellow : C.hazard), i * .2, .24, -.965);
+        st(box(.42, .22, .3), dark, -.5, .22, -.98); st(box(.34, .04, .22), M(C.steel), -.5, .34, -1.05);
+        for (const [x, z] of [[-.78, -.78], [.78, -.78], [-.78, .78], [.78, .78]]) st(box(.09, 2, .09), steel, x, 1.33, z);
+        for (const y of [1.05, 1.95]) { for (const z of [-.78, .78]) st(box(1.56, .07, .07), steel, 0, y, z); for (const x of [-.78, .78]) st(box(.07, .07, 1.56), steel, x, y, 0); }
+        for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; st(box(.04, 1.2, .04).rotateZ(i % 2 ? .62 : -.62).rotateY(a), steel, -.78 * Math.sin(a), 1.5, -.78 * Math.cos(a)); }
+        st(box(.5, .26, .5), M(C.yellow), 0, 2.45, 0); st(cyl(.08, .08, .2, seg), black, 0, 2.66, 0);
+        st(box(.62, .42, .5), M(C.mid), .5, .55, .6); st(box(.66, .05, .54), M(C.steel), .5, .78, .6);
+        for (let i = 0; i < 3; i++) st(box(.5, .03, .03), dark, .5, .45 + i * .1, .34);
+        P.glow = glowMat(0xffa53d, .05); dyn(g, box(.16, .08, .02), P.glow, -.5, .62, .34);   // a work light that pulses while it mines
+        const head = grp(g, 0, .36, 0); P.head = head;
+        dyn(head, cyl(.62, .66, .12, seg), M(C.light), 0, .06, 0);
+        for (let i = 0; i < 6; i++) dyn(head, box(1.18, .06, .1), M(C.yellow), 0, .14, 0).rotation.y = i * Math.PI / 6;
+        dyn(head, cyl(.07, .07, 1.7, seg), M(C.steel), 0, .95, 0);
+        dyn(head, new THREE.ConeGeometry(.13, .5, Math.max(4, res >> 1)), M(C.yellow), 0, .42, 0);
+        break;
+      }
       st(box(.9, .34, .9), col, 0, .17, 0);
       for (let i = -2; i <= 2; i++) st(box(.12, .08, .02), M(i % 2 ? C.yellow : C.hazard), i * .17, .26, -.455);
       st(box(.28, .14, .26), dark, 0, .2, -.47);
@@ -723,7 +767,20 @@ export function makeMesh(e) {
       }
       break;
     }
-    case 'pump': {   // a deck on stilts over the water, intake pipe down, outlet pipe toward the shore (north)
+    case 'pump': if (def.fullRate) {   // high pressure pump: a steel pump house on a heavy deck, two intakes, a pressure gauge, a steel outlet
+        for (const [x, z] of [[-.38, -.38], [.38, -.38], [-.38, .38], [.38, .38]]) st(box(.1, .55, .1), M(C.dark), x, -.07, z);
+        st(box(.94, .1, .94), M(C.dark), 0, .21, 0);
+        for (const x of [-.2, .2]) st(cyl(.1, .1, .6, seg), M(0x5a6a7c), x, -.02, .22);
+        st(box(.6, .42, .5), col, 0, .47, .08); st(box(.64, .05, .54), M(0x5a6a7c), 0, .7, .08);
+        for (let i = -2; i <= 2; i++) st(box(.03, .3, .52), M(C.mid), i * .1, .47, .08);
+        st(cyl(.13, .13, .5, seg).rotateX(Math.PI / 2), M(0x5a6a7c), 0, .36, -.28);
+        st(cyl(.17, .17, .07, seg).rotateX(Math.PI / 2), M(C.dark), 0, .36, -.5);
+        st(cyl(.08, .08, .03, seg).rotateX(Math.PI / 2), M(0xe8ecf2), .2, .56, -.18);   // gauge
+        P.glow = glowMat(0x4aa3ff, .1); dyn(g, box(.3, .05, .02), P.glow, 0, .6, -.175);
+        P.fly = grp(g, -.33, .5, .1); dyn(P.fly, cyl(.11, .11, .06, seg).rotateZ(Math.PI / 2), M(C.light)); dyn(P.fly, box(.07, .2, .04), dark);
+        break;
+      }
+      {   // the water pump: a deck on stilts over the water, intake pipe down, outlet pipe toward the shore (north)
       for (const [x, z] of [[-.34, -.34], [.34, -.34], [-.34, .34], [.34, .34]]) st(box(.07, .5, .07), M(C.dark), x, -.05, z);
       st(box(.86, .08, .86), M(C.mid), 0, .2, 0);
       st(cyl(.11, .11, .55, seg), M(C.steel), .18, -.02, .18);
@@ -826,7 +883,7 @@ export function makeMesh(e) {
           const door = ((d % 2 === 0 ? x : z) % 5 + 5) % 5 === 2, ex = lx + dx * .48, ez = lz + dz * .48;
           for (const s2 of [-1, 1]) st(box(.05, .95, .05), frameM, ex + (dx ? 0 : s2 * .48), .475, ez + (dz ? 0 : s2 * .48));
           st(box(dx ? .05 : 1, .05, dz ? .05 : 1), frameM, ex, .93, ez);
-          if (door) continue;   // an open doorway
+          if (door) { st(box(dx ? .14 : .56, .025, dz ? .14 : .56), M(0x9a8a6a), ex, .07, ez); st(box(dx ? .06 : .58, .05, dz ? .06 : .58), frameM, ex, .8, ez); continue; }   // an open doorway: a threshold and a lintel
           const pane = dyn(g, box(dx ? .03 : .96, .86, dz ? .03 : .96), glass, ex, .47, ez); pane.userData.overlay = true;
         }
       }
@@ -842,25 +899,39 @@ export function makeMesh(e) {
       for (const [x, z] of foot) if ((x + z) % 3 === 0) dyn(g, box(.5, .03, .06), P.glow, x - e.x, .9, z - e.z);
       break;
     }
-    case 'dam': {   // concrete across the water: the top is painted into the ground (so roads can go on it), the body drops into the water
-      const foot = e.foot || [[e.x, e.z]], has = (x, z) => foot.some(([a, b]) => a === x && b === z), con = M(0x8f8a80), dk = M(0x5a5650), gate = M(0x6a7a8a);
+    case 'dam': {   // concrete across the water: the deck is painted into the ground (so roads can go on it), the body drops into the water.
+      // Every tile is drawn alone and only its outside edges get parapets and gates, so the pieces line up into one wall
+      // whatever shape the dam has. Turbine houses stand along it, and the spill under each gate glows while it runs.
+      const foot = e.foot || [[e.x, e.z]], has = (x, z) => foot.some(([a, b]) => a === x && b === z), con = M(0x8f8a80), band = M(0x77726a), dk = M(0x5a5650), gate = M(0x6a7a8a);
       P.glow = glowMat(0x7ef6ff, .1);
       for (const [x, z] of foot) {
         const lx = x - e.x, lz = z - e.z;
         st(box(1, .5, 1), con, lx, -.255, lz);
+        st(box(1.002, .06, 1.002), band, lx, -.18, lz);   // a darker course of concrete along the waterline
         for (let d = 0; d < 4; d++) {
           const [dx, dz] = DIRS[d];
           if (has(x + dx, z + dz)) continue;
           st(box(dx ? .08 : .96, .12, dz ? .08 : .96), dk, lx + dx * .46, .06, lz + dz * .46);   // parapet
-          if ((x * 7 + z * 3 + d) % 2 === 0) { st(box(dx ? .2 : .3, .22, dz ? .2 : .3), gate, lx + dx * .58, .03, lz + dz * .58); dyn(g, box(dx ? .02 : .14, .05, dz ? .02 : .14), P.glow, lx + dx * .69, .1, lz + dz * .69); }
+          if ((x * 7 + z * 3 + d) % 2 === 0) {   // a sluice gate in the face, its spill lit while running
+            st(box(dx ? .2 : .34, .26, dz ? .2 : .34), gate, lx + dx * .58, -.02, lz + dz * .58);
+            st(box(dx ? .06 : .38, .05, dz ? .06 : .38), dk, lx + dx * .58, .13, lz + dz * .58);
+            dyn(g, box(dx ? .02 : .2, .12, dz ? .02 : .2), P.glow, lx + dx * .69, -.12, lz + dz * .69);
+          }
+        }
+        if (((x * 13 + z * 7) % 5 + 5) % 5 === 0) {   // a turbine house on the deck
+          st(box(.42, .3, .42), M(0xa8a298), lx, .15, lz); st(box(.48, .05, .48), dk, lx, .32, lz);
+          st(cyl(.05, .05, .2, 6), M(C.steel), lx + .12, .42, lz + .12);
+          dyn(g, box(.12, .06, .02), P.glow, lx, .2, lz - .215);
         }
       }
       break;
     }
-    case 'medlab': {   // a clean white bench with a glass dome, a red cross and a turning double helix inside
+    case 'medlab': {   // a clean white bench with a glass dome, a red cross, sample cabinets and a turning double helix inside
       st(box(.94, .3, .94), M(0xe8e4e8), 0, .15, 0);
       st(box(.96, .05, .96), M(C.steel), 0, .32, 0);
       for (const [w, d] of [[.36, .1], [.1, .36]]) st(box(w, .02, d), M(0xd83a3a), 0, .335, -.26);
+      for (const x of [-.32, .32]) { st(box(.2, .26, .2), M(0xd8dde4), x, .48, .3); st(box(.16, .05, .02), M(0x9fe8f2, { emissive: 0x1d5a66, emissiveIntensity: .5 }), x, .5, .19); }
+      for (let i = 0; i < 4; i++) st(box(.16, .02, .2), M(0xb8c0ca), 0, .08 + i * .06, -.475);   // drawers
       P.glow = glowMat(0x9fe8f2, .4);
       P.ring = grp(g, 0, .38, .08);
       for (let i = 0; i < 8; i++) { const a = i * .8; dyn(P.ring, new THREE.SphereGeometry(.045, 6, 4), P.glow, Math.cos(a) * .12, i * .055, Math.sin(a) * .12); dyn(P.ring, new THREE.SphereGeometry(.04, 6, 4), M(0xd84a8a), -Math.cos(a) * .12, i * .055, -Math.sin(a) * .12); }
@@ -868,24 +939,47 @@ export function makeMesh(e) {
       dome.userData.overlay = true;
       break;
     }
-    case 'reactor': {   // a squat containment drum, glowing core windows, heat pipes at the corners
+    case 'reactor': {   // a squat containment drum, glowing core windows, heat pipes at the corners, a warning beacon on top
+      const broken = !!e.broken, shell = broken ? M(0x3a3a32) : col;   // broken: a scorched shell, cracked windows
       st(box(.98, .14, .98), dark, 0, .07, 0);
-      st(cyl(.42, .46, .62, seg), col, 0, .45, 0);
-      st(new THREE.SphereGeometry(.42, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2).scale(1, .45, 1), M(C.light), 0, .76, 0);
+      for (let i = -3; i <= 3; i++) st(box(.12, .04, .02), M(i % 2 ? C.yellow : C.hazard), i * .13, .12, -.495);
+      st(cyl(.42, .46, .62, seg), shell, 0, .45, 0);
+      for (const y of [.25, .62]) st(cyl(.465, .465, .04, seg), M(broken ? 0x2a2a26 : C.mid), 0, y, 0);
+      st(new THREE.SphereGeometry(.42, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2).scale(1, .45, 1), M(broken ? 0x4a4a42 : C.light), 0, .76, 0);
       for (const [x, z] of [[-.4, -.4], [.4, -.4], [-.4, .4], [.4, .4]]) st(cyl(.06, .06, .8, seg), M(C.steel), x, .4, z);
+      for (const d of [0, 2]) st(cyl(.09, .09, .1, seg).rotateX(Math.PI / 2), M(FLUIDS.steam.color), 0, .22, d ? .5 : -.5);   // steam collars front and back
+      for (const d of [1, 3]) st(cyl(.09, .09, .1, seg).rotateZ(Math.PI / 2), M(FLUIDS.water.color), d === 1 ? .5 : -.5, .22, 0);   // water at the sides
       P.glow = glowMat(0x9be37a, .5);
-      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; dyn(g, box(.16, .2, .02), P.glow, Math.sin(a) * .44, .45, Math.cos(a) * .44).rotation.y = a; }
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; dyn(g, box(.16, .2, .02), broken ? M(0x16181d) : P.glow, Math.sin(a) * .44, .45, Math.cos(a) * .44).rotation.y = a; }
       P.heat = glowMat(0xff3a1a, 0); dyn(g, cyl(.2, .2, .04, seg), P.heat, 0, .96, 0);
+      st(cyl(.04, .05, .14, 6), M(C.dark), 0, 1.03, 0);
+      P.beacon = glowMat(0x9be37a, .2); dyn(g, new THREE.SphereGeometry(.06, 6, 4), P.beacon, 0, 1.12, 0);   // green working, amber hot, red flashing critical, dark broken
       P.smoke = [0, 1.05, 0];
       break;
     }
-    case 'coolant': {   // a hyperboloid cooling tower that breathes steam while it works
+    case 'coolant': {   // a hyperboloid cooling tower that breathes steam while it works; a light shows how it is doing
+      const broken = !!e.broken;
       const pts = []; for (let i = 0; i <= 8; i++) { const t = i / 8; pts.push(new THREE.Vector2(.44 - Math.sin(t * Math.PI) * .14 - t * .06, t * 1.4)); }
-      st(new THREE.LatheGeometry(pts, seg), M(0xc8ccd0, { side: THREE.DoubleSide }), 0, .02, 0);
+      st(new THREE.LatheGeometry(pts, seg), M(broken ? 0x6a6a64 : 0xc8ccd0, { side: THREE.DoubleSide }), 0, .02, 0);
       st(box(.98, .06, .98), dark, 0, .03, 0);
       for (const y of [.3, .9]) st(cyl(.36, .36, .03, seg), M(C.mid), 0, y, 0);
+      if (broken) for (let i = 0; i < 3; i++) st(box(.03, .5, .03).rotateZ(.4 * (i - 1)), M(0x16181d), Math.sin(i * 2.1) * .37, .7, Math.cos(i * 2.1) * .37);   // cracks
+      st(new THREE.TorusGeometry(.33, .025, 4, seg).rotateX(Math.PI / 2), M(C.dark), 0, 1.42, 0);
+      P.water = glowMat(0x3a8ad8, .1); dyn(g, cyl(.3, .3, .02, seg), P.water, 0, 1.3, 0);   // the basin up top, bright while it cools
       P.glow = glowMat(0xff6a3a, 0); dyn(g, box(.2, .1, .02), P.glow, 0, .25, -.42);
       P.smoke = [0, 1.45, 0];
+      break;
+    }
+    case 'radar': {   // a lattice mast on a plinth with a dish that turns while it scans, and a light that blinks
+      st(box(.94, .14, .94), dark, 0, .07, 0);
+      st(box(.5, .3, .5), col, 0, .29, 0); st(box(.54, .04, .54), M(C.steel), 0, .46, 0);
+      for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) st(box(.04, .6, .04).rotateX(z * .12).rotateZ(-x * .12), M(C.mid), x * .12, .76, z * .12);
+      st(cyl(.08, .08, .08, seg), M(C.dark), 0, 1.07, 0);
+      P.dish = grp(g, 0, 1.12, 0);
+      const tilt = grp(P.dish); tilt.rotation.x = -.5;
+      dyn(tilt, new THREE.SphereGeometry(.42, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, .75).rotateX(Math.PI / 2).scale(1, .62, 1), M(C.light, { side: THREE.DoubleSide }), 0, .06, -.12);
+      dyn(tilt, cyl(.02, .02, .36, 6).rotateX(Math.PI / 2), M(C.dark), 0, .06, .06);
+      P.glow = glowMat(0x7ef6ff, .1); dyn(tilt, new THREE.SphereGeometry(.05, 6, 4), P.glow, 0, .06, .24);
       break;
     }
     case 'transmitter': {

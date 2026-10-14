@@ -142,6 +142,9 @@
   .rband { position: absolute; left: 0; border-top: 1px dashed; opacity: .9; pointer-events: none; } .rband span { font-family: 'Silkscreen', monospace; font-size: 12px; letter-spacing: 1px; padding: 4px 8px; display: inline-block; }
   .rte { position: absolute; left: 0; top: 0; pointer-events: none; } .rte path { fill: none; stroke: #2d3442; stroke-width: 2; } .rte path.open { stroke: #5a7a5a; } .rte path.done { stroke: #3a6a3a; }
   .rte path.queued { stroke: #4a7ae0; } .rte path.hl { stroke: var(--gold); stroke-width: 3; }
+  /* lines keep their width at any zoom; lines from another section are fainter; hovering a node fades the rest */
+  .rte path { vector-effect: non-scaling-stroke; stroke-linejoin: round; } .rte path.far { opacity: .45; } .rte path.hl { opacity: 1; }
+  .rte.hovering path:not(.hl) { opacity: .15; } .rn .tiny { font-size: 13px; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
   .rn { position: absolute; width: 172px; height: 60px; border: 2px solid var(--line2); background: var(--panel2); padding: 2px 6px; cursor: pointer; overflow: hidden; }
   .rn:hover { border-color: var(--acc); } .rn .rnh { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1; }
   .rn .rnc, .rn .rnu { display: flex; align-items: center; gap: 1px; height: 19px; } .rn .icon { width: 18px; height: 18px; } .rn .icon b { display: none; } .rn .rnc .dim { font-size: 15px; margin-left: 3px; }
@@ -154,7 +157,9 @@
   /* Shift + click selection (transfer modes) and an engineer's details */
   #pickbar { display: flex; gap: 4px; align-items: center; padding: 3px 8px; z-index: 6; font-size: 17px; white-space: nowrap; } #pickbar button { padding: 0 6px; } #pickbar button.on { border-color: var(--gold); color: var(--gold); }
   #pickbar .x, #playerInfo .x { cursor: pointer; color: var(--dim); margin-left: 4px; } #pickbar .x:hover, #playerInfo .x:hover { color: var(--warn); }
-  #playerInfo { right: 12px; top: 210px; width: 290px; font-size: 17px; z-index: 6; } #playerInfo .icon { width: 20px; height: 20px; } #playerInfo .dot { display: inline-block; width: 10px; height: 10px; border: 1px solid #000; }
+  #playerInfo { right: 12px; top: 210px; width: 290px; font-size: 17px; z-index: 6; }
+  #playerInfo.trading { left: 50%; right: auto; top: 50%; transform: translate(-50%, -54%); width: auto; max-width: calc(100vw - 24px); max-height: calc(100vh - 120px); overflow: auto; }
+  .tradecols { display: flex; gap: 18px; } .tradecols > div { min-width: 200px; } .tradeoffer .emptyc { cursor: default; } #playerInfo .icon { width: 20px; height: 20px; } #playerInfo .dot { display: inline-block; width: 10px; height: 10px; border: 1px solid #000; }
   .techs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; }
   .tech { border: 2px solid var(--line); background: var(--panel2); padding: 5px 7px; cursor: pointer; }
   .tech:hover { border-color: var(--acc); } .tech.done { border-color: #2f5a2f; opacity: .65; } .tech.locked { opacity: .45; }
@@ -337,7 +342,7 @@
         <h3>Interface</h3>
         <label class="setrow"><input type="checkbox" data-set="altMode"> Machine icons and arrows on buildings <span class="dim">(alt mode, also its key)</span></label>
         <label class="setrow"><input type="checkbox" data-set="altInserters"> Inserter arrows in alt mode</label>
-        <label class="setrow"><input type="checkbox" data-set="camFree"> Free camera <span class="dim">(hold the middle mouse button and drag to turn and tilt; also its key)</span></label>
+        <label class="setrow"><input type="checkbox" data-set="depthGrid"> Grid in depth mode <span class="dim">(also its key; Hide UI hides it too)</span></label>
         <label class="setrow"><input type="checkbox" data-set="goals"> Goals list</label>
         <label class="setrow"><input type="checkbox" data-set="minimap"> Minimap</label>
         <h3>Game</h3>
@@ -353,12 +358,12 @@
       <kbd>Ctrl</kbd> + hold <kbd>RMB</kbd> take one tile off a greenhouse (or a path)<br>
       <kbd>Shift</kbd>+<kbd>RMB</kbd> copy settings · <kbd>Shift</kbd>+<kbd>LMB</kbd> paste them (buildings, belt lines, routes, stops); <kbd>Esc</kbd> clears what is copied<br>
       <kbd>Shift</kbd>+<kbd>LMB</kbd> with a building in hand: plan it as a blueprint (drag for many); click a blueprint with an empty hand to build it<br>
-      <kbd>Shift</kbd>+<kbd>LMB</kbd> with an empty hand (nothing copied): select a building, then pick a mode (fuel, input, store, augment) for <kbd>Ctrl</kbd>+click<br>
+      <kbd>Shift</kbd>+<kbd>LMB</kbd> with an empty hand (nothing copied): add a building to the selection or take it out; pick a mode (fuel, input, store, augment), and <kbd>Ctrl</kbd>+click one shares the stack over them all; its bar pastes copied settings onto all of them; <kbd>Esc</kbd> or a click on empty ground clears it<br>
+      <kbd>LMB</kbd> another engineer: trade with them (both accept, after a short wait, for anything to change hands)<br>
       <kbd>E</kbd> inventory &amp; crafting · <kbd>T</kbd> research<br>
       <kbd>1</kbd>–<kbd>0</kbd> quickbar · <kbd>Q</kbd> copy hovered (over ore: the best drill) / empty hand<br>
       <kbd>R</kbd> rotate · <kbd>Z</kbd> drop · hold <kbd>F</kbd> pick up<br>
       <kbd>Ctrl</kbd>+<kbd>LMB</kbd> move items in or out of a machine: ingredients to its input, fuel to its fuel slot<br>
-      <kbd>C</kbd> fixed or free camera · free: hold <kbd>MMB</kbd> and drag to turn and tilt<br>
       In inventories: drag stacks between slots · right-drag: half · <kbd>Shift</kbd>+click: send across<br>
       <kbd>Esc</kbd> close, then menu · <kbd>G</kbd> signal · <kbd>Alt</kbd> recipe icons<br>
       <kbd>X</kbd> next quickbar · <kbd>M</kbd> map · <kbd>H</kbd> hide interface · <kbd>F1</kbd> menu<br>
@@ -368,7 +373,9 @@
     <div>
       <h3>Depth mode (<kbd>Tab</kbd>)</h3>
       <kbd>PgUp</kbd>/<kbd>PgDn</kbd> or <kbd>Shift</kbd>+wheel: working layer<br>
-      <kbd>[</kbd>/<kbd>]</kbd> orbit 90°<br>
+      <kbd>;</kbd>/<kbd>'</kbd> orbit 90° · <kbd>-</kbd>/<kbd>[</kbd> tilt lower / higher<br>
+      drag <kbd>MMB</kbd> pan the camera · <kbd>N</kbd> grid on or off<br>
+      Leaving depth mode puts the camera back: facing north, on you.<br>
       <kbd>V</kbd> inserter pitch (level / lift / drop), or lift up/down<br>
       Layers above yours turn to ghosts. Anything above layer 0 stands on a <b>hollow frame</b>; you can also build inside frames and walk under them.
     </div>
