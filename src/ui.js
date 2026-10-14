@@ -99,6 +99,9 @@ addEventListener('keydown', e => {
 }, true);
 
 // ---------------------------------------------------------------- hand / hotbar
+// Things you use from your hand: buildings, roads, vehicles, cables and signals, food. Clicking one in the inventory
+// holds it, just like picking it from the quickbar.
+const holdable = it => !!(ENTITIES[it] || ITEMS[it]?.road || ITEMS[it]?.vehicle || ITEMS[it]?.tool || ITEMS[it]?.food);
 export function selectItem(it) {
   S.sel = it || null; S.linkFrom = null; renderHotbar();
 }
@@ -106,7 +109,7 @@ export function cycleBar() { S.bar = (S.bar + 1) % S.bars.length; renderHotbar()
 // Factorio-style: the first time you hold a new kind of building it takes the first free quickbar slot.
 function autoFillHotbar() {
   for (const [it, n] of inv.counts()) {
-    if (n <= 0 || !(ENTITIES[it] || ITEMS[it]?.tool) || S.hotbarSeen.has(it)) continue;
+    if (n <= 0 || !holdable(it) || ITEMS[it]?.food || S.hotbarSeen.has(it)) continue;
     S.hotbarSeen.add(it);
     if (S.hotbar.includes(it)) continue;
     const free = S.hotbar.indexOf(null);
@@ -117,19 +120,15 @@ function autoFillHotbar() {
 export function renderHotbar() {
   if (!S.bars.length) return;
   autoFillHotbar();
-  const barHTML = (b, active) => {
-    const cells = S.bars[b].map((it, i) => {
-      const n = it ? invGet(it) : 0;
-      const cls = 'slot' + (it && it === S.sel ? ' sel' : '') + (it && !n ? ' empty' : '');
-      const tipHtml = it ? `<b>${itemName(it)}</b><div class="dim">${ENTITIES[it]?.desc ?? ITEMS[it]?.desc ?? ''}</div><div class="dim">right-click with an empty hand clears this slot</div>` : 'empty: right-click while holding something to put it here';
-      return `<div class="${cls}" data-act="hot:${b}.${i}"${tipAttr(tipHtml)}>${active ? `<span class="k">${(i + 1) % 10}</span>` : ''}${it ? iconHTML(it, n || '') : ''}</div>`;
-    }).join('');
-    const tip = active ? `${HOTBARS[b].name} bar · ${keyName('cycleBar')} switches bars` : `click, or press ${keyName('cycleBar')}, to use the ${HOTBARS[b].name.toLowerCase()} bar`;
-    return `<div class="hbar${active ? ' on' : ''}"><div class="bname" data-act="bar:${b}"${tipAttr(tip)}>${b + 1}<small>${HOTBARS[b].name}</small></div>${cells}</div>`;
-  };
-  const n = S.bars.length, others = [];
-  for (let k = n - 1; k >= 1; k--) others.push(barHTML((S.bar + k) % n, false));
-  setHTML($('hotbar'), others.join('') + barHTML(S.bar, true));
+  // One row: the bar in use, with a small switch for the others at its left (their names show on hover).
+  const b = S.bar, cells = S.bars[b].map((it, i) => {
+    const n = it ? invGet(it) : 0;
+    const cls = 'slot' + (it && it === S.sel ? ' sel' : '') + (it && !n ? ' empty' : '');
+    const tipHtml = it ? `<b>${itemName(it)}</b><div class="dim">${ENTITIES[it]?.desc ?? ITEMS[it]?.desc ?? ''}</div><div class="dim">right-click with an empty hand clears this slot</div>` : 'empty: right-click while holding something to put it here';
+    return `<div class="${cls}" data-act="hot:${b}.${i}"${tipAttr(tipHtml)}><span class="k">${(i + 1) % 10}</span>${it ? iconHTML(it, n || '') : ''}</div>`;
+  }).join('');
+  const pick = S.bars.map((_, k) => `<div class="bpick${k === b ? ' on' : ''}" data-act="bar:${k}"${tipAttr(`${HOTBARS[k].name} bar${k === b ? '' : ': click to use it'} · ${keyName('cycleBar')} switches bars`)}>${k + 1}</div>`).join('');
+  setHTML($('hotbar'), `<div class="bpicks">${pick}</div><div class="hbar">${cells}</div>`);
   $('hand').style.bottom = $('hotbar').offsetHeight + 18 + 'px';
   const ent = S.sel && ENTITIES[S.sel], tool = ITEMS[S.sel]?.tool === 'link', it = ITEMS[S.sel];
   const forFac = ent && !ent.shared && (world.factories.length > 1 || isResearched('factory_planning')) ? ` · for ${facChip(S.player.fac, 'factories')}` : '';
@@ -187,7 +186,7 @@ function slotHTML(ref, it, n, hint, extra = '') {
   const tip = it ? `<b>${itemName(it)}</b> <span class="dim">× ${n}</span>${extra ? `<div class="dim">${extra}</div>` : ''}<div class="dim">drag to move · right-drag: half · shift+click: send across</div>`
     : hint ? `<span class="dim">${extra || itemName(hint) + ' goes here'}</span>` : '';
   const inner = it && shown > 0 ? iconHTML(it, shown) : hint ? `<span class="ghosticon">${iconHTML(hint)}</span>` : '';
-  return `<div class="cell slotc${!it || shown <= 0 ? ' emptyc' : ''}${it && ENTITIES[it] && it === S.sel ? ' on' : ''}" data-slot="${ref}"${tip ? tipAttr(tip) : ''}>${inner}</div>`;
+  return `<div class="cell slotc${!it || shown <= 0 ? ' emptyc' : ''}${it && holdable(it) && it === S.sel ? ' on' : ''}" data-slot="${ref}"${tip ? tipAttr(tip) : ''}>${inner}</div>`;
 }
 document.addEventListener('pointerdown', ev => {
   const el = ev.target.closest?.('[data-slot]');
@@ -215,14 +214,14 @@ addEventListener('pointerup', ev => {
   if (!cursor || cursor.mode !== 'drag') return;
   const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-slot]');
   if (cursor.moved) { if (target) dropOn(target.dataset.slot, cursor.n); cursor = null; }
-  else if (cursor.ref.startsWith('p:') && ENTITIES[cursor.it] && !panelEnt && cursor.button === 0) {
+  else if (cursor.ref.startsWith('p:') && holdable(cursor.it) && !panelEnt && cursor.button === 0) {
     selectItem(cursor.it); closeModals(); cursor = null;              // clicking a building in your bag picks it up to build with
   } else cursor.mode = 'held';                                         // picked up: click another slot to put it down
   showGhost(ev.clientX, ev.clientY); refreshSlots();
 });
 // Your inventory as a grid of real slots.
 function invGridHTML() {
-  return `<div class="slots">${inv.slots.map((sl, i) => slotHTML('p:' + i, sl?.it, sl?.n || 0, null, sl && ENTITIES[sl.it] && !panelEnt ? 'click: hold it to build' : '')).join('')}</div>`;
+  return `<div class="slots">${inv.slots.map((sl, i) => slotHTML('p:' + i, sl?.it, sl?.n || 0, null, sl && holdable(sl.it) && !panelEnt ? (ITEMS[sl.it].food ? 'click: hold it to eat' : 'click: hold it to build') : '')).join('')}</div>`;
 }
 
 // ---------------------------------------------------------------- inventory + crafting
