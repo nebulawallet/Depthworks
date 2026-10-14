@@ -6,11 +6,14 @@
 // rules (as that player) and streams back world changes plus regular snapshots. Friends also simulate
 // locally between snapshots, so belts and arms keep moving smoothly.
 import { Peer } from 'peerjs';
-import { S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, invGive, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
-import { ITEMS, TECH } from './data.js';
-import { placeOrCraft, turnPending, heal, place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory } from './sim.js';
+import { patchAt, clearPatch, removeFeat, S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, invGive, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
+import { ITEMS, TECH, MED } from './data.js';
+import { placeDrag, placeOrCraft, turnPending, heal, place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory } from './sim.js';
 import { serialize, entToJSON, entFromJSON, applyEntJSON } from './save.js';
-import { placeRoad, applyRoads, placeSignal, placeVehicle, board, routeAction, vehToJSON, unitToJSON, applyVehicles } from './transport.js';
+import { clearFoot } from './multi.js';
+import { applyToBuilding } from './copypaste.js';
+import { medToJSON, medFromJSON, medAvailable } from './body.js';
+import { roadAt, pasteRoad, placeRoad, applyRoads, placeSignal, placeVehicle, board, routeAction, vehToJSON, unitToJSON, applyVehicles } from './transport.js';
 import { fishToList, fishFromList } from './fish.js';
 
 const PREFIX = 'depthworks-v1-';
@@ -48,6 +51,7 @@ function applyAction(op) {
       return placeOrCraft(op, fac);
     }
     case 'road': { const err = placeRoad(op); if (err) notify('toast', err); break; }
+    case 'drag': { const err = placeDrag(op, factoryOf(op.fac) ? op.fac : actor.fac); if (err) notify('toast', err); break; }
     case 'signal': { const err = placeSignal(op.x, op.z, op.dir); if (err) notify('toast', err); break; }
     case 'vehicle': { const err = placeVehicle(op.type, op.x, op.z, op.dir); if (err) notify('toast', err); break; }
     case 'board': board(); break;
@@ -75,11 +79,18 @@ function applyAction(op) {
     case 'fast': if (e) { const n = fastTransfer(e, op.sel); notify('toast', n ? `${op.sel ? 'put in' : 'took'} ${n} item${n > 1 ? 's' : ''}` : 'nothing to move'); } break;
     case 'drop': dropAt({ x: op.x, y: op.y, z: op.z }, op.sel); break;
     case 'cmd': if (e) entityCommand(e, op.cmd, op.arg); break;
+    case 'paste': {   // settings from the clipboard onto a building or a road (see copypaste.js)
+      const r = op.y === 0 && !e ? roadAt(op.x, op.z) : null;
+      const done = e ? applyToBuilding(e, op.clip, (t, c, a) => c === 'setdir' ? rotateEntity(t, (a - t.dir + 4) % 4) : entityCommand(t, c, a)) : r ? pasteRoad(r, op.clip) : [];
+      notify('toast', done.length ? `Pasted ${done.join(', ')}` : `${op.clip?.from ?? 'that'} has nothing that fits there`);
+      break;
+    }
     case 'move': moveItems(op.from, op.to, op.n); break;
     case 'shift': shiftMove(op.from, op.ent); break;
     case 'research': { const t = TECH[op.id]; if (t && !S.research.done.has(op.id) && techAvailable(t)) S.research.current = op.id; break; }
     case 'link': { const msg = linkPoles(op.kind, op.from, op.to); if (msg) notify('toast', msg); break; }
     case 'mark': editMarks(op); break;
+    case 'med': if (!op.id || (MED[op.id] && medAvailable(MED[op.id]))) S.med.current = op.id || null; break;
   }
   return null;
 }
@@ -195,6 +206,8 @@ bus.on('remesh', e => { if (e.kind !== 'frame') op({ o: 'update', e: entToJSON(e
 bus.on('ore', (x, y, z) => op({ o: 'ore', x, y, z }));
 bus.on('orelayer', (x, y, z, d) => op({ o: 'orelayer', x, y, z, layer: d.layer, amount: d.amount }));
 bus.on('feat', (x, z) => op({ o: 'feat', x, z }));
+bus.on('patch', (x, z) => op({ o: 'patch', x, z }));
+bus.on('medical', () => op({ o: 'med', med: medToJSON() }));
 bus.on('research', id => op({ o: 'research', id }));
 bus.on('pulse', e => op({ o: 'pulse', x: e.x, y: e.y, z: e.z }));
 bus.on('signal', kind => op({ o: 'signal', kind, sig: signalJSON() }));
@@ -210,7 +223,7 @@ bus.on('remote', (p, ev, args) => { const c = net.conns.get(p.id); if (c) send(c
 
 const signalJSON = () => ({ ...S.signal, taught: [...S.signal.taught], seen: [...S.signal.seen] });
 const playerJSON = p => ({ id: p.id, name: p.name, color: p.color, x: +p.x.toFixed(3), z: +p.z.toFixed(3), face: +(p.face || 0).toFixed(2), walk: +(p.walk || 0).toFixed(2),
-  moving: !!p.moving, vx: +(p.vx || 0).toFixed(2), vz: +(p.vz || 0).toFixed(2), mining: p.mining ? { prog: +p.mining.prog.toFixed(2), kind: p.mining.kind, name: p.mining.name, blocked: p.mining.blocked || null } : null,
+  moving: !!p.moving, vx: +(p.vx || 0).toFixed(2), vz: +(p.vz || 0).toFixed(2), mining: p.mining ? { prog: +p.mining.prog.toFixed(2), kind: p.mining.kind, tool: p.mining.tool || null, name: p.mining.name, blocked: p.mining.blocked || null } : null,
   mineCell: p.mineCell || null });
 function entState(e) { const o = entToJSON(e); o.st = e.status; o.age = Math.min(9, Math.round((S.T - e.lastActive) * 4) / 4); if (e.t !== undefined) o.ph = +e.t.toFixed(3); return o; }
 function hostTick(dt) {
@@ -224,7 +237,7 @@ function hostTick(dt) {
     t: 'state', players: [...S.players.values()].map(playerJSON),
     ground: world.ground.map(g => [ITEM_IDS.indexOf(g.type), +g.x.toFixed(2), +g.z.toFixed(2)]),
     research: { current: S.research.current, progress: S.research.progress, done: [...S.research.done] }, maxTier: S.maxTier,
-    stats: withStats ? S.stats : undefined,
+    stats: withStats ? S.stats : undefined, med: withStats ? medToJSON() : undefined,
     veh: world.vehicles.map(vehToJSON), units: withStats ? world.units.map(u => unitToJSON(u, false)) : undefined,
     fish: (net.fishT = (net.fishT || 0) + 1) % 3 === 0 ? fishToList() : undefined,
   };
@@ -239,7 +252,7 @@ function hostTick(dt) {
     }
     for (const k of c.cache.keys()) if (!states.has(k)) c.cache.delete(k);
     const p = c.p;
-    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, hp: Math.round(p.hp), fac: p.fac, pend: (p.pending || []).map(q => ({ ...q })) } });
+    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, hp: Math.round(p.hp), fac: p.fac, expo: p.expo || {}, pend: (p.pending || []).map(q => ({ ...q })) } });
   }
 }
 
@@ -282,7 +295,7 @@ function onClientMessage(m) {
 function rawRemove(x, y, z, frame) {
   const k = key(x, y, z), map = frame ? world.frames : world.ents, e = map.get(k);
   if (!e) return;
-  map.delete(k);
+  if (e.foot) { clearFoot(e); map.delete(key(e.x, e.y, e.z)); } else map.delete(k);
   if (e.pair) e.pair.pair = null;
   if (e.belt) world.beltDirty = true;
   world.powerDirty = true;
@@ -300,9 +313,11 @@ function applyOp(o) {
     case 'remove': rawRemove(o.x, o.y, o.z, o.frame); break;
     case 'update': { const e = world.ents.get(key(o.e.x, o.e.y, o.e.z)); if (e) applyEntJSON(e, o.e, true); break; }
     case 'ore': if (world.ores.delete(key(o.x, o.y, o.z))) bus.emit('ore', o.x, o.y, o.z); break;
-    case 'orelayer': { const d = world.ores.get(key(o.x, o.y, o.z)); if (d) { d.layer = o.layer; d.amount = o.amount; bus.emit('orelayer', o.x, o.y, o.z, d); } break; }
-    case 'feat': if (world.feats.delete(key(o.x, 0, o.z))) bus.emit('feat', o.x, o.z); break;
+    case 'orelayer': { const k = key(o.x, o.y, o.z), d = world.ores.get(k); world.edits.ores.set(k, [o.layer, o.amount]); if (d) { d.layer = o.layer; d.amount = o.amount; bus.emit('orelayer', o.x, o.y, o.z, d); } break; }
+    case 'feat': { const k = key(o.x, 0, o.z), had = world.feats.has(k); removeFeat(k); if (had) bus.emit('feat', o.x, o.z); break; }
     case 'research': if (!S.research.done.has(o.id)) completeResearch(o.id); break;
+    case 'patch': if (patchAt(o.x, o.z)) { clearPatch(o.x, o.z); bus.emit('patch', o.x, o.z); } else world.edits.patches.add(o.x + ',' + o.z); break;
+    case 'med': medFromJSON(o.med); bus.emit('medical'); break;
     case 'pulse': bus.emit('pulse', { x: o.x, y: o.y, z: o.z }); break;
     case 'links': world.links = o.links || []; world.powerDirty = true; break;
     case 'marks': world.marks = o.marks; bus.emit('marks'); break;
@@ -345,6 +360,8 @@ function applyState(m) {
   for (const id of m.research.done) S.research.done.add(id);
   if (m.maxTier > S.maxTier) { S.maxTier = m.maxTier; bus.emit('tier', m.maxTier); }
   if (m.stats) S.stats = m.stats;
+  if (m.med) medFromJSON(m.med);
+  S.player.expo = you.expo || {};
   if (m.veh) applyVehicles(m.veh, m.units);
   if (m.fish) fishFromList(m.fish);
   net.applying = true;

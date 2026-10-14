@@ -24,7 +24,7 @@ export const laneName = (n, i) => n === 3 ? ['left', 'middle', 'right'][i] : i ?
 // How far each lane sits sideways from the belt's centre line (negative: left of the way items move).
 export const laneOffset = (n, i) => n === 3 ? (i - 1) * .27 : i ? .2 : -.2;
 const isBusTile = b => b.kind === 'belt' && lanesOf(b) === 3;
-export const isBusNode = b => isBusTile(b) && !!(b.chL || b.chR || b.midOff);
+export const isBusNode = b => isBusTile(b) && !!(b.chL || b.chR || b.midOff || b.sort);
 
 // ---------------------------------------------------------------- tiles and how they connect
 export function pickPoint(b) { return b.kind === 'underground' ? (b.role === 'in' ? .25 : b.len - .25) : b.len / 2; }
@@ -295,6 +295,12 @@ function handOn(ln, li, type, over) {
     }
     return false;
   }
+  // sorting: an item a channel filters for goes out that channel first, from whichever lane it came on (so a mixed
+  // belt, crops and seeds say, comes apart into its two channels)
+  if (o.b.sort) for (const s of [0, 2]) {
+    const ch = o.ch[s];
+    if (ch?.t && ch.f === type && toTarget(ch.t, ln, s, type, 0)) { ch.n = (ch.n || 0) + 1; ch.last = type; ch.T = S.T; return true; }
+  }
   // a bus tile with channels: the bus ahead is served first; a channel only gets what the bus can't take
   if (li === 1 && o.b.midOff) return false;
   if (o.fwd && toTarget(o.fwd, ln, li, type, over)) return true;
@@ -392,6 +398,7 @@ export function beltCommand(e, cmd, arg) {
       world.beltDirty = true; bus.emit('remesh', e); return true;
     }
     case 'midoff': if (isBusTile(e)) { e.midOff = !e.midOff; world.beltDirty = true; bus.emit('remesh', e); } return true;
+    case 'sort': if (isBusTile(e)) { e.sort = !e.sort; world.beltDirty = true; bus.emit('remesh', e); } return true;
   }
   return false;
 }

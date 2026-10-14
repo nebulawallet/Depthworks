@@ -3,7 +3,7 @@
 // Everything is toon-shaded so the pixel-outline post pass reads cleanly.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ENTITIES, ITEMS, TIERS, FLUIDS, FRAMES, VEHICLES, ENGINES, RECIPE, recipeIcon } from './data.js';
+import { ENTITIES, ITEMS, TIERS, FLUIDS, FRAMES, VEHICLES, ENGINES, RECIPE, CROPS, recipeIcon } from './data.js';
 import { S, DIRS, factoryOf } from './state.js';
 import { iconCanvas } from './icons.js';
 
@@ -51,7 +51,7 @@ export function setGhost(root, ghost) {
     if (!o.userData.base) o.userData.base = o.material;
     o.material = ghost ? variant(ghostCache, o.userData.base, .1) : o.userData.base;
     o.castShadow = !ghost && o.isMesh;
-    o.layers.set(o.isSprite ? UI_LAYER : ghost ? 1 : 0);
+    o.layers.set(o.isSprite ? UI_LAYER : ghost || o.userData.overlay ? 1 : 0);   // glass and roofs never get outlines
   });
 }
 export function setPreview(root) {
@@ -105,8 +105,13 @@ export function itemGeo(type) {
     net: () => new THREE.BoxGeometry(.24, .06, .24).translate(0, .03, 0),
     fish: () => new THREE.SphereGeometry(.1, 6, 4).scale(.6, .5, 1.4).translate(0, .05, 0),
     road: () => new THREE.BoxGeometry(.26, .04, .26).translate(0, .02, 0),
+    seed: () => facet(new THREE.DodecahedronGeometry(.07, 0).scale(1.3, .6, 1).translate(0, .04, 0)),
+    crop: () => new THREE.CylinderGeometry(.07, .05, .26, 5).rotateZ(Math.PI / 2).translate(0, .07, 0),
+    vial: () => new THREE.CylinderGeometry(.06, .07, .2, 6).translate(0, .1, 0),
+    pellet: () => facet(new THREE.IcosahedronGeometry(.08, 0).translate(0, .08, 0)),
+    cell: () => new THREE.BoxGeometry(.14, .24, .14).translate(0, .12, 0),
   };
-  return (itemGeoCache[shape] = G[shape]());
+  return (itemGeoCache[shape] = (G[shape] || G.ore)());
 }
 export function itemMat(type) {
   return itemMatCache[type] ||= new THREE.MeshToonMaterial({ color: ITEMS[type]?.color ?? 0xff00ff, emissive: ITEMS[type]?.emissive ?? 0, gradientMap: toonRamp });
@@ -273,6 +278,15 @@ export function makeMesh(e) {
       dyn(P.crane, box(.1, .1, .1), M(C.dark), 0, -.06, 0);
       P.sprite = new THREE.Sprite(iconSpriteMat(e.recipe || 'car_petrol')); P.sprite.scale.set(.5, .5, 1); P.sprite.position.set(0, 1.15, 0);
       P.sprite.visible = !!e.recipe && S.altMode; P.sprite.renderOrder = 10; P.sprite.layers.set(UI_LAYER); g.add(P.sprite);
+      break;
+    }
+    case 'centrifuge': {   // a pressure housing on a plinth with a drum spinning inside
+      st(box(.96, .14, .96), dark, 0, .07, 0);
+      st(cyl(.36, .4, .62, seg), col, 0, .45, 0);
+      st(cyl(.38, .38, .06, seg), M(C.steel), 0, .78, 0);
+      P.spin = grp(g, 0, .83, 0);
+      dyn(P.spin, cyl(.22, .22, .1, seg), M(C.light)); dyn(P.spin, box(.5, .05, .06), M(C.yellow), 0, .06, 0);
+      P.glow = glowMat(0x9be37a, .1); dyn(g, box(.18, .26, .02), P.glow, 0, .45, -.4);
       break;
     }
     case 'fgen': {   // diesel generator: engine block, exhaust stack and a flywheel
@@ -633,6 +647,20 @@ export function makeMesh(e) {
       P.glow = glowMat(0x7ef6ff); dyn(g, box(.04, .1, .16), P.glow, .31, .3, -.3);
       break;
     }
+    case 'lamp': {
+      if (def.burner) {   // a stone bowl on three legs with a fire in it
+        for (let i = 0; i < 3; i++) { const a = i * Math.PI * 2 / 3; st(box(.05, .32, .05).rotateZ(Math.cos(a) * .25).rotateX(-Math.sin(a) * .25), M(C.dark), Math.cos(a) * .2, .16, Math.sin(a) * .2); }
+        st(cyl(.24, .16, .14, seg), M(C.stone), 0, .38, 0);
+        st(cyl(.25, .25, .03, seg), M(C.stoneDark), 0, .45, 0);
+        P.glow = glowMat(0xff8a3a); dyn(g, new THREE.ConeGeometry(.13, .22, 5).translate(0, .11, 0), P.glow, 0, .44, 0);
+        break;
+      }
+      st(box(.3, .06, .3), dark, 0, .03, 0);
+      st(cyl(.035, .045, .9, 6), M(C.mid), 0, .48, 0);
+      st(box(.2, .05, .2), M(C.dark), 0, .95, 0);
+      P.glow = glowMat(def.light?.color ?? 0xfff0d0); dyn(g, box(.16, .1, .16), P.glow, 0, .88, 0);
+      break;
+    }
     case 'solar': {
       for (const [x, z] of [[-.3, 0], [.3, 0]]) st(box(.06, .3, .06), steel, x, .15, z);
       st(box(.96, .05, .96), M(0x1d2f5a), 0, .34, 0, -.25);
@@ -640,6 +668,82 @@ export function makeMesh(e) {
         st(box(.97, .055, .03).translate(0, 0, i * .3).rotateX(-.25), M(0x5a7ab8), 0, .34, 0);
         st(box(.03, .055, .97).translate(i * .3, 0, 0).rotateX(-.25), M(0x5a7ab8), 0, .34, 0);
       }
+      break;
+    }
+    case 'greenhouse': {   // a room of glass: soil beds, walls with doors on the outside edges, a glass roof seen in depth mode
+      const foot = e.foot || [[e.x, e.z]], crop = e.seed ? CROPS[e.seed] : null, has = (x, z) => foot.some(([a, b]) => a === x && b === z);
+      const glass = new THREE.MeshToonMaterial({ color: 0xc8f8e0, transparent: true, opacity: .26, gradientMap: toonRamp, depthWrite: false });
+      const frameM = M(0xd8dde4), soil = M(0x4a3424), rim = M(0x7a6a52), sprouts = [];
+      for (const [x, z] of foot) {
+        const lx = x - e.x, lz = z - e.z;
+        st(box(.98, .05, .98), rim, lx, .025, lz); st(box(.86, .07, .86), soil, lx, .06, lz);
+        if (crop) for (const [ox, oz] of [[-.22, -.22], [.22, -.22], [-.22, .22], [.22, .22]]) sprouts.push(new THREE.ConeGeometry(.1, .4, 4).translate(lx + ox, .2, lz + oz));
+        for (let d = 0; d < 4; d++) {
+          const [dx, dz] = DIRS[d];
+          if (has(x + dx, z + dz)) continue;
+          const door = ((d % 2 === 0 ? x : z) % 5 + 5) % 5 === 2, ex = lx + dx * .48, ez = lz + dz * .48;
+          for (const s2 of [-1, 1]) st(box(.05, .95, .05), frameM, ex + (dx ? 0 : s2 * .48), .475, ez + (dz ? 0 : s2 * .48));
+          st(box(dx ? .05 : 1, .05, dz ? .05 : 1), frameM, ex, .93, ez);
+          if (door) continue;   // an open doorway
+          const pane = dyn(g, box(dx ? .03 : .96, .86, dz ? .03 : .96), glass, ex, .47, ez); pane.userData.overlay = true;
+        }
+      }
+      if (sprouts.length) { P.plants = grp(g); dyn(P.plants, mergeGeometries(sprouts.map(q => q.toNonIndexed())), M(crop.color, crop.glow ? { emissive: crop.glow, emissiveIntensity: .6 } : {})); }
+      // the roof: one glass pyramid over a rectangular room, a small one over every tile of any other shape
+      const xs = foot.map(f => f[0]), zs = foot.map(f => f[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+      const roofM = new THREE.MeshToonMaterial({ color: 0x6ad88a, transparent: true, opacity: .45, gradientMap: toonRamp, depthWrite: false, side: THREE.DoubleSide });
+      P.roof = grp(g); P.roof.visible = false;
+      const pyr = (cx, cz, w, d, h) => { const m = dyn(P.roof, new THREE.ConeGeometry(Math.SQRT1_2, 1, 4).rotateY(Math.PI / 4).scale(w, h, d), roofM, cx, .95 + h / 2, cz); m.userData.overlay = true; };
+      if (foot.length === (x1 - x0 + 1) * (z1 - z0 + 1)) pyr((x0 + x1) / 2 - e.x, (z0 + z1) / 2 - e.z, x1 - x0 + 1, z1 - z0 + 1, Math.min(1.6, .25 + Math.min(x1 - x0, z1 - z0) * .12));
+      else for (const [x, z] of foot) pyr(x - e.x, z - e.z, 1, 1, .3);
+      P.glow = glowMat(0x7aff8a, .2);
+      for (const [x, z] of foot) if ((x + z) % 3 === 0) dyn(g, box(.5, .03, .06), P.glow, x - e.x, .9, z - e.z);
+      break;
+    }
+    case 'dam': {   // concrete across the water: the top is painted into the ground (so roads can go on it), the body drops into the water
+      const foot = e.foot || [[e.x, e.z]], has = (x, z) => foot.some(([a, b]) => a === x && b === z), con = M(0x8f8a80), dk = M(0x5a5650), gate = M(0x6a7a8a);
+      P.glow = glowMat(0x7ef6ff, .1);
+      for (const [x, z] of foot) {
+        const lx = x - e.x, lz = z - e.z;
+        st(box(1, .5, 1), con, lx, -.255, lz);
+        for (let d = 0; d < 4; d++) {
+          const [dx, dz] = DIRS[d];
+          if (has(x + dx, z + dz)) continue;
+          st(box(dx ? .08 : .96, .12, dz ? .08 : .96), dk, lx + dx * .46, .06, lz + dz * .46);   // parapet
+          if ((x * 7 + z * 3 + d) % 2 === 0) { st(box(dx ? .2 : .3, .22, dz ? .2 : .3), gate, lx + dx * .58, .03, lz + dz * .58); dyn(g, box(dx ? .02 : .14, .05, dz ? .02 : .14), P.glow, lx + dx * .69, .1, lz + dz * .69); }
+        }
+      }
+      break;
+    }
+    case 'medlab': {   // a clean white bench with a glass dome, a red cross and a turning double helix inside
+      st(box(.94, .3, .94), M(0xe8e4e8), 0, .15, 0);
+      st(box(.96, .05, .96), M(C.steel), 0, .32, 0);
+      for (const [w, d] of [[.36, .1], [.1, .36]]) st(box(w, .02, d), M(0xd83a3a), 0, .335, -.26);
+      P.glow = glowMat(0x9fe8f2, .4);
+      P.ring = grp(g, 0, .38, .08);
+      for (let i = 0; i < 8; i++) { const a = i * .8; dyn(P.ring, new THREE.SphereGeometry(.045, 6, 4), P.glow, Math.cos(a) * .12, i * .055, Math.sin(a) * .12); dyn(P.ring, new THREE.SphereGeometry(.04, 6, 4), M(0xd84a8a), -Math.cos(a) * .12, i * .055, -Math.sin(a) * .12); }
+      const dome = dyn(g, new THREE.SphereGeometry(.3, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshToonMaterial({ color: C.glass, transparent: true, opacity: .3, gradientMap: toonRamp, depthWrite: false }), 0, .34, .08);
+      dome.userData.overlay = true;
+      break;
+    }
+    case 'reactor': {   // a squat containment drum, glowing core windows, heat pipes at the corners
+      st(box(.98, .14, .98), dark, 0, .07, 0);
+      st(cyl(.42, .46, .62, seg), col, 0, .45, 0);
+      st(new THREE.SphereGeometry(.42, seg, Math.max(3, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2).scale(1, .45, 1), M(C.light), 0, .76, 0);
+      for (const [x, z] of [[-.4, -.4], [.4, -.4], [-.4, .4], [.4, .4]]) st(cyl(.06, .06, .8, seg), M(C.steel), x, .4, z);
+      P.glow = glowMat(0x9be37a, .5);
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; dyn(g, box(.16, .2, .02), P.glow, Math.sin(a) * .44, .45, Math.cos(a) * .44).rotation.y = a; }
+      P.heat = glowMat(0xff3a1a, 0); dyn(g, cyl(.2, .2, .04, seg), P.heat, 0, .96, 0);
+      P.smoke = [0, 1.05, 0];
+      break;
+    }
+    case 'coolant': {   // a hyperboloid cooling tower that breathes steam while it works
+      const pts = []; for (let i = 0; i <= 8; i++) { const t = i / 8; pts.push(new THREE.Vector2(.44 - Math.sin(t * Math.PI) * .14 - t * .06, t * 1.4)); }
+      st(new THREE.LatheGeometry(pts, seg), M(0xc8ccd0, { side: THREE.DoubleSide }), 0, .02, 0);
+      st(box(.98, .06, .98), dark, 0, .03, 0);
+      for (const y of [.3, .9]) st(cyl(.36, .36, .03, seg), M(C.mid), 0, y, 0);
+      P.glow = glowMat(0xff6a3a, 0); dyn(g, box(.2, .1, .02), P.glow, 0, .25, -.42);
+      P.smoke = [0, 1.45, 0];
       break;
     }
     case 'transmitter': {
@@ -670,7 +774,7 @@ export function makeMesh(e) {
     g.add(new THREE.Mesh(merged, withAO(mat)));
     if (list.length > 1) list.forEach(x => x.dispose());
   }
-  g.rotation.y = -e.dir * Math.PI / 2;
+  g.rotation.y = e.foot ? 0 : -e.dir * Math.PI / 2;
   g.position.set(e.x + .5, e.y, e.z + .5);
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   g.userData.ent = e;
@@ -769,6 +873,15 @@ export function makePlayer(color = 0xe07a2e) {
   pick.add(new THREE.Mesh(box(.045, .16, .05).translate(0, 0, .34), M(C.light)));
   for (const s of [1, -1]) pick.add(new THREE.Mesh(new THREE.ConeGeometry(.026, .07, 4).rotateX(s > 0 ? 0 : Math.PI).translate(0, s * .115, .34), M(C.light)));
   pick.visible = false;
+  // the axe: a wedge blade on one side of the handle; the shovel: a flat blade at the end
+  const axe = new THREE.Group(); axe.position.copy(pick.position); axe.rotation.x = .9; P.armR.add(axe); P.axe = axe;
+  axe.add(new THREE.Mesh(box(.03, .03, .36).translate(0, 0, .18), M(C.wood)));
+  axe.add(new THREE.Mesh(box(.02, .12, .1).translate(0, .06, .32), M(C.light)));
+  axe.visible = false;
+  const shovel = new THREE.Group(); shovel.position.copy(pick.position); shovel.rotation.x = .9; P.armR.add(shovel); P.shovel = shovel;
+  shovel.add(new THREE.Mesh(box(.03, .03, .4).translate(0, 0, .2), M(C.wood)));
+  shovel.add(new THREE.Mesh(box(.11, .015, .13).translate(0, 0, .44), M(C.steel)));
+  shovel.visible = false;
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   g.userData.P = P; g.userData.color = color;
   return g;
@@ -779,7 +892,8 @@ export function animatePlayer(g, p, T, dt = .016) {
   P.legL.rotation.x = sw; P.legR.rotation.x = -sw;
   P.armL.rotation.x = -sw * .8;
   const mining = p.mining && !p.mining.blocked;
-  P.pick.visible = !!mining;
+  const tool = mining ? p.mining.tool || 'pickaxe' : null;
+  P.pick.visible = tool === 'pickaxe'; P.axe.visible = tool === 'axe'; P.shovel.visible = tool === 'shovel';
   P.armR.rotation.x = mining ? -1.7 + Math.sin(T * 14) * .95 : sw * .8;
   P.body.rotation.x = mining ? .12 + Math.sin(T * 14) * .05 : walkAmt * .1;
   g.position.set(p.x, Math.abs(Math.sin(p.walk)) * .035 * walkAmt, p.z);

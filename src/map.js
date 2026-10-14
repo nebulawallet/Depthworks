@@ -2,21 +2,23 @@
 // changed get redrawn (a few per frame at most), so even a big world never hitches. The minimap shows the
 // area around you; the big map (M, or click the minimap) zooms and pans over everything, holds markers and
 // labelled areas, and switches views: terrain, resources, production and power.
-import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES } from './data.js';
-import { S, world, bus, key, GRID, LAYER_MAX, factoryOf } from './state.js';
+import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, BIOMES } from './data.js';
+import { S, world, bus, key, GRID, LAYER_MAX, factoryOf, CHUNK, chunkKey, tileAt, tilesOf } from './state.js';
 import { nets, voltsOf } from './sim.js';
 import { powerProblem } from './scene.js';
 import { doAction } from './net.js';
 import { iconHTML, fmtN } from './icons.js';
+import { FEATURES } from './data.js';
+import { groundColors } from './worldgen.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const setHTML = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
 const MODES = [['terrain', 'Terrain'], ['resources', 'Resources'], ['production', 'Production'], ['power', 'Power'], ['factories', 'Factories']];
 const TOOLS = [['pan', 'Move'], ['marker', 'Marker'], ['area', 'Area'], ['assign', 'Assign']];
-const ZOOM = [2, 3, 4, 6, 8, 12, 16, 24];
+const ZOOM = [.25, .5, 1, 2, 3, 4, 6, 8, 12, 16, 24];
 const COLORS = ['#ffd23f', '#7ef6ff', '#9be37a', '#ff8a3d', '#ff5a7a', '#b07ad8', '#e8ecf2'];
-const view = { cx: GRID / 2, cz: GRID / 2, ppt: 6 };
+const view = { cx: 48, cz: 48, ppt: 6 };
 let mode = 'terrain', tool = 'pan', selected = null;
 
 // ---------------------------------------------------------------- tile colours
@@ -24,7 +26,7 @@ const rgb = h => [h >> 16 & 255, h >> 8 & 255, h & 255];
 const mix = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
 const shade = (c, k) => c.map(v => v * k);
 const hashT = (x, z) => { let h = Math.imul(x, 374761393) + Math.imul(z, 668265263); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967295; };
-const GROUND = rgb(TILES[0].map), TREE = rgb(0x2f5a2a), ROCK = rgb(0x7a7066), FRAME = rgb(0x8f9aa6);
+const LEGACY_GROUND = rgb(TILES[0].map), TREE = rgb(0x2f5a2a), ROCK = rgb(0x7a7066), FRAME = rgb(0x8f9aa6);
 const STATUS = { ok: rgb(0x6ac46a), idle: rgb(0xd8b84a), bad: rgb(0xe0503a), none: rgb(0x5c6470) };
 const PROBLEM = /no power|out of fuel|not connected|no water|no steam|missing|exhausted|blocked|full|nothing/;
 function topThing(x, z) {
@@ -39,8 +41,9 @@ function entColor(e) {
 }
 const OIL = rgb(0x231c2a), RAIL = rgb(0x9a8a76);
 const hexRgb = h => rgb(parseInt((h || '#888888').slice(1), 16));
-function tileColor(x, z) {
-  const k = key(x, 0, z), t = TILES[world.tiles[z * GRID + x]], v = .92 + hashT(x, z) * .14;
+function tileColor(x, z, ch) {
+  const i = (z - ch.z0) * CHUNK + (x - ch.x0), k = key(x, 0, z), t = TILES[ch.tiles[i]], v = .92 + hashT(x, z) * .14;
+  const gc = world.gen && groundColors(ch), GROUND = gc ? [gc[i * 12 + 3], gc[i * 12 + 4], gc[i * 12 + 5]] : LEGACY_GROUND;   // blended like the ground
   const ore = world.ores.get(k), feat = world.feats.get(k), e = topThing(x, z), road = world.roads.get(x + ',' + z), oil = world.oil.get(x + ',' + z);
   let c = t.liquid ? rgb(t.map) : shade(GROUND, v);
   if (road) c = shade(ROADS[road.s]?.paint ?? GROUND, ROADS[road.s]?.walk ? 1.05 : 1.15);
@@ -53,7 +56,7 @@ function tileColor(x, z) {
   if (mode === 'terrain') {
     if (ore) c = mix(c, rgb(ITEMS[ore.type].color), .7);
     if (oil) c = OIL;
-    if (feat) c = feat.type === 'tree' ? shade(TREE, v) : ROCK;
+    if (feat) c = FEATURES[feat.type]?.tool === 'pickaxe' ? ROCK : shade(TREE, v);
     if (e) c = e.kind === 'rail' ? RAIL : entColor(e);
   } else if (mode === 'resources') {
     c = t.liquid ? shade(c, .7) : shade(mix(c, [70, 70, 70], .5), .6);
@@ -84,47 +87,56 @@ function powerColor(e) {
 }
 
 // ---------------------------------------------------------------- chunk cache
-const CH = 16, NCH = Math.ceil(GRID / CH);
-const chunks = Array.from({ length: NCH * NCH }, () => {
-  const cv = document.createElement('canvas'); cv.width = cv.height = CH;
-  return { cv, ctx: cv.getContext('2d'), dirty: true, built: false };
-});
-const chunkAt = (x, z) => chunks[Math.floor(z / CH) * NCH + Math.floor(x / CH)];
-const dirtyAt = (x, z) => { const c = chunkAt(x, z); if (c) c.dirty = true; };
-const dirtyAll = () => { for (const c of chunks) c.dirty = true; };
-function buildChunk(i) {
-  const c = chunks[i], x0 = (i % NCH) * CH, z0 = Math.floor(i / NCH) * CH, img = c.ctx.createImageData(CH, CH), d = img.data;
+// One small canvas per world chunk, made only for chunks that exist (where someone has been: the charted area).
+const CH = CHUNK, chunks = new Map();
+function mapChunk(k) {
+  let c = chunks.get(k);
+  if (!c) { const cv = document.createElement('canvas'); cv.width = cv.height = CH; c = { cv, ctx: cv.getContext('2d'), dirty: true, built: false }; chunks.set(k, c); }
+  return c;
+}
+const dirtyAt = (x, z) => { const c = chunks.get(chunkKey(Math.floor(x / CH), Math.floor(z / CH))); if (c) c.dirty = true; };
+const dirtyAll = () => { for (const c of chunks.values()) c.dirty = true; };
+function buildChunk(k, c) {
+  const wc = world.chunks.get(k); if (!wc) return;
+  const img = c.ctx.createImageData(CH, CH), d = img.data;
   for (let dz = 0; dz < CH; dz++) for (let dx = 0; dx < CH; dx++) {
-    const x = x0 + dx, z = z0 + dz; if (x >= GRID || z >= GRID) continue;
-    const col = tileColor(x, z), j = (dz * CH + dx) * 4;
+    const x = wc.x0 + dx, z = wc.z0 + dz; if (x >= GRID || z >= GRID) continue;
+    const col = tileColor(x, z, wc), j = (dz * CH + dx) * 4;
     d[j] = col[0]; d[j + 1] = col[1]; d[j + 2] = col[2]; d[j + 3] = 255;
   }
   c.ctx.putImageData(img, 0, 0); c.dirty = false; c.built = true;
 }
-// Rebuild at most `budget` stale chunks per call; never-built chunks always go first.
+// Rebuild at most `budget` stale chunks per call, nearest the view first; never-built chunks always go first.
+let wantView = null;
 function refreshChunks(budget) {
-  for (let pass = 0; pass < 2 && budget > 0; pass++)
-    for (let i = 0; i < chunks.length && budget > 0; i++) if (chunks[i].dirty && (pass || !chunks[i].built)) { buildChunk(i); budget--; }
+  const list = [];
+  for (const k of world.chunks.keys()) { const c = mapChunk(k); if (c.dirty) list.push([k, c]); }
+  if (!list.length) return;
+  const v = wantView || { cx: S.player.x, cz: S.player.z }, d = k => Math.hypot((k % 4096) * CH + 16 - v.cx, Math.floor(k / 4096) * CH + 16 - v.cz);
+  list.sort((a, b) => (a[1].built - b[1].built) || d(a[0]) - d(b[0]));
+  for (let i = 0; i < Math.min(budget, list.length); i++) buildChunk(list[i][0], list[i][1]);
 }
-for (const ev of ['placed', 'removed', 'remesh']) bus.on(ev, e => dirtyAt(e.x, e.z));
+for (const ev of ['placed', 'removed', 'remesh']) bus.on(ev, e => { for (const [x, z] of tilesOf(e)) dirtyAt(x, z); });
 bus.on('ore', (x, y, z) => { if (y === 0) dirtyAt(x, z); });
 bus.on('feat', (x, z) => dirtyAt(x, z));
+bus.on('patch', (x, z) => dirtyAt(x, z));
 bus.on('marks', () => { if (S.modal === 'map') renderSide(true); });
 bus.on('roads', list => { for (const [x, z] of list || []) dirtyAt(x, z); });
 bus.on('factories', () => { if (mode === 'factories') dirtyAll(); });
-export function resetMap() { dirtyAll(); hist.length = 0; selected = null; }
+export function resetMap() { chunks.clear(); hist.length = 0; selected = null; }
 
 // ---------------------------------------------------------------- drawing
 // Also used by the logistics window, which draws its routes on top through `overlay(sx, sz)`.
-export function drawMapView(ctx, W, H, v, big, overlay) { refreshChunks(4); drawWorld(ctx, W, H, v, big, overlay); }
+export function drawMapView(ctx, W, H, v, big, overlay) { wantView = v; refreshChunks(6); drawWorld(ctx, W, H, v, big, overlay); }
 function drawWorld(ctx, W, H, v, big, overlay) {
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#0b0d12'; ctx.fillRect(0, 0, W, H);
   const sx = x => (x - v.cx) * v.ppt + W / 2, sz = z => (z - v.cz) * v.ppt + H / 2;
-  for (let i = 0; i < chunks.length; i++) {
-    const x0 = (i % NCH) * CH, z0 = Math.floor(i / NCH) * CH, px = sx(x0), pz = sz(z0), size = CH * v.ppt;
-    if (px > W || pz > H || px + size < 0 || pz + size < 0 || !chunks[i].built) continue;
-    ctx.drawImage(chunks[i].cv, Math.floor(px), Math.floor(pz), size, size);
+  ctx.fillStyle = '#12151c'; ctx.fillRect(Math.floor(sx(0)), Math.floor(sz(0)), GRID * v.ppt, GRID * v.ppt);   // the uncharted world
+  const x0 = Math.max(0, Math.floor((v.cx - W / 2 / v.ppt) / CH)), x1 = Math.floor((v.cx + W / 2 / v.ppt) / CH), z0 = Math.max(0, Math.floor((v.cz - H / 2 / v.ppt) / CH)), z1 = Math.floor((v.cz + H / 2 / v.ppt) / CH);
+  for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+    const c = chunks.get(chunkKey(cx, cz)); if (!c?.built) continue;
+    const size = CH * v.ppt; ctx.drawImage(c.cv, Math.floor(sx(cx * CH)), Math.floor(sz(cz * CH)), Math.ceil(size), Math.ceil(size));
   }
   ctx.strokeStyle = '#2a3140'; ctx.lineWidth = 1; ctx.strokeRect(Math.floor(sx(0)) + .5, Math.floor(sz(0)) + .5, GRID * v.ppt, GRID * v.ppt);
   if (mode === 'power') for (const n of nets) {   // supply areas, one colour per network
@@ -172,8 +184,9 @@ mini.addEventListener('pointerdown', e => { e.preventDefault(); bus.emit('openma
 export function updateMap(dt) {
   if (!S.started) return;
   if ((liveT += dt) > 1) { liveT = 0; if (mode === 'production' || mode === 'power') dirtyAll(); sampleStats(); }
+  if (S.modal !== 'map') wantView = null;
   const open = S.modal === 'map';
-  refreshChunks(open ? 8 : 3);
+  refreshChunks(open ? 10 : 3);
   if (open) { drawBig(); return; }
   if (S.hideUI || (miniT += dt) < .2) return;
   miniT = 0;
@@ -318,7 +331,7 @@ function modeHTML() {
     return `<h4>Factories</h4>${world.factories.map(f => `<div class="mrow${S.player.fac === f.id ? ' on' : ''}" data-map="fac:${f.id}"><i style="background:${f.color}"></i>${esc(f.name)} <span class="dim">${counts.get(f.id) || 0}</span></div>`).join('')}
       <div class="dim">Click one to build for it. The Assign tool drags buildings into the one you build for.</div>`;
   }
-  if (mode === 'terrain') return `<h4>Legend</h4><div class="legend"><i style="background:#${TILES[1].map.toString(16)}"></i>water <i style="background:#${TILES[2].map.toString(16)}"></i>river <i style="background:#2f5a2a"></i>trees <i style="background:#231c2a"></i>oil <i style="background:#9a8a76"></i>rail</div>`;
+  if (mode === 'terrain') return `<h4>Legend</h4><div class="legend"><i style="background:#${TILES[1].map.toString(16)}"></i>water <i style="background:#${TILES[2].map.toString(16)}"></i>river <i style="background:#2f5a2a"></i>trees <i style="background:#231c2a"></i>oil <i style="background:#9a8a76"></i>rail</div>${world.gen ? '<div class="dim">Only explored parts of the world are drawn.</div>' : ''}`;
   if (mode === 'resources') {
     const by = {};
     for (const [k, o] of world.ores) { const y = +k.split(',')[1], r = by[o.type] ||= { 0: 0, '-1': 0, '-2': 0, tiles: 0 }; r[y] += o.amount; r.tiles++; }

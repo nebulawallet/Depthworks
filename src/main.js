@@ -1,18 +1,22 @@
-import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES } from './data.js';
-import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, generateWater, generateOil, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll } from './state.js';
+import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD } from './data.js';
+import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID } from './state.js';
+import { newWorld, ensureChunks } from './worldgen.js';
 import { stockFish } from './fish.js';
-import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo } from './sim.js';
+import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo, mineTargetAt } from './sim.js';
+import { toolCursor } from './icons.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
 import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI, openMenu, setMenuTab, setSetting } from './ui.js';
-import { save, load, loadData, hasSave, wipeSave } from './save.js';
+import { save, load, loadData, hasSave, wipeSave, slotList, freeSlot, latestSlot, exportSave, exportSlot, importSave } from './save.js';
 import { doAction, host, join, netTick, leave, rememberFriends, cleanName } from './net.js';
 import './signal.js';
 import { updateAudio, sfx, getVolume, setVolume } from './audio.js';
-import { is } from './input.js';
+import { is, combo } from './input.js';
+import { copyBuilding, setClip } from './copypaste.js';
+import { roadAt } from './transport.js';
 import { updateMap, resetMap } from './map.js';
 
 const $ = id => document.getElementById(id);
-let started = false, hover = null, building = false, rmb = false, lastPaint = null, lastPlacedCell = null;
+let chartT = 0, started = false, hover = null, building = false, rmb = false, lastPaint = null, lastPlacedCell = null;
 
 // ---------------------------------------------------------------- nickname
 const NICK_KEY = 'depthworks.nick';
@@ -29,22 +33,24 @@ function enterWorld(fresh) {
   bus.emit('players');
   if (fresh) openMenu('guide');
 }
-function begin(fresh, sandbox = false) {
-  generateOres();
+// opts: the world options from the new game screen (size, seed, biome size, water, ores; see newWorld in worldgen.js)
+function begin(fresh, sandbox = false, slot = S.slot, opts = {}) {
   S.player.name = nick();
+  S.slot = slot;
   if (fresh) {
+    wipeSave(slot);
     S.sandbox = sandbox;
-    S.research = { done: new Set(), current: null, progress: {} }; S.maxTier = 0;
+    S.research = { done: new Set(), current: null, progress: {}, extra: new Set() }; S.maxTier = 0;
     if (sandbox) unlockAll();
-    Object.assign(S.player, { x: 48.5, z: 52.5, face: 0, fac: 1, veh: null, hp: PLAYER.health, sta: PLAYER.stamina, tired: false });
-    Object.assign(world, { vehicles: [], units: [], routes: [], factories: [{ id: 1, name: 'Main factory', color: '#7ef6ff' }], facNext: 2, nextId: 1 });
-    world.roads.clear();
-    S.seed = Math.floor(Math.random() * 1e9);   // every new world gets its own coastline, lakes and maybe a river
-    generateWater(S.seed); generateOil(S.seed);
-    startingInventory(); generateFeatures(); stockFish();
+    Object.assign(world, { vehicles: [], units: [], routes: [], factories: [{ id: 1, name: 'Main factory', color: '#7ef6ff' }], facNext: 2, nextId: 1, links: [], marks: { markers: [], areas: [], next: 1 } });
+    world.roads.clear(); world.ents.clear(); world.frames.clear(); world.lines = []; world.beltDirty = world.powerDirty = world.fluidDirty = world.railDirty = true;
+    S.stats = { made: {} }; S.goalsDone = new Set(); S.med = { levels: {}, current: null, progress: {}, mutations: false };
+    newWorld(opts);   // its own seed: biomes, coastlines, lakes and rivers of its own
+    Object.assign(S.player, { x: SPAWN.x, z: SPAWN.z, face: 0, fac: 1, veh: null, hp: PLAYER.health, sta: PLAYER.stamina, tired: false });
+    startingInventory(); stockFish();
     freshBars();
   } else {
-    if (!load()) { toast('save could not be read, starting fresh'); return begin(true); }
+    if (!load(slot)) { toast('save could not be read, starting fresh'); return begin(true, false, slot); }
     // saves from before the quickbar filled itself carried a fixed list of things you might not own
     if (OLD_HOTBARS.some(h => h.join() === S.bars[0].join())) { S.bars[0].fill(null); S.hotbarSeen = new Set(); }
   }
@@ -61,37 +67,99 @@ function beginGuest(data, you) {
 }
 
 // ---------------------------------------------------------------- title + lobby
-function titleScreen(view = 'main') {
+const ago = t => { const s = Math.max(0, (Date.now() - t) / 1000); return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago'; };
+const played = T => T >= 3600 ? `${Math.floor(T / 3600)} h ${Math.floor(T % 3600 / 60)} min` : `${Math.max(1, Math.round(T / 60))} min`;
+const escH = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+function hostWorld() {
+  host({
+    onReady: code => { navigator.clipboard?.writeText(code).catch(() => {}); toast(`Invite code: ${code}. Send it to your friends (click the code to copy it).`, 6000, 'good'); },
+    onError: m => toast('Could not start co-op: ' + m, 6000),
+  });
+}
+// Start a new world: world options first, then a free slot (with every slot taken, pick one to replace).
+function startNew(sandbox, hosting) { titleScreen('options', { sandbox, hosting }); }
+function startWith(opt) {
+  const n = freeSlot();
+  if (n === null) { titleScreen('slots', { mode: 'new', ...opt }); return; }
+  begin(true, opt.sandbox, n, opt.world); if (opt.hosting) hostWorld();
+}
+// The world options last chosen, kept in this browser.
+const OPTS_KEY = 'depthworks.worldopts';
+const lastOpts = () => { try { return { size: WORLD.size, biomes: 'normal', water: 'normal', ores: 'normal', ...JSON.parse(localStorage.getItem(OPTS_KEY) || '{}') }; } catch { return { size: WORLD.size, biomes: 'normal', water: 'normal', ores: 'normal' }; } };
+// A file from disk goes into a free slot (or the one you pick) and starts.
+function loadFile(slot) {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json';
+  input.addEventListener('change', () => {
+    const f = input.files?.[0]; if (!f) return;
+    const n = slot ?? freeSlot();
+    if (n === null) { $('lobbyMsg').textContent = 'Every slot is full: delete one first.'; return; }
+    f.text().then(text => { const err = importSave(text, n); if (err) $('lobbyMsg').textContent = err; else begin(false, false, n); });
+  });
+  input.click();
+}
+function titleScreen(view = 'main', opt = {}) {
   const btn = (id, label) => `<button id="${id}">${label}</button>`, msg = $('lobbyMsg');
   msg.textContent = '';
   if (view === 'main') {
-    $('titleBtns').innerHTML = (hasSave() ? btn('bContinue', 'Continue') : '') + btn('bNew', 'New game') + btn('bSandbox', 'Sandbox') + btn('bHost', 'Host co-op') + btn('bJoin', 'Join co-op') + btn('bHelp', 'How to play');
-    $('bContinue')?.addEventListener('click', () => begin(false));
-    // both replace the one save slot, so both ask first
-    for (const [id, sandbox] of [['bNew', false], ['bSandbox', true]]) $(id).addEventListener('click', e => {
-      if (hasSave() && !e.target.dataset.armed) { e.target.dataset.armed = 1; e.target.textContent = 'Replace save? Click again'; return; }
-      wipeSave(); begin(true, sandbox);
-    });
-    $('bHost').addEventListener('click', () => titleScreen('host'));
+    $('titleBtns').innerHTML = (hasSave() ? btn('bContinue', 'Continue') : '') + btn('bNew', 'New game') + btn('bSandbox', 'Sandbox') + btn('bLoad', 'Load game')
+      + btn('bHost', 'Host co-op') + btn('bJoin', 'Join co-op') + btn('bHelp', 'How to play');
+    $('bContinue')?.addEventListener('click', () => begin(false, false, latestSlot()));
+    $('bNew').addEventListener('click', () => startNew(false));
+    $('bSandbox').addEventListener('click', () => startNew(true));
+    $('bLoad').addEventListener('click', () => titleScreen('slots', { mode: 'load' }));
+    $('bHost').addEventListener('click', () => titleScreen('slots', { mode: 'host' }));
     $('bJoin').addEventListener('click', () => titleScreen('join'));
     $('bHelp').addEventListener('click', () => openMenu('guide'));
-  } else if (view === 'host') {
-    $('titleBtns').innerHTML = '<div class="dim">Friends join your world and play in it with you. Keep this tab open while they play.</div>'
-      + (hasSave() ? btn('bHostSaved', 'Host my saved world') : '') + btn('bHostNew', 'Host a new world') + btn('bHostSand', 'Host a sandbox') + btn('bBack', 'Back');
-    const go = (fresh, sandbox = false) => {
-      if (fresh) wipeSave();
-      begin(fresh, sandbox);
-      host({
-        onReady: code => { navigator.clipboard?.writeText(code).catch(() => {}); toast(`Invite code: ${code}. Send it to your friends (click the code to copy it).`, 6000, 'good'); },
-        onError: m => toast('Could not start co-op: ' + m, 6000),
-      });
-    };
-    $('bHostSaved')?.addEventListener('click', () => go(false));
-    for (const [id, sandbox] of [['bHostNew', false], ['bHostSand', true]]) $(id).addEventListener('click', e => {
-      if (hasSave() && !e.target.dataset.armed) { e.target.dataset.armed = 1; e.target.textContent = 'Replace your save? Click again'; return; }
-      go(true, sandbox);
-    });
+  } else if (view === 'slots') {
+    // load: load / export / delete each world, or load one from a file. new: pick a slot to start in (replacing
+    // what is there, after a second click). host: host a saved world, or start a new one to host.
+    const { mode } = opt;
+    const head = mode === 'load' ? 'Your worlds live in this browser. Export them to files to keep them safe, or to move them to another computer.'
+      : mode === 'host' ? 'Friends join your world and play in it with you. Keep this tab open while they play.'
+      : `Every slot is taken. Pick one for the new ${opt.sandbox ? 'sandbox' : 'world'}: what is in it now is lost unless you export it first.`;
+    const row = s => !s.used
+      ? `<div class="slotrow empty"><b>Slot ${s.n}</b> <span class="dim">empty</span>${mode === 'new' ? `<button data-slot-act="new:${s.n}">Start here</button>` : ''}</div>`
+      : `<div class="slotrow"><b>Slot ${s.n}</b> <span>${escH(s.name)}</span> <span class="dim">${s.savedAt ? 'saved ' + ago(s.savedAt) : ''}${s.T ? ' · ' + played(s.T) + ' in game' : ''}</span>
+        <span class="grow"></span>${mode === 'load' ? `<button data-slot-act="load:${s.n}">Load</button><button data-slot-act="export:${s.n}">Export</button><button data-slot-act="del:${s.n}">Delete</button>`
+          : mode === 'host' ? `<button data-slot-act="host:${s.n}">Host</button>` : `<button data-slot-act="new:${s.n}">Replace</button>`}</div>`;
+    $('titleBtns').innerHTML = `<div class="dim slothead">${head}</div><div class="slots">${slotList().map(row).join('')}</div>`
+      + (mode === 'load' ? btn('bFile', 'Load from file…') : mode === 'host' ? btn('bHostNew', 'Host a new world') + btn('bHostSand', 'Host a sandbox') : '') + btn('bBack', 'Back');
+    $('bFile')?.addEventListener('click', () => loadFile(null));
+    $('bHostNew')?.addEventListener('click', () => startNew(false, true));
+    $('bHostSand')?.addEventListener('click', () => startNew(true, true));
     $('bBack').addEventListener('click', () => titleScreen('main'));
+    $('titleBtns').querySelectorAll('[data-slot-act]').forEach(b => b.addEventListener('click', () => {
+      const [a, n] = b.dataset.slotAct.split(':'), slot = +n;
+      const armed = () => { if (b.dataset.armed) return true; b.dataset.armed = 1; b.textContent = 'Sure? Click again'; return false; };
+      if (a === 'load') begin(false, false, slot);
+      else if (a === 'host') { begin(false, false, slot); hostWorld(); }
+      else if (a === 'export') exportSlot(slot);
+      else if (a === 'del') { if (armed()) { wipeSave(slot); titleScreen('slots', opt); } }
+      else if (a === 'new') { if (!slotList()[slot - 1].used || armed()) { begin(true, opt.sandbox, slot, opt.world); if (opt.hosting) hostWorld(); } }
+    }));
+  } else if (view === 'options') {
+    // world options: size, seed, how big biomes are, how much water, how rich the ore
+    const o = lastOpts(), sel = (id, list, cur) => `<select id="${id}">${list.map(([v, l]) => `<option value="${v}"${String(v) === String(cur) ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+    const sizes = WORLD.sizes.map(n => [n, `${n} × ${n}${n === WORLD.size ? ' (default)' : n >= 16384 ? ' (huge)' : ''}`]);
+    $('titleBtns').innerHTML = `<div class="dim slothead">${opt.sandbox ? 'A sandbox world: everything researched, crafting free.' : 'A new world.'} Only the parts someone has been near ever get made, so even the biggest worlds start at once.</div>
+      <div class="wopts">
+        <label>World size</label>${sel('woSize', [...sizes, ['custom', 'Custom…']], WORLD.sizes.includes(+o.size) ? o.size : 'custom')}
+        <label>Custom size</label><input id="woCustom" class="num" value="${o.size}" title="${WORLD.min} to ${WORLD.max} tiles a side">
+        <label>Seed</label><input id="woSeed" placeholder="random" autocomplete="off" spellcheck="false">
+        <label>Biomes</label>${sel('woBiomes', [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']], o.biomes)}
+        <label>Water</label>${sel('woWater', [['low', 'Little'], ['normal', 'Normal'], ['high', 'Lots']], o.water)}
+        <label>Ore</label>${sel('woOres', [['poor', 'Poor'], ['normal', 'Normal'], ['rich', 'Rich']], o.ores)}
+      </div>` + btn('bWorldGo', opt.hosting ? 'Start and host' : 'Start') + btn('bBack', 'Back');
+    const custom = () => { $('woCustom').disabled = $('woSize').value !== 'custom'; };
+    $('woSize').addEventListener('change', custom); custom();
+    $('bBack').addEventListener('click', () => titleScreen('main'));
+    $('bWorldGo').addEventListener('click', () => {
+      const size = $('woSize').value === 'custom' ? Math.round(+$('woCustom').value) : +$('woSize').value;
+      if (!(size >= WORLD.min && size <= WORLD.max)) { msg.textContent = `World size goes from ${WORLD.min} to ${WORLD.max} tiles a side.`; return; }
+      const world = { size, seed: $('woSeed').value.trim(), biomes: $('woBiomes').value, water: $('woWater').value, ores: $('woOres').value };
+      try { localStorage.setItem(OPTS_KEY, JSON.stringify({ size, biomes: world.biomes, water: world.water, ores: world.ores })); } catch { /* storage unavailable */ }
+      startWith({ sandbox: opt.sandbox, hosting: opt.hosting, world });
+    });
   } else if (view === 'join') {
     $('titleBtns').innerHTML = '<div class="dim">Ask the host for their invite code.</div><input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false">'
       + btn('bJoinGo', 'Join') + btn('bBack', 'Back');
@@ -125,14 +193,23 @@ $('help').addEventListener('click', e => {
   if (a.startsWith('tab:')) setMenuTab(a.slice(4));
   else if (a === 'resume') closeModals();
   else if (a === 'back') openModal('title');
-  else if (a === 'save') { if (save()) toast('saved'); else if (S.net.role === 'client') toast('only the host can save this world'); }
+  else if (a === 'save') saveNow();
+  else if (a === 'export') { if (S.net.role === 'client') toast('only the host can export this world'); else { exportSave(); toast('saved to a file in your downloads'); } }
   else if (a === 'quit') { if (started) save(); started = false; leave(); location.reload(); }
 });
 $('help').addEventListener('change', e => { const c = e.target.closest?.('[data-set]'); if (c) setSetting(c.dataset.set, c.checked); });
 const showVolume = () => { $('volumeN').textContent = $('volume').value + '%'; };
 $('volume').value = Math.round(getVolume() * 100); showVolume();
 $('volume').addEventListener('input', e => { setVolume(e.target.value / 100); showVolume(); sfx('click'); });
-setInterval(() => { if (started) save(); }, 30000);
+// Autosave. A full browser says so once, instead of failing quietly.
+let fullWarned = false;
+function saveNow(auto = false) {
+  const r = save();
+  if (r === true) { if (!auto) toast('saved to slot ' + S.slot); fullWarned = false; }
+  else if (r === 'full') { if (!auto || !fullWarned) toast('The browser has no room left for saves. Export your world to a file (menu), or delete a slot from Load game.', 7000); fullWarned = true; }
+  else if (!auto && S.net.role === 'client') toast('only the host can save this world');
+}
+setInterval(() => { if (started) saveNow(true); }, 30000);
 addEventListener('beforeunload', () => { if (started) save(); leave(); });
 
 // ---------------------------------------------------------------- mode + layers
@@ -182,6 +259,8 @@ addEventListener('keydown', e => {
   if (is('factories', c)) { sfx(S.modal === 'factories' ? 'close' : 'open'); return toggleModal('factories'); }
   if (is('nextFactory', c)) { const F = world.factories, i = F.findIndex(f => f.id === S.player.fac); S.player.fac = F[(i + 1) % F.length].id; toast('building for ' + factoryOf(S.player.fac).name, 1500); renderHotbar(); return; }
   if (is('pipette', c)) return pipette();
+  if (is('copySettings', c)) { copyAt(hover); return; }
+  if (is('pasteSettings', c) && S.clip) { pasteAt(hover); return; }
   if (is('drop', c)) { drop(); renderHotbar(); return; }
   if (is('altMode', c)) { e.preventDefault(); S.altMode = !S.altMode; return; }
   if (is('rotate', c)) {
@@ -234,6 +313,7 @@ view.addEventListener('pointerdown', e => {
   if (!started) return;
   if (S.modal && S.modal !== 'title') closeModals();
   setMouse(e); hover = pick();
+  if (clipClick(combo(e))) { e.preventDefault(); return; }
   if (e.button === 1) { e.preventDefault(); pipette(); return; }
   if (e.button === 2) { rmb = true; return; }    // hold right-click to mine
   if (e.button !== 0 || !hover) return;
@@ -249,12 +329,35 @@ view.addEventListener('pointerdown', e => {
   building = true; lastPaint = null; lastPlacedCell = null;
   paintAt(hover, true);
 });
-addEventListener('pointerup', e => { if (e.button === 2) rmb = false; else building = false; });
+addEventListener('pointerup', e => {
+  if (e.button === 2) { rmb = false; return; }
+  building = false;
+  if (S.dragTiles) { if (S.dragTiles.length) doAction({ a: 'drag', type: S.sel, tiles: S.dragTiles, fac: S.player.fac }); S.dragTiles = null; renderHotbar(); }
+});
 view.addEventListener('wheel', e => {
   if (e.shiftKey && S.mode === 'depth') { setLayer(S.layer + (e.deltaY < 0 ? 1 : -1)); return; }
   zoomStep(e.deltaY > 0 ? -1 : 1);
 }, { passive: true });
 
+// Copy and paste settings (Shift + right / left click by default; see copypaste.js). With a building in hand, copying
+// still reads what is under the cursor.
+function clipClick(code) {
+  if (is('copySettings', code)) { copyAt(pickTarget()); return true; }
+  if (is('pasteSettings', code) && S.clip) { pasteAt(pickTarget()); return true; }
+  return false;
+}
+function copyAt(c) {
+  if (!c) return;
+  const e = world.ents.get(key(c.x, c.y, c.z)), r = c.y === 0 && roadAt(c.x, c.z);
+  if (e) { const clip = copyBuilding(e); if (clip) { setClip(clip); sfx('click'); } return; }
+  if (r && r.w) { setClip({ kind: 'road', from: ITEMS[r.s].name, what: ['lanes', 'markings', 'edges', 'crossings'], data: { road: { l: r.l, m: r.m, e: r.e, c: r.c, w: r.w, sw: false } } }); Object.assign(S.roadCfg, { l: r.l, m: r.m, edges: r.e, cross: r.c, w: r.w }); renderHotbar(); return; }
+  toast('nothing to copy there');
+}
+function pasteAt(c) {
+  if (!c) return;
+  if (distTo(c.x, c.z) > PLAYER.reach + 2) { toast('out of reach'); sfx('error'); return; }
+  doAction({ a: 'paste', x: c.x, y: c.y, z: c.z, clip: S.clip }); sfx('place');
+}
 // With a cable in hand: click one pole, then another. Clicking a linked pair again takes the cable down.
 function linkClick(ent) {
   if (ent?.kind !== 'pole') { toast('cables go between poles: click a pole'); sfx('error'); return; }
@@ -267,6 +370,7 @@ function linkClick(ent) {
 
 function paintAt(c, first) {
   if (ROADS[S.sel]) { paintRoad(c, first); return; }
+  if (ENTITIES[S.sel]?.drag) { paintDrag(c, first); return; }
   if (VEHICLES[S.sel] || ITEMS[S.sel]?.tool === 'signal') {
     if (!first) return;
     if (c.y !== 0) { toast('that goes on the ground layer'); return; }
@@ -301,13 +405,24 @@ function paintAt(c, first) {
   renderHotbar();
 }
 
+// Things laid by dragging across tiles (dams): a straight run from where the drag started, placed on release as one.
+let dragFrom = null;
+function paintDrag(c, first) {
+  if (c.y !== 0) return;
+  if (first) dragFrom = c;
+  const dx = c.x - dragFrom.x, dz = c.z - dragFrom.z, along = Math.abs(dx) >= Math.abs(dz), n = Math.max(Math.abs(dx), Math.abs(dz)), tiles = [];
+  for (let i = 0; i <= Math.min(n, 64); i++) tiles.push(along ? [dragFrom.x + Math.sign(dx) * i, dragFrom.z] : [dragFrom.x, dragFrom.z + Math.sign(dz) * i]);
+  S.dragTiles = tiles;
+  S.dragErr = canPlace(S.sel, c.x, 0, c.z, 0, 0, { tiles, reach: true, fac: S.player.fac }); S.dragOk = !S.dragErr;
+}
 // Dragging a road lays it in straight runs along the drag, every tile, even when the mouse skips some. Each step
 // covers the road's width across the way you move; changing direction starts a new run from the corner.
-let roadDrag = null;
-const layRoad = (x, z, ax) => doAction({ a: 'road', x, z, ax, surf: S.sel, cfg: S.roadCfg });
+let roadDrag = null, strokes = 0;
+// every tile of one drag belongs to one road (see transport.js)
+const layRoad = (x, z, ax) => doAction({ a: 'road', x, z, ax, surf: S.sel, cfg: S.roadCfg, stroke: roadDrag?.stroke });
 function paintRoad(c, first) {
   if (c.y !== 0) { if (first) toast('roads go on the ground layer'); return; }
-  if (first) { roadDrag = { last: c, start: c, a: S.dir % 2, fresh: true }; layRoad(c.x, c.z, roadDrag.a); lastPaint = c; renderHotbar(); return; }
+  if (first) { roadDrag = { last: c, start: c, a: S.dir % 2, fresh: true, stroke: `${S.player.id}.${Date.now() % 1e7}.${strokes++}` }; layRoad(c.x, c.z, roadDrag.a); lastPaint = c; renderHotbar(); return; }
   const d = roadDrag; if (!d) return;
   const dx = c.x - d.last.x, dz = c.z - d.last.z; if (!dx && !dz) return;
   const a = Math.abs(dx) >= Math.abs(dz) ? 1 : 0, step = Math.sign(a ? dx : dz);
@@ -320,6 +435,12 @@ function paintRoad(c, first) {
   renderHotbar();
 }
 
+// The cursor shows the tool that works on what it points at: axe on trees, pickaxe on ore and rock, shovel on weeds.
+let shownCursor = '';
+function setToolCursor() {
+  const t = !S.sel && hover && !S.modal ? mineTargetAt(hover) : null, c = t?.tool && toolCursor(t.tool) || '';
+  if (c !== shownCursor) { shownCursor = c; view.style.cursor = c; }
+}
 // ---------------------------------------------------------------- loop
 let last = performance.now();
 let lastFrame = 0;
@@ -340,6 +461,8 @@ function frame() {
     const paused = S.modal === 'help' && S.net.role === 'solo';   // the menu pauses a solo game
     if (started && S.modal !== 'title' && !paused) {
       hover = pick();
+      if (hover) hover.ctrl = held('ControlLeft') || held('ControlRight');   // Ctrl: mine single tiles
+      setToolCursor();
       S.player.mineCell = rmb && !S.modal ? hover : null;
       const typing = document.activeElement?.tagName === 'INPUT';
       simulate(dt, S.modal || typing ? { mx: 0, mz: 0 } : moveInput());
@@ -347,6 +470,7 @@ function frame() {
       if (building && hover && (!lastPaint || key(hover.x, hover.y, hover.z) !== key(lastPaint.x, lastPaint.y, lastPaint.z))) paintAt(hover, false);
       updateUI(dt, hover);
       updateMap(dt);
+      if ((chartT += dt) > 2) { chartT = 0; for (const p of S.players.values()) ensureChunks(p.x, p.z, 64); }   // the map charts where everyone is
     } else if (!started) S.cam.yawT += dt * .06;
     updateAudio(dt);
     render(dt, started ? hover : null);
@@ -375,7 +499,7 @@ frame();
 
 // Console hooks for testing and tinkering.
 window.depthworks = {
-  S, world, inv, place, removeAt, simulate, begin, beginGuest, save, load, completeResearch, computeVolume, TIERS, held, doAction, host, join, toggleModal,
+  S, world, inv, place, removeAt, simulate, begin, beginGuest, save, load, ensureChunks, completeResearch, computeVolume, TIERS, held, doAction, host, join, toggleModal,
   run(seconds, input) { for (let i = 0; i < seconds * 20; i++) { simulate(.05, input); netTick(.05); } },
   give(it, n = 100) { inv.add(it, n); bus.emit('inv'); },
 };

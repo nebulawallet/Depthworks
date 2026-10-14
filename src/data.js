@@ -17,17 +17,22 @@ export const FLUIDS = {
   diesel: { name: 'Diesel', color: 0xd8b03a, fuel: 1, barrel: true },
   gasoline: { name: 'Gasoline', color: 0x6ad84a, fuel: .9, barrel: true },
   jet_fuel: { name: 'Jet fuel', color: 0x4ac8e8, fuel: 1.5, barrel: true },
+  sulfuric_acid: { name: 'Sulfuric acid', color: 0xd8e04a, barrel: true },
 };
 export const FUELS = Object.keys(FLUIDS).filter(f => FLUIDS[f].fuel);
-export const BARREL_SIZE = 50;
+// A barrel holds 10 of any fluid. Saves from when barrels held 50 get five barrels for each one (see save.js), and a
+// barrel stack is five times bigger, so the same slot still carries the same amount of fluid.
+export const BARREL_SIZE = 10;
+export const OLD_BARREL_SIZE = 50;
 
-// Road surfaces (see roads in sim.js). Each is also the item you lay it with. `speed` is how fast trucks go on it.
+// Road surfaces (see roads in transport.js). Each is also the item you lay it with. `speed` is how fast trucks go on it.
+// A road is one object, everything laid in one drag: mining takes it all up, unless `tileMine` lets Ctrl take one tile.
 export const ROADS = {
   gravel_road:   { name: 'Gravel road', speed: .7, paint: [116, 106, 90] },
   cobble_road:   { name: 'Cobblestone road', speed: .85, paint: [112, 104, 98] },
   asphalt_road:  { name: 'Asphalt road', speed: 1, paint: [50, 52, 58] },
   concrete_road: { name: 'Concrete road', speed: 1, paint: [146, 146, 142] },
-  path_tile:     { name: 'Path', walk: true, paint: [166, 158, 146], desc: 'Paving for people. Walking on it is faster. Roads use it for sidewalks.' },
+  path_tile:     { name: 'Path', walk: true, tileMine: true, paint: [166, 158, 146], desc: 'Paving for people. Walking on it is faster. Roads use it for sidewalks. Ctrl + mine takes up a single tile.' },
 };
 export const ROAD_IDS = Object.keys(ROADS);
 export const MARKINGS = [['none', 'No markings'], ['dashed', 'Dashed centre'], ['solid', 'Solid centre'], ['double', 'Double yellow']];
@@ -60,7 +65,7 @@ export const ITEMS = {
   power_cable:       { name: 'Power cable', color: 0xd88a4a, shape: 'cable', tool: 'link', reach: 32, desc: 'Click two poles of the same voltage to connect them, up to 32 tiles apart. Click a linked pair again to take it down.' },
   transformer_cable: { name: 'Transformer cable', color: 0x6ab8ff, shape: 'cable', tool: 'link', reach: 32, transformer: true, desc: 'Connects a transformer station to a high voltage line, up to 32 tiles away.' },
   rail_signal:    { name: 'Rail signal', color: 0xd84a3a, shape: 'signal', tool: 'signal', desc: 'Click a rail to split the track into blocks there: only one train at a time in each block. R turns which side it stands on.' },
-  barrel:         { name: 'Empty barrel', color: 0x8a96a6, shape: 'barrel', desc: 'Fill it with 50 fluid in a barreling station.' },
+  barrel:         { name: 'Empty barrel', color: 0x8a96a6, shape: 'barrel', desc: `Fill it with ${BARREL_SIZE} of any fluid in a barreling station.` },
   solid_fuel:     { name: 'Solid fuel', color: 0x8a6a3a, shape: 'brick', fuel: 12 },
   rubber:         { name: 'Rubber', color: 0x2a2a2a, shape: 'coil' },
   chassis:        { name: 'Chassis', color: 0x6a7480, shape: 'part' },
@@ -71,10 +76,167 @@ export const ITEMS = {
   fishing_net:    { name: 'Fishing net', color: 0xb8a878, shape: 'net', desc: 'Put it on a boat. The boat catches fish it passes. Past one stack of fish the net strains, and at two it breaks.' },
   raw_fish:       { name: 'Raw fish', color: 0x8ab0c8, shape: 'fish', food: 60, heal: 15, desc: 'Food. Hold it and click to eat: heals a little, and you walk, mine and heal faster for a minute. Cook it in a furnace for more.' },
   cooked_fish:    { name: 'Cooked fish', color: 0xd8904a, shape: 'fish', food: 180, heal: 40, desc: 'Food. Hold it and click to eat: heals, and you walk, mine and heal faster for three minutes.' },
+  // uranium: needs acid to mine with a drill (see `mineFluid`), and only a leaching drill can feed it acid
+  uranium_ore:    { name: 'Uranium ore', color: 0x6ad84a, emissive: 0x1a5a12, shape: 'ore', mineFluid: 'sulfuric_acid', handSlow: 3,
+    desc: 'Drills need sulfuric acid to mine it: only a leaching drill can feed it acid. By hand it is slow, and a little radioactive. Refine it in a centrifuge.' },
+  enriched_uranium: { name: 'Enriched uranium', color: 0x4ae83a, emissive: 0x1a6a12, shape: 'pellet', desc: 'Made from uranium ore in a centrifuge. Goes into nuclear fuel cells.' },
+  uranium_fuel_cell: { name: 'Uranium fuel cell', color: 0x9be37a, emissive: 0x2a6a12, shape: 'cell', nuclear: 4000, desc: 'Fuel for a uranium reactor only: 4000 MJ, a thousand pieces of coal.' },
+  chlorophyll:    { name: 'Chlorophyll', color: 0x3ad84a, emissive: 0x0a3a10, shape: 'vial', desc: 'Pressed from seeds. Goes into green lamps, terrestrial science packs, greenhouses and medical research.' },
+  terrestrial_pack: { name: 'Terrestrial pack', color: 0xb8d84a, shape: 'pack', desc: 'Science of living things: research and the medical lab use it.' },
 };
 for (const id of ROAD_IDS) ITEMS[id] = { name: ROADS[id].name, color: (ROADS[id].paint[0] << 16) | (ROADS[id].paint[1] << 8) | ROADS[id].paint[2], shape: 'road', road: id,
   desc: ROADS[id].desc ?? `Hold it and drag to lay road. The road panel next to your hand sets width, lanes, markings and sidewalks. Trucks drive at ${Math.round(ROADS[id].speed * 100)}% speed on it.` };
 for (const [f, d] of Object.entries(FLUIDS)) if (d.barrel) ITEMS[f + '_barrel'] = { name: d.name + ' barrel', color: d.color, shape: 'barrel', barrel: f, desc: `${BARREL_SIZE} ${d.name.toLowerCase()}. Empty it in a barreling station${d.fuel ? ', a depot or a vehicle that burns it' : ''}.` };
+
+// ---------------------------------------------------------------- crops
+// Every biome grows three crops. Each crop is a seed (from shovelling weedy patches, or a greenhouse's surplus) and the
+// harvest a greenhouse grows from it. Harvests are food. `irr`: irradiated, from the Pripyatic wastes: these unlock
+// the mutation upgrades in the medical lab.
+export const CROPS = {
+  wheat: { name: 'Wheat', color: 0xd8b84a }, flax: { name: 'Flax', color: 0x7a9ad8 }, clover: { name: 'Clover', color: 0x5ab84a },
+  blueberry: { name: 'Blueberry', color: 0x4a5ad8 }, hops: { name: 'Hops', color: 0x9ad86a }, beet: { name: 'Beet', color: 0xa83a5a },
+  millet: { name: 'Millet', color: 0xe0c88a }, sunflower: { name: 'Sunflower', color: 0xf0c83a }, sorghum: { name: 'Sorghum', color: 0xb8643a },
+  rye: { name: 'Rye', color: 0xb89a5a }, cranberry: { name: 'Cranberry', color: 0xd83a4a }, potato: { name: 'Potato', color: 0xc8a06a },
+  rice: { name: 'Rice', color: 0xe8e4d0 }, reedgrass: { name: 'Reedgrass', color: 0x8a9a4a }, taro: { name: 'Taro', color: 0x8a6aa8 },
+  prickly_pear: { name: 'Prickly pear', color: 0xd85a8a }, date_palm: { name: 'Dates', color: 0x9a5a2a }, agave: { name: 'Agave', color: 0x6ab8a0 },
+  lichen: { name: 'Lichen', color: 0x9ab8a0 }, snowberry: { name: 'Snowberry', color: 0xe8f0f8 }, arctic_moss: { name: 'Arctic moss', color: 0x6a9a7a },
+  emberroot: { name: 'Emberroot', color: 0xe8603a, glow: 0x6a1a08 }, ash_pepper: { name: 'Ash pepper', color: 0x5a5a5a }, cinderbloom: { name: 'Cinderbloom', color: 0xff8a2a, glow: 0x6a2a08 },
+  glowspore: { name: 'Glowspore', color: 0x7ef6c8, glow: 0x1a6a5a }, puffball: { name: 'Puffball', color: 0xd8c8e8 }, threadmold: { name: 'Threadmold', color: 0xb07ad8 },
+  chimegrass: { name: 'Chimegrass', color: 0x9fe8f2 }, prism_lily: { name: 'Prism lily', color: 0xd8a8ff, glow: 0x3a1a6a }, shardroot: { name: 'Shardroot', color: 0x7ab8d8 },
+  wormwood: { name: 'Wormwood', color: 0x9ab83a, glow: 0x2a4a08, irr: true }, rust_potato: { name: 'Rust potato', color: 0xa8603a, irr: true }, ghost_rye: { name: 'Ghost rye', color: 0xd8f0a8, glow: 0x3a5a1a, irr: true },
+};
+export const seedId = c => c + '_seeds';
+for (const [id, c] of Object.entries(CROPS)) {
+  ITEMS[seedId(id)] = { name: `${c.name} seeds`, color: c.color, emissive: c.glow, shape: 'seed', seed: id, irr: !!c.irr,
+    desc: `Plant them in a greenhouse with water to grow ${c.name.toLowerCase()}. Pressed, any seeds make chlorophyll.${c.irr ? ' Irradiated: they open the mutation upgrades in the medical lab.' : ''}` };
+  ITEMS[id] = { name: c.name, color: c.color, emissive: c.glow, shape: 'crop', crop: id, irr: !!c.irr, food: 25, heal: 6,
+    desc: `Grown in a greenhouse. Food (hold it and click to eat), and the medical lab needs it for some upgrades.${c.irr ? ' Irradiated.' : ''}` };
+}
+// Ingredient groups: a recipe ingredient written '#seed' takes any item of the group.
+export const GROUPS = { seed: { name: 'Any seeds', icon: 'wheat_seeds', match: it => !!ITEMS[it]?.seed } };
+export const groupOf = k => k[0] === '#' ? GROUPS[k.slice(1)] : null;
+export const ingredientMatches = (k, it) => k === it || !!groupOf(k)?.match(it);
+
+// ---------------------------------------------------------------- hazards and biomes
+// Hazards build up while you stand in a biome that has one and fade once you leave. At full exposure their effects
+// apply, less whatever the matching adaptation (medical lab) takes off. None of them can kill you. Effects:
+// staminaRegen / walk / mine / craft: fractions added to that rate; sprintCost: extra stamina per sprint;
+// reach: tiles; regen: fraction of health regen; drain: health per second, never below half.
+export const HAZARDS = {
+  heat: { name: 'Heat', color: '#ff8a3d', fx: { staminaRegen: -.5 }, desc: 'Stamina comes back at half speed.' },
+  cold: { name: 'Cold', color: '#9fd0ff', fx: { walk: -.15 }, desc: 'You walk 15% slower.' },
+  fumes: { name: 'Toxic fumes', color: '#d8c84a', fx: { sprintCost: 1, staminaRegen: -.25 }, desc: 'Sprinting costs twice the stamina, and it comes back slower.' },
+  spores: { name: 'Neurotoxic spores', color: '#c08aff', fx: { mine: -.25, craft: -.25 }, desc: 'Hand mining and hand crafting are 25% slower.' },
+  resonance: { name: 'Resonance', color: '#7ef6ff', fx: { reach: -3 }, desc: 'The ringing in the ground shortens your reach by 3 tiles.' },
+  radiation: { name: 'Radiation', color: '#9be37a', fx: { regen: -1, drain: .4 }, desc: 'Health stops coming back and slowly drains, down to half.' },
+};
+export const EXPOSURE_TIME = 12;   // seconds to full exposure, and to recover from it
+// Trees, rocks and other things standing on the ground that you mine by hand. `tool` decides which tool works on it
+// (and which cursor shows). `look` is how the scene draws it: a crown shape and colours.
+export const FEATURES = {
+  tree: { name: 'Oak', tool: 'axe', time: .6, gives: { wood: 4 }, look: { shape: 'round', trunk: 0x5a3a22, hue: .3, hueV: .16, sat: .38, lit: .25 } },
+  birch: { name: 'Birch', tool: 'axe', time: .55, gives: { wood: 3 }, look: { shape: 'round', trunk: 0xd8d4c8, hue: .22, hueV: .06, sat: .45, lit: .38, slim: true } },
+  pine: { name: 'Pine', tool: 'axe', time: .65, gives: { wood: 4 }, look: { shape: 'cone', trunk: 0x4a3020, hue: .38, hueV: .06, sat: .35, lit: .2 } },
+  snow_pine: { name: 'Snowy pine', tool: 'axe', time: .7, gives: { wood: 4 }, look: { shape: 'cone', trunk: 0x4a3020, hue: .45, hueV: .05, sat: .12, lit: .62 } },
+  acacia: { name: 'Acacia', tool: 'axe', time: .6, gives: { wood: 3 }, look: { shape: 'flat', trunk: 0x6a4a2a, hue: .2, hueV: .05, sat: .4, lit: .3 } },
+  willow: { name: 'Willow', tool: 'axe', time: .6, gives: { wood: 4 }, look: { shape: 'droop', trunk: 0x4a3a22, hue: .27, hueV: .05, sat: .35, lit: .28 } },
+  cactus: { name: 'Cactus', tool: 'axe', time: .5, gives: { wood: 1 }, look: { shape: 'cactus', trunk: 0x4a8a3a, hue: .3, hueV: .03, sat: .45, lit: .32 } },
+  deadwood: { name: 'Dead tree', tool: 'axe', time: .4, gives: { wood: 2 }, look: { shape: 'dead', trunk: 0x6a5a4a } },
+  charred: { name: 'Charred tree', tool: 'axe', time: .45, gives: { wood: 1, coal: 2 }, look: { shape: 'dead', trunk: 0x2a2624, ember: 0xff5a1a } },
+  glowcap: { name: 'Glowcap', tool: 'axe', time: .5, gives: { wood: 2 }, look: { shape: 'cap', trunk: 0xd8d0c0, hue: .48, hueV: .2, sat: .6, lit: .45, glow: 0x1a6a5a } },
+  crystal_spire: { name: 'Crystal spire', tool: 'pickaxe', time: 1.2, gives: { stone: 8 }, look: { shape: 'spire', trunk: 0x9fe8f2, glow: 0x1d6a77 } },
+  mutant_tree: { name: 'Mutant tree', tool: 'axe', time: .6, gives: { wood: 3 }, look: { shape: 'round', trunk: 0x4a4a3a, hue: .2, hueV: .08, sat: .55, lit: .3, glow: 0x2a4a08, lumpy: true } },
+  rock: { name: 'Rock', tool: 'pickaxe', time: 1.6, gives: { stone: 20, coal: 6 }, look: { shape: 'rock', trunk: 0x8f8576 } },
+  ice_rock: { name: 'Frozen rock', tool: 'pickaxe', time: 1.6, gives: { stone: 16 }, look: { shape: 'rock', trunk: 0xc8d8e8 } },
+  ash_rock: { name: 'Ash rock', tool: 'pickaxe', time: 1.4, gives: { stone: 10, coal: 12 }, look: { shape: 'rock', trunk: 0x4a4440 } },
+};
+// Biomes. `clim` is where the biome sits in climate space: temperature, moisture and weirdness, each 0 to 1. Every tile
+// takes the biome closest to its own climate, and borders blend. `spawn`: how much the landing site likes it (0: never).
+// `ground` is the soil (name, palette). Ore tables give each ore an abundance `w`, a patch scale `size`, a richness
+// `rich` and a pattern ('blob', 'vein' or 'scatter'). `under` and `deep` are layers -1 and -2. `trees` weights tree
+// kinds; `flora` is ground cover drawn for looks: [kind, colour, share of tiles, glows]; `patches` is the share of
+// weedy ground (its tangle drawn in `weed`, else the first flora colour); `seeds` are the three crops whose seeds its weedy patches give.
+export const BIOMES = [
+  { id: 'meadow', name: 'Temperate meadow', clim: [.5, .5, .15], spawn: 4, hazard: null, ground: { name: 'Meadow soil', pal: [[62, 70, 40], [80, 92, 52], [70, 80, 46], [94, 100, 60]] },
+    ores: { iron_ore: { w: 1 }, copper_ore: { w: 1 }, coal: { w: 1 }, stone: { w: .8 } }, under: { crystal: { w: 1 }, iron_ore: { w: .6, rich: 3 }, copper_ore: { w: .5, rich: 3 } }, deep: { abyssal_ore: { w: 1, rich: 2 }, crystal: { w: .3, rich: 3 } },
+    trees: { tree: 3, birch: 1 }, treeDensity: .5, rocks: .004, flora: [['tuft', 0x5a8a3a, .2], ['flower', 0xe0d04a, .03], ['flower', 0xd84a8a, .02]], patches: .06, oil: .25, seeds: ['wheat', 'flax', 'clover'] },
+  { id: 'forest', name: 'Old forest', clim: [.42, .72, .2], spawn: 3, hazard: null, ground: { name: 'Forest loam', pal: [[52, 52, 34], [66, 70, 42], [58, 60, 38], [76, 78, 48]] },
+    ores: { iron_ore: { w: 1.1 }, coal: { w: 1.2 }, stone: { w: .7 }, copper_ore: { w: .6 } }, under: { crystal: { w: .8 }, iron_ore: { w: .8, rich: 3 } }, deep: { abyssal_ore: { w: 1, rich: 2 } },
+    trees: { tree: 3, pine: 2, birch: 1 }, treeDensity: 1, rocks: .006, flora: [['tuft', 0x3a6a2a, .22], ['fern', 0x3a7a3a, .08], ['shroom', 0xc8603a, .01]], patches: .05, oil: .2, seeds: ['blueberry', 'hops', 'beet'] },
+  { id: 'steppe', name: 'Dry steppe', clim: [.66, .3, .2], spawn: 3, hazard: null, ground: { name: 'Steppe dirt', pal: [[96, 84, 56], [116, 100, 66], [104, 92, 60], [128, 112, 74]] },
+    ores: { copper_ore: { w: 1.2, size: 1.4 }, stone: { w: 1.2, size: 1.3 }, iron_ore: { w: .8 }, coal: { w: .7 } }, under: { crystal: { w: .7 }, copper_ore: { w: .9, rich: 3 } }, deep: { abyssal_ore: { w: .8, rich: 2 } },
+    trees: { acacia: 2, tree: 1 }, treeDensity: .15, rocks: .006, flora: [['tuft', 0x9a9a4a, .25], ['tuft', 0xb8a85a, .1]], patches: .05, oil: .45, seeds: ['millet', 'sunflower', 'sorghum'] },
+  { id: 'taiga', name: 'Boreal taiga', clim: [.25, .6, .2], spawn: 2, hazard: null, ground: { name: 'Taiga peat', pal: [[56, 58, 46], [70, 74, 58], [62, 66, 52], [82, 86, 68]] },
+    ores: { iron_ore: { w: 1.3, size: 1.2 }, coal: { w: 1 }, stone: { w: 1 }, copper_ore: { w: .6 } }, under: { iron_ore: { w: 1, rich: 3 }, crystal: { w: .7 } }, deep: { abyssal_ore: { w: 1, rich: 2 } },
+    trees: { pine: 4, snow_pine: 1, birch: 1 }, treeDensity: .9, rocks: .008, flora: [['tuft', 0x4a6a4a, .15], ['berry', 0xd83a4a, .02]], patches: .05, oil: .2, seeds: ['rye', 'cranberry', 'potato'] },
+  { id: 'marsh', name: 'Fen', clim: [.55, .92, .25], spawn: 1, hazard: null, wet: 1, ground: { name: 'Fen mud', pal: [[48, 54, 40], [60, 68, 48], [54, 60, 44], [70, 78, 54]] },
+    ores: { coal: { w: 1.3, rich: 1.3 }, iron_ore: { w: .6 }, copper_ore: { w: .8 } }, under: { coal: { w: .8, rich: 3 }, crystal: { w: .6 } }, deep: { abyssal_ore: { w: .8, rich: 2 } },
+    trees: { willow: 3, tree: 1 }, treeDensity: .45, rocks: .002, flora: [['reed', 0x8a9a4a, .25], ['tuft', 0x4a7a4a, .1]], patches: .07, oil: .5, seeds: ['rice', 'reedgrass', 'taro'] },
+  { id: 'desert', name: 'Glass desert', clim: [.93, .08, .3], spawn: 0, hazard: 'heat', dry: 1, ground: { name: 'Sand', pal: [[176, 152, 104], [196, 172, 120], [184, 160, 110], [206, 184, 132]] },
+    ores: { copper_ore: { w: 1.4, pat: 'vein', rich: 1.4 }, stone: { w: 1.5, size: 1.6 }, iron_ore: { w: .5 } }, under: { copper_ore: { w: 1, rich: 4 }, crystal: { w: .8 } }, deep: { abyssal_ore: { w: 1, rich: 2.5 } },
+    trees: { cactus: 1 }, treeDensity: .08, weed: 0x8a8a4a, rocks: .006, flora: [['tuft', 0xb8a86a, .05], ['shard', 0xe8d8a8, .02]], patches: .03, oil: .9, seeds: ['prickly_pear', 'date_palm', 'agave'] },
+  { id: 'tundra', name: 'Frost waste', clim: [.04, .35, .3], spawn: 0, hazard: 'cold', ground: { name: 'Frozen ground', pal: [[176, 186, 196], [204, 212, 220], [188, 198, 208], [220, 226, 232]] },
+    ores: { iron_ore: { w: 1.5, size: 1.5, rich: 1.3 }, coal: { w: 1.2 }, stone: { w: .8 } }, under: { iron_ore: { w: 1.1, rich: 4 }, crystal: { w: 1 } }, deep: { abyssal_ore: { w: 1.1, rich: 2.5 } },
+    trees: { snow_pine: 2, deadwood: 1 }, treeDensity: .12, weed: 0x6a7a70, rocks: .01, rockKind: 'ice_rock', flora: [['tuft', 0x8a9aa0, .06], ['shard', 0xe8f0ff, .02]], patches: .04, oil: .3, seeds: ['lichen', 'snowberry', 'arctic_moss'] },
+  { id: 'ashlands', name: 'Ashlands', clim: [.9, .5, .95], spawn: 0, hazard: 'fumes', dry: 1, ground: { name: 'Ash', pal: [[48, 42, 40], [62, 54, 50], [56, 48, 44], [74, 64, 58]] },
+    ores: { coal: { w: 1.6, pat: 'scatter', rich: 1.6 }, iron_ore: { w: 1, pat: 'scatter', rich: 1.4 }, stone: { w: 1 } }, under: { abyssal_ore: { w: .5, rich: 2 }, crystal: { w: .6 } }, deep: { abyssal_ore: { w: 1.6, rich: 3 } },
+    trees: { charred: 2, deadwood: 1 }, treeDensity: .15, rocks: .012, rockKind: 'ash_rock', weed: 0x6a4a3a, flora: [['ember', 0xff5a1a, .03, true], ['shard', 0x3a3430, .05]], patches: .04, oil: .7, seeds: ['emberroot', 'ash_pepper', 'cinderbloom'] },
+  { id: 'fungal', name: 'Glowcap hollows', clim: [.45, .8, .95], spawn: 0, hazard: 'spores', ground: { name: 'Mycelium', pal: [[60, 46, 66], [76, 58, 82], [68, 52, 74], [88, 68, 92]] },
+    ores: { copper_ore: { w: 1 }, stone: { w: .8 }, coal: { w: .8 }, iron_ore: { w: .7 } }, under: { crystal: { w: 1.3, rich: 2 } }, deep: { abyssal_ore: { w: 1, rich: 2 } },
+    trees: { glowcap: 4, tree: 1 }, treeDensity: .75, rocks: .004, flora: [['shroom', 0x7ef6c8, .1, true], ['shroom', 0xd8a8ff, .05, true], ['tuft', 0x6a4a7a, .1]], patches: .07, oil: .2, seeds: ['glowspore', 'puffball', 'threadmold'] },
+  { id: 'crystal', name: 'Singing steppe', clim: [.25, .25, .95], spawn: 0, hazard: 'resonance', ground: { name: 'Glass silt', pal: [[96, 104, 120], [112, 122, 140], [104, 112, 130], [124, 134, 152]] },
+    ores: { stone: { w: 1.4, pat: 'vein' }, copper_ore: { w: 1.1 }, iron_ore: { w: .8 } }, under: { crystal: { w: 2, rich: 3 } }, deep: { crystal: { w: 1, rich: 4 }, abyssal_ore: { w: .8, rich: 2 } },
+    trees: { crystal_spire: 1 }, treeDensity: .12, weed: 0x6a8a98, rocks: .004, flora: [['shard', 0x9fe8f2, .08, true], ['tuft', 0x8aa0b8, .08]], patches: .04, oil: .15, seeds: ['chimegrass', 'prism_lily', 'shardroot'] },
+  { id: 'pripyat', name: 'Pripyatic wastes', clim: [.62, .4, .95], spawn: 0, hazard: 'radiation', ground: { name: 'Fallout dust', pal: [[78, 80, 58], [94, 98, 70], [86, 88, 64], [106, 110, 78]] },
+    ores: { uranium_ore: { w: 1.7, size: 1.1, rich: 1.2 }, iron_ore: { w: 1 }, stone: { w: .8 }, copper_ore: { w: .6 } }, under: { uranium_ore: { w: .8, rich: 3 }, crystal: { w: .5 } }, deep: { abyssal_ore: { w: 1, rich: 2 } },
+    trees: { mutant_tree: 3, deadwood: 2 }, treeDensity: .35, rocks: .008, flora: [['tuft', 0x9ab83a, .12], ['glowtuft', 0xb8f04a, .03, true]], patches: .06, oil: .4, seeds: ['wormwood', 'rust_potato', 'ghost_rye'] },
+];
+export const BIOME = Object.fromEntries(BIOMES.map((b, i) => [b.id, i]));
+// Uranium shows up outside the wastes too, rarely, but never near the landing site.
+export const STRAY_ORES = { uranium_ore: { w: .06, pat: 'scatter', rich: .8, far: 300 } };
+// World options for a new game. Sizes are tiles per side.
+export const WORLD = { sizes: [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536], size: 2048, min: 500, max: 65536, chunk: 32,
+  biomeScale: { small: 300, normal: 520, large: 900 }, water: { low: .8, normal: 1, high: 1.25 }, ores: { poor: .6, normal: 1, rich: 1.6 } };
+
+// ---------------------------------------------------------------- tools
+// The engineer always carries an axe and a pickaxe (the shovel comes with Soil science). Each tool mines what it is
+// for: trees with the axe, ore and rocks with the pickaxe, weedy patches with the shovel. Research makes them faster
+// (`speed`: mining speed per level) and wider (`radius`: everything of its kind this close to what you mine goes too).
+export const TOOLS = {
+  axe: { name: 'Axe', color: 0xc8483a, speed: [1.4, 1.9, 2.6], radius: [1, 1.8, 2.6], packs: [['red_pack'], ['red_pack', 'green_pack'], ['red_pack', 'green_pack', 'blue_pack']],
+    desc: 'Fells trees. Hold right-click on one.' },
+  pickaxe: { name: 'Pickaxe', color: 0x9aa8b8, speed: [1.4, 1.9, 2.6], radius: [1, 1.8, 2.6], packs: [['red_pack'], ['red_pack', 'green_pack'], ['red_pack', 'green_pack', 'blue_pack']],
+    desc: 'Breaks ore and rock. Hold right-click on a deposit or a rock.' },
+  shovel: { name: 'Shovel', color: 0xc8a050, tech: 'soil_science', speed: [1.5, 2.2, 3], radius: [1, 1.8, 2.6], packs: [['red_pack', 'green_pack'], ['red_pack', 'green_pack', 'blue_pack'], ['red_pack', 'green_pack', 'blue_pack', 'terrestrial_pack']],
+    desc: 'Digs up weedy patches for seeds. Hold right-click on one.' },
+};
+
+// ---------------------------------------------------------------- the medical lab
+// Upgrades for every engineer in the world, researched in medical labs with terrestrial packs and chlorophyll (and a
+// crop for adaptations and mutations). Each level costs `units` × growth^level units; a unit takes one of each item
+// in `cost`. `fx` is what one level adds (see playerMods in sim.js). Adaptations take a share off one hazard per level.
+// Mutations need irradiated seeds to have been found first.
+export const MEDICAL = [
+  { id: 'vitality', name: 'Vitality', levels: 5, units: 60, fx: { health: 20 }, desc: '+20 maximum health a level.' },
+  { id: 'endurance', name: 'Endurance', levels: 5, units: 60, fx: { stamina: 20 }, desc: '+20 maximum stamina a level.' },
+  { id: 'recovery', name: 'Recovery', levels: 4, units: 80, fx: { regen: .3 }, desc: 'Health comes back 30% faster a level.' },
+  { id: 'stride', name: 'Stride', levels: 4, units: 80, fx: { walk: .05 }, desc: 'Walk 5% faster a level.' },
+  { id: 'dexterity', name: 'Dexterity', levels: 4, units: 80, fx: { mine: .1, craft: .1 }, desc: 'Hand mining and crafting 10% faster a level.' },
+  { id: 'reach_training', name: 'Long reach', levels: 3, units: 100, fx: { reach: 1 }, desc: '+1 tile of reach a level.' },
+  { id: 'adapt_heat', name: 'Heat adaptation', levels: 2, units: 80, hazard: 'heat', crop: 'prickly_pear', desc: 'Halves the effect of heat a level.' },
+  { id: 'adapt_cold', name: 'Cold adaptation', levels: 2, units: 80, hazard: 'cold', crop: 'snowberry', desc: 'Halves the effect of cold a level.' },
+  { id: 'adapt_fumes', name: 'Fume tolerance', levels: 2, units: 80, hazard: 'fumes', crop: 'emberroot', desc: 'Halves the effect of toxic fumes a level.' },
+  { id: 'adapt_spores', name: 'Neurotoxin resistance', levels: 2, units: 80, hazard: 'spores', crop: 'puffball', desc: 'Halves the effect of neurotoxic spores a level.' },
+  { id: 'adapt_resonance', name: 'Resonance damping', levels: 2, units: 80, hazard: 'resonance', crop: 'prism_lily', desc: 'Halves the effect of resonance a level.' },
+  { id: 'adapt_radiation', name: 'Radiation resistance', levels: 2, units: 100, hazard: 'radiation', crop: 'wormwood', desc: 'Halves the effect of radiation a level.' },
+  { id: 'photosynthesis', name: 'Photosynthetic skin', levels: 3, units: 120, mutation: true, crop: 'ghost_rye', fx: { sunHeal: 1.5 }, desc: 'Mutation: heal 1.5 health a second a level in daylight.' },
+  { id: 'night_eyes', name: 'Night eyes', levels: 2, units: 120, mutation: true, crop: 'wormwood', fx: { light: .6 }, desc: 'Mutation: your own light reaches 60% further a level.' },
+  { id: 'lead_lungs', name: 'Lead lungs', levels: 2, units: 150, mutation: true, crop: 'rust_potato', fx: { hazards: .25 }, desc: 'Mutation: every hazard is 25% weaker a level.' },
+  { id: 'adrenal', name: 'Adrenal gland', levels: 3, units: 120, mutation: true, crop: 'ghost_rye', fx: { sprint: .1 }, desc: 'Mutation: sprinting is 10% faster a level.' },
+];
+export const MED = Object.fromEntries(MEDICAL.map(m => [m.id, m]));
+export const MED_RULES = { growth: 1.8, time: 30, cost: { terrestrial_pack: 1, chlorophyll: 2 } };
+for (const m of MEDICAL) if (m.hazard) HAZARDS[m.hazard].adapt = m.id;
 
 // Engines burn one fuel each. A vehicle's engine and frame decide how fast it goes and what it burns.
 export const ENGINES = {
@@ -168,7 +330,10 @@ export const ENTITIES = {
   water_pump:       { name: 'Water pump', kind: 'pump', onWater: true, fluids: { water: 'out' }, rate: 1200, color: 0x3a7ab8, vol: .4, glyph: 'flow', desc: 'Place it on water. Pumps up to 1200 water/s into boilers next to it: enough for 20.' },
   boiler:           { name: 'Boiler', kind: 'boiler', burner: true, fuelStacks: 1, fluids: { water: 'in', steam: 'out' }, heat: 1.8, steam: 60, color: 0x8a5a3a, vol: 1, glyph: 'heat', desc: 'Burns fuel to turn 60 water/s into steam (1.8 MW). Boilers and engines pass water and steam to neighbours.' },
   steam_engine:     { name: 'Steam engine', kind: 'engine', fluids: { steam: 'in' }, out: 900, steam: 30, color: 0x7a8a6a, vol: 1.5, glyph: 'spark', desc: 'Turns 30 steam/s into up to 900 kW. Only works as hard as the network needs. Put it in a pole\'s area.' },
-  solar:            { name: 'Solar panel', kind: 'solar', out: 60, color: 0x2a4a7a, vol: 1, glyph: 'shine', desc: '60 kW from starlight, forever.' },
+  solar:            { name: 'Solar panel', kind: 'solar', out: 60, color: 0x2a4a7a, vol: 1, glyph: 'shine', desc: 'Up to 60 kW in daylight, less at dusk and dawn, nothing at night.' },
+  // Lamps come on by themselves when it gets dark. `light`: radius in tiles and colour of the pool of light.
+  lamp:             { name: 'Lamp', kind: 'lamp', power: 5, light: { r: 7.5, color: 0xfff0d0 }, color: 0xc3cad3, vol: .1, glyph: 'shine', desc: 'Lights the ground around it at night (5 kW). Put it in a pole\'s area.' },
+  brazier:          { name: 'Brazier', kind: 'lamp', burner: true, burn: .02, light: { r: 5.5, color: 0xffa04a, flicker: true }, color: 0x8f8373, vol: .1, glyph: 'heat', desc: 'Burns coal or wood to light the ground at night. A piece of coal lasts about a night.' },
   transmitter:      { name: 'Transmitter', kind: 'transmitter', power: 500, color: 0x4b4f5a, vol: 3, glyph: 'pulse', desc: 'Sends what it hears around it. Burns resonance packs.' },
   // Fluid handling (fluids.js). `cap` is how much fluid one tile holds. Pipe-like things carry whatever their line carries.
   pipe:             { name: 'Pipe', kind: 'pipe', cap: 100, color: 0x8a96a6, vol: .05, glyph: 'flow', desc: 'Carries one fluid. Joins every pipe and fluid port next to it, so lines branch wherever pipes meet. Long lines carry less per second.' },
@@ -190,13 +355,56 @@ export const ENTITIES = {
   truck_depot:      { name: 'Truck depot', kind: 'depot', way: 'road', cap: 32, fluidCap: 1000, color: 0x3a7ad8, vol: 1, glyph: 'keep', desc: 'Put it beside a road. Trucks park at the road tile next to it, refuel, and load or unload.' },
   port:             { name: 'Port', kind: 'depot', way: 'sea', cap: 48, fluidCap: 2000, color: 0x4a8aa8, vol: 1, glyph: 'keep', desc: 'Put it on the shore. Boats dock at the water next to it, refuel, and load or unload. Fish from nets unload here too.' },
   rail:             { name: 'Rail', kind: 'rail', shared: true, onRoad: true, color: 0x8a7a6a, vol: 0, glyph: 'flow', desc: 'Drag to lay track. Rails join every rail next to them: corners curve, three or four ways make a junction. Trains belong to no factory.' },
+  // Advanced fluids. `flow` multiplies how much a line can carry: a line is as quick as its slowest pipe.
+  steel_pipe:       { name: 'Steel pipe', kind: 'pipe', cap: 100, flow: 5, color: 0x5a6a7c, vol: .08, glyph: 'flow', desc: 'A pipe that carries five times as much. A line is only as quick as its slowest pipe, so a high pressure pump needs steel all the way.' },
+  underground_steel_pipe: { name: 'Underground steel pipe', kind: 'upipe', cap: 100, flow: 5, range: 16, color: 0x4a5866, vol: .25, glyph: 'tunnel', desc: 'Steel underground pipe: ends up to 15 tiles apart, and five times the flow.' },
+  // Irrigation: water only. Joins greenhouses, other irrigation pipes and water pipes. Greenhouses on one network share
+  // its water by what each needs, so there is nothing to set up.
+  irrigation_pipe:  { name: 'Irrigation pipe', kind: 'pipe', irrigation: true, cap: 100, color: 0x4a8a5a, vol: .05, glyph: 'flow', desc: 'Carries water to greenhouses on any side of them, and between greenhouses. Every greenhouse on the line gets what it needs while there is water to go round. Joins water pipes too.' },
+  underground_irrigation: { name: 'Underground irrigation pipe', kind: 'upipe', irrigation: true, cap: 100, range: 11, color: 0x3a7a4a, vol: .2, glyph: 'tunnel', desc: 'Place one end, then the other up to 10 tiles ahead, facing the same way. Water passes under belts, roads and rails between.' },
+  steel_irrigation_pipe: { name: 'Steel irrigation pipe', kind: 'pipe', irrigation: true, flow: 5, cap: 100, color: 0x3a6a5a, vol: .08, glyph: 'flow', desc: 'Irrigation pipe with five times the flow, for big greenhouse networks.' },
+  underground_steel_irrigation: { name: 'Underground steel irrigation pipe', kind: 'upipe', irrigation: true, flow: 5, cap: 100, range: 16, color: 0x2a5a4a, vol: .25, glyph: 'tunnel', desc: 'Steel underground irrigation: ends up to 15 tiles apart, five times the flow.' },
+  hp_pump:          { name: 'High pressure pump', kind: 'pump', onWater: true, fluids: { water: 'out' }, rate: 3600, fullRate: 'steel', cap: 200, color: 0x2a5a98, vol: .6, glyph: 'flow',
+    desc: 'Place it on water. Pumps 3600 water/s, three water pumps\' worth: enough for 60 boilers and 120 steam engines, or two coolant towers. Only at full rate when its line is steel pipe all the way; through iron pipe it pumps 1200/s.' },
+  green_lamp:       { name: 'Green lamp', kind: 'lamp', power: 5, light: { r: 7.5, color: 0x6aff7a }, color: 0x7ad88a, vol: .1, glyph: 'shine', desc: 'A lamp with a green light (5 kW). Lit green lamps next to a greenhouse make it grow 20% faster each, up to two.' },
+  // Greenhouses are one room per group of touching greenhouse tiles (see multi.js): a greenhouse is 25 tiles, a panel
+  // one. Mining a room takes all of it; Ctrl + mining takes one tile.
+  greenhouse:       { name: 'Greenhouse', kind: 'greenhouse', size: [5, 5], multi: true, merge: true, tileMine: true, tileItem: 'greenhouse_panel', perItem: 25, water: 1.5, color: 0x7ad88a, vol: 2, glyph: 'keep',
+    desc: 'A 5×5 glass room for growing crops. Touching greenhouses join into one room. Put seeds in with an inserter (or by hand), lead water in with irrigation pipe on any side, and inserters take out the harvest and spare seeds. Ctrl + mine removes one tile.' },
+  greenhouse_panel: { name: 'Greenhouse panel', kind: 'greenhouse', as: 'greenhouse', size: [1, 1], multi: true, merge: true, tileMine: true, tileItem: 'greenhouse_panel', perItem: 1, water: 1.5, color: 0x8ae89a, vol: .1, glyph: 'keep',
+    desc: 'One tile of greenhouse. Place it against a greenhouse to grow the room. 25 make a greenhouse.' },
+  medical_lab:      { name: 'Medical lab', kind: 'medlab', speed: 1, power: 120, color: 0xe8e0e8, vol: 2, glyph: 'think', desc: 'Researches upgrades for every engineer in the world, using terrestrial packs, chlorophyll and crops. Choose them in research (T), Medical tab.' },
+  // Nuclear. The leaching drill feeds sulfuric acid into the ground, which uranium needs.
+  leach_drill:      { name: 'Leaching drill', kind: 'drill', rate: .4, depth: 1, power: 150, cap: 100, acid: 10, ports: [{ side: 2, io: 'in', fluid: 'sulfuric_acid' }], color: 0x6a8a3a, vol: 1.2, glyph: 'bore',
+    desc: 'An electric drill that pumps sulfuric acid into the deposit (10 a piece of ore, piped in at the back). The only drill that can mine uranium; it mines anything else too.' },
+  centrifuge:       { name: 'Centrifuge', kind: 'assembler', model: 'centrifuge', cats: ['centrifuge'], speed: 1, power: 350, augSlots: 2, color: 0x9ab83a, vol: 2, glyph: 'make', desc: 'Spins uranium ore into enriched uranium.' },
+  reactor:          { name: 'Uranium reactor', kind: 'reactor', fluids: { water: 'in', steam: 'out' }, steam: 2000, heat: 60, cap: 2000, color: 0x5a6a4a, vol: 4, glyph: 'heat',
+    repair: { steel: 40, adv_circuit: 10, brick: 20 }, scrap: { steel: 20, brick: 10 },
+    desc: 'Burns uranium fuel cells to boil 2000 water/s into steam: 60 MW, the most of anything, and a fuel cell lasts over a minute at full power. Pipes join water at its left and right, steam at its front and back; steam engines and coolant towers can simply touch it. It runs hot: coolant towers touching it must keep it cool, or it breaks.' },
+  coolant_tower:    { name: 'Coolant tower', kind: 'coolant', fluids: { water: 'in' }, cool: 1800, cap: 2000, color: 0xa8b0b8, vol: 2, glyph: 'flow',
+    repair: { steel: 20, pipe: 10 }, scrap: { steel: 10 },
+    desc: 'Put it against a uranium reactor and pipe water to it. One tower cools a reactor at full power, drawing up to 1800 water/s. Short of water, the reactor heats up and both break.' },
+  // A dam is one object: drag it across water, one tile of dam a tile. It needs some power to run, then gives a lot.
+  dam:              { name: 'Dam', kind: 'dam', multi: true, onWater: true, drag: true, merge: true, tileMine: false, onRoad: true, hv: true, power: 300, outTile: 180, current: 1, color: 0x8a8478, vol: 3, glyph: 'spark',
+    desc: 'Drag it across water: every tile is one dam. Needs 300 kW to run its gates; running, it gives 180 kW a tile on still water and more on a river\'s current. It is high voltage: power it with a power line, or a transformer station. Roads can go on top.' },
 };
 // How fluids connect: `fluids` buildings join neighbours on every side. Boilers take pipes only at their drum ends
 // (water) and back (steam), so one pipe can't touch both. `ports` machines connect only at the listed sides.
 ENTITIES.boiler.pipeSides = { water: [1, 3], steam: [2] };
+ENTITIES.reactor.pipeSides = { water: [1, 3], steam: [0, 2] };   // pipes: water at the sides, steam front and back
 for (const id of ['water_pump', 'boiler', 'steam_engine']) ENTITIES[id].cap = 200;
+// Working machines glow at night: [radius, colour, flickers]. Depots keep a light on for the vehicles.
+const GLOW = { furnace: [2.4, 0xff7a2a, 1], electric_furnace: [2, 0xff8a3a], boiler: [2.6, 0xff7a2a, 1], burner_drill: [1.6, 0xff7a2a, 1],
+  assembler: [1.4, 0x9fe8f2], assembler2: [1.6, 0x9fe8f2], lab: [2.2, 0x58c8d8], transmitter: [3.5, 0x7ef6ff], refinery: [2.4, 0xff8a3a, 1],
+  chem_plant: [1.6, 0x9fe8f2], fuel_generator: [1.8, 0xffaa3a, 1], steam_engine: [1.2, 0x7ef6ff], vehicle_factory: [2, 0xfff0d0],
+  train_station: [3, 0xffe0a0], truck_depot: [3, 0xffe0a0], port: [3, 0xffe0a0], medical_lab: [2.2, 0xd8f0ff], centrifuge: [1.8, 0x9be37a],
+  reactor: [4.5, 0x9be37a], leach_drill: [1.4, 0xd8e04a], greenhouse: [3, 0x7aff8a] };
+for (const [id, [r, color, flicker]] of Object.entries(GLOW)) ENTITIES[id].light = { r, color, flicker: !!flicker, machine: true };
+// The day: `length` seconds a full turn, `start` where a new world begins (0 is the start of the day). Daylight is 1
+// through the day, fades over dusk, is 0 through the night and comes back at dawn (fractions of the day below).
+export const DAY = { length: 420, start: .05, dusk: .55, night: .65, dawn: .9, nightLight: [.16, .19, .32], duskLight: [1, .74, .56] };
 // Producers take augments: two slots unless the building sets `augSlots`.
-export const PRODUCER_KINDS = new Set(['drill', 'furnace', 'assembler', 'lab', 'oilpump']);
+export const PRODUCER_KINDS = new Set(['drill', 'furnace', 'assembler', 'lab', 'oilpump', 'medlab']);
 for (const e of Object.values(ENTITIES)) if (PRODUCER_KINDS.has(e.kind)) e.augSlots ??= 2;
 for (const [id, e] of Object.entries(ENTITIES)) ITEMS[id] = { name: e.name, color: e.color, shape: 'machine', entity: id };
 
@@ -232,16 +440,12 @@ export const RETIRED = { generator: { brick: 10, gear: 8, iron_plate: 5 } };
 
 // Stack sizes decide how many inventory / chest slots things take.
 const STACKS = { ore: 50, crystal: 50, wood: 100, plate: 100, brick: 100, lens: 100, gear: 100, cable: 200, chip: 200, coil: 100, pack: 200,
-  barrel: 10, engine: 10, vehicle: 1, part: 20, wheel: 50, hull: 10, signal: 50, net: 5, fish: 50, road: 100, aug: 50 };
-const MACHINE_STACKS = { belt: 100, fast_belt: 100, express_belt: 100, bus_belt: 100, small_pole: 50, medium_pole: 50, lab: 10, transmitter: 5, frame: 50, big_drill: 10,
-  power_line: 20, transformer: 10, water_pump: 20, steam_engine: 10, pipe: 100, rail: 100, storage_tank: 10, refinery: 10, vehicle_factory: 5 };
+  barrel: 50, engine: 10, vehicle: 1, part: 20, wheel: 50, hull: 10, signal: 50, net: 5, fish: 50, road: 100, aug: 50, seed: 100, crop: 50, vial: 100, pellet: 50, cell: 50 };
+const MACHINE_STACKS = { lamp: 50, brazier: 50, belt: 100, fast_belt: 100, express_belt: 100, bus_belt: 100, small_pole: 50, medium_pole: 50, lab: 10, transmitter: 5, frame: 50, big_drill: 10,
+  power_line: 20, transformer: 10, water_pump: 20, steam_engine: 10, pipe: 100, rail: 100, storage_tank: 10, refinery: 10, vehicle_factory: 5,
+  steel_pipe: 100, irrigation_pipe: 100, steel_irrigation_pipe: 100, green_lamp: 50, greenhouse: 10, greenhouse_panel: 100, dam: 100, reactor: 5, coolant_tower: 5, hp_pump: 10 };
 for (const [id, it] of Object.entries(ITEMS)) it.stack = it.shape === 'machine' ? (MACHINE_STACKS[id] ?? 50) : (STACKS[it.shape] ?? 50);
 
-// Things standing on the surface that you can mine by hand.
-export const FEATURES = {
-  tree: { name: 'Tree', time: .6, gives: { wood: 4 } },
-  rock: { name: 'Rock', time: 1.6, gives: { stone: 20, coal: 6 } },
-};
 export const PLAYER = { speed: 6.5, reach: 10, mineReach: 3, inventory: 80, radius: .28,
   // health comes back `regen` a second once `regenDelay` seconds pass without a hit (faster while well fed);
   // sprinting multiplies speed by `sprint` and burns stamina, and an empty bar has to refill to `rested` first
@@ -301,6 +505,8 @@ export const RECIPES = [
   R('transformer', { steel: 10, coil: 6, circuit: 6 }, 2, { tech: 'high_voltage' }),
   R('transformer_cable', { power_cable: 2, steel: 1 }, .5, { tech: 'high_voltage' }),
   R('solar', { steel: 5, circuit: 15, copper_plate: 5 }, 10, { tech: 'solar' }),
+  R('brazier', { stone: 5, iron_plate: 1 }, .5),
+  R('lamp', { iron_plate: 2, cable: 3, circuit: 1 }, .5),
   R('transmitter', { adv_circuit: 20, steel: 20, lens: 10, abyssal_alloy: 10 }, 10, { tech: 'signal_theory' }),
   { ...R('fast_underground', { underground: 2, gear: 8 }, 1, { tech: 'logistics2' }), out: { fast_underground: 2 } },
   { ...R('express_underground', { fast_underground: 2, steel: 4, circuit: 2 }, 1, { tech: 'logistics3' }), out: { express_underground: 2 } },
@@ -312,9 +518,9 @@ export const RECIPES = [
   { ...R('underground_pipe', { pipe: 10, iron_plate: 5 }, 1, { tech: 'fluid_handling' }), out: { underground_pipe: 2 } },
   R('pump', { circuit: 2, gear: 1, pipe: 1 }, 1, { tech: 'fluid_handling' }),
   R('valve', { pipe: 2, gear: 1, circuit: 1 }, .5, { tech: 'fluid_handling' }),
-  R('storage_tank', { iron_plate: 20, steel: 5 }, 3, { tech: 'fluid_handling' }),
-  R('barrel', { iron_plate: 1 }, .5, { tech: 'fluid_handling' }),
-  R('barreler', { iron_plate: 10, gear: 5, pipe: 5, circuit: 2 }, 2, { tech: 'fluid_handling' }),
+  R('storage_tank', { iron_plate: 20, steel: 5 }, 3, { tech: 'advanced_fluids' }),
+  R('barrel', { iron_plate: 1 }, .5, { tech: 'advanced_fluids' }),
+  R('barreler', { iron_plate: 10, gear: 5, pipe: 5, circuit: 2 }, 2, { tech: 'advanced_fluids' }),
   R('oil_pump', { steel: 5, gear: 10, circuit: 5, pipe: 10 }, 5, { tech: 'oil_processing' }),
   R('refinery', { steel: 15, gear: 10, circuit: 10, pipe: 10, brick: 10 }, 8, { tech: 'oil_processing' }),
   R('chem_plant', { steel: 5, gear: 5, circuit: 5, pipe: 5 }, 5, { tech: 'oil_processing' }),
@@ -340,6 +546,30 @@ export const RECIPES = [
   R('turbine_engine', { steel: 10, adv_circuit: 4, pipe: 8, gear: 10 }, 8, { tech: 'advanced_oil' }),
   R('fishing_net', { wood: 5, cable: 5 }, 1, { tech: 'shipping' }),
   { id: 'cooked_fish', cat: 'smelt', in: { raw_fish: 1 }, out: { cooked_fish: 1 }, time: 3.2 },
+  // advanced fluids
+  R('steel_pipe', { steel: 1 }, .5, { tech: 'advanced_fluids' }),
+  { ...R('underground_steel_pipe', { steel_pipe: 10, steel: 5 }, 1, { tech: 'advanced_fluids' }), out: { underground_steel_pipe: 2 } },
+  R('steel_irrigation_pipe', { irrigation_pipe: 1, steel: 1 }, .5, { tech: 'advanced_fluids' }),
+  { ...R('underground_steel_irrigation', { steel_irrigation_pipe: 10, steel: 5 }, 1, { tech: 'advanced_fluids' }), out: { underground_steel_irrigation: 2 } },
+  R('hp_pump', { circuit: 4, gear: 2, iron_plate: 4, steel: 10 }, 2, { tech: 'advanced_fluids' }),   // steel plus twice a water pump's recipe
+  // agriculture
+  { ...R('irrigation_pipe', { pipe: 1, copper_plate: 1 }, .5, { tech: 'agriculture' }), out: { irrigation_pipe: 2 } },
+  { ...R('underground_irrigation', { irrigation_pipe: 10, iron_plate: 5 }, 1, { tech: 'agriculture' }), out: { underground_irrigation: 2 } },
+  R('chlorophyll', { '#seed': 4 }, 2, { tech: 'agriculture' }),
+  R('green_lamp', { lamp: 1, chlorophyll: 1 }, .5, { tech: 'agriculture' }),
+  R('greenhouse', { lamp: 4, chlorophyll: 10, steel: 10 }, 5, { tech: 'agriculture' }),
+  { ...R('greenhouse_panel', { greenhouse: 1 }, .5, { tech: 'agriculture' }), out: { greenhouse_panel: 25 } },
+  { ...R('greenhouse', { greenhouse_panel: 25 }, .5, { tech: 'agriculture' }), id: 'greenhouse_from_panels', name: 'Greenhouse from panels', icon: 'greenhouse' },
+  R('terrestrial_pack', { '#seed': 1, chlorophyll: 2, green_lamp: 1 }, 10, { tech: 'terrestrial_science' }),
+  R('medical_lab', { lab: 1, chlorophyll: 20, steel: 10, circuit: 10 }, 5, { tech: 'terrestrial_science' }),
+  // power from water, and nuclear
+  R('dam', { brick: 6, steel: 2, gear: 2 }, 1, { tech: 'hydro_power' }),
+  R('leach_drill', { drill: 1, steel: 10, pipe: 5, circuit: 5 }, 3, { tech: 'uranium_processing' }),
+  R('centrifuge', { steel: 50, gear: 50, adv_circuit: 10, brick: 50 }, 8, { tech: 'uranium_processing' }),
+  { id: 'uranium_processing', cat: 'centrifuge', in: { uranium_ore: 10 }, out: { enriched_uranium: 1 }, time: 12, tech: 'uranium_processing' },
+  { ...R('uranium_fuel_cell', { enriched_uranium: 1, iron_plate: 10 }, 10, { tech: 'nuclear_power', hand: false }), out: { uranium_fuel_cell: 10 } },
+  R('reactor', { steel: 150, adv_circuit: 50, concrete_road: 100, brick: 100 }, 20, { tech: 'nuclear_power' }),
+  R('coolant_tower', { steel: 30, concrete_road: 50, pipe: 20, gear: 10 }, 8, { tech: 'nuclear_power' }),
 ];
 // Fluid recipes: `fin` and `fout` are drawn and made bit by bit over the craft time, through the machine's ports
 // (the fluids in `fin` go to its 'in' ports in order, `fout` to its 'out' ports). `icon` and `name` are for the panel.
@@ -353,6 +583,7 @@ RECIPES.push(
   F('solid_fuel', 'chem', 'Solid fuel', 'solid_fuel', 2, { fin: { gasoline: 20 }, out: { solid_fuel: 1 }, tech: 'oil_processing' }),
   F('asphalt_road', 'chem', 'Asphalt', 'asphalt_road', 2, { fin: { heavy_oil: 10 }, in: { stone: 2 }, out: { asphalt_road: 4 }, tech: 'oil_processing' }),
   F('concrete_road', 'chem', 'Concrete', 'concrete_road', 3, { fin: { water: 50 }, in: { brick: 2, iron_ore: 1 }, out: { concrete_road: 5 }, tech: 'oil_processing' }),
+  F('sulfuric_acid', 'chem', 'Sulfuric acid', 'sulfuric_acid', 1, { fin: { water: 100 }, in: { iron_plate: 1, coal: 2 }, fout: { sulfuric_acid: 50 }, tech: 'uranium_processing' }),
 );
 // Augments: tier 1 from plain parts, every tier after from two of the tier below plus rarer parts.
 const AUG_FIRST = { speed: { circuit: 5, gear: 5, coil: 2 }, efficiency: { circuit: 5, cable: 10, steel: 2 }, productivity: { circuit: 5, steel: 3, brick: 5 } };
@@ -361,9 +592,10 @@ for (const type of ['speed', 'efficiency', 'productivity']) for (let t = 1; t <=
   RECIPES.push(R(augId(type, t), t === 1 ? AUG_FIRST[type] : { [augId(type, t - 1)]: 2, ...AUG_UP[t - 1] }, 5 * t, { tech: t === 1 ? 'augments' : 'augments_' + t }));
 RECIPES.push(R(augId('depth', 1), { steel: 10, gear: 10, circuit: 10, adv_circuit: 2 }, 10, { tech: 'deep_drilling' }),
   R(augId('depth', 2), { [augId('depth', 1)]: 2, abyssal_alloy: 5, adv_circuit: 5 }, 20, { tech: 'augments_4' }));
+// A barreling station picks these itself: in fill mode by the fluid in its pipe, in empty mode by the barrels it gets.
 for (const [f, d] of Object.entries(FLUIDS)) if (d.barrel) RECIPES.push(
-  F('fill_' + f, 'barrel', 'Fill ' + d.name.toLowerCase() + ' barrel', f + '_barrel', .5, { in: { barrel: 1 }, fin: { [f]: BARREL_SIZE }, out: { [f + '_barrel']: 1 }, tech: 'fluid_handling' }),
-  F('empty_' + f, 'barrel', 'Empty ' + d.name.toLowerCase() + ' barrel', 'barrel', .5, { in: { [f + '_barrel']: 1 }, fout: { [f]: BARREL_SIZE }, out: { barrel: 1 }, tech: 'fluid_handling' }));
+  F('fill_' + f, 'barrel', 'Fill ' + d.name.toLowerCase() + ' barrel', f + '_barrel', .2, { in: { barrel: 1 }, fin: { [f]: BARREL_SIZE }, out: { [f + '_barrel']: 1 }, tech: 'advanced_fluids', auto: true }),
+  F('empty_' + f, 'barrel', 'Empty ' + d.name.toLowerCase() + ' barrel', 'barrel', .2, { in: { [f + '_barrel']: 1 }, fout: { [f]: BARREL_SIZE }, out: { barrel: 1 }, tech: 'advanced_fluids', auto: true }));
 for (const [id, v] of Object.entries(VEHICLES)) {
   const fr = FRAMES[v.frame];
   RECIPES.push({ id, cat: 'vehicle', in: { ...fr.parts, ...(v.engine ? { [v.engine]: 1 } : {}) }, out: { [id]: 1 }, time: fr.time, tech: v.engine === 'turbine_engine' ? 'advanced_oil' : fr.tech });
@@ -400,7 +632,16 @@ export const TECHS = [
   T('resonance', 'Resonance', [r, g, b, 'resonance_pack'], 100, 30, ['signal_theory'], ['clarity'], { precision: 3 }),
   T('factory_planning', 'Factory planning', [r], 30, 10, [], ['factories']),
   T('roads', 'Roads', [r], 20, 10, [], ['gravel_road', 'cobble_road', 'path_tile']),
-  T('fluid_handling', 'Fluid handling', [r, g], 50, 10, ['steel', 'logistic_science'], ['pipe', 'underground_pipe', 'pump', 'valve', 'storage_tank', 'barrel', 'barreler']),
+  T('fluid_handling', 'Fluid handling', [r, g], 50, 10, ['steel', 'logistic_science'], ['pipe', 'underground_pipe', 'pump', 'valve']),
+  // exactly these seven, nothing more: Factorio-sized pipes and pumps, and the fluid storage and barreling that go with them
+  T('advanced_fluids', 'Advanced fluids', [r, g, b], 120, 20, ['fluid_handling', 'precision_science'], ['steel_pipe', 'underground_steel_pipe', 'steel_irrigation_pipe', 'underground_steel_irrigation', 'hp_pump', 'storage_tank', 'barreler']),
+  T('soil_science', 'Soil science', [r, g], 40, 10, ['logistic_science'], ['shovel']),
+  T('agriculture', 'Agriculture', [r, g], 75, 15, ['soil_science', 'fluid_handling', 'steel'], ['greenhouse', 'greenhouse_panel', 'irrigation_pipe', 'underground_irrigation', 'chlorophyll', 'green_lamp']),
+  T('terrestrial_science', 'Terrestrial science', [r, g], 100, 15, ['agriculture'], ['terrestrial_pack', 'medical_lab']),
+  T('hydro_power', 'Hydro power', [r, g, b], 120, 20, ['high_voltage', 'fluid_handling'], ['dam']),
+  // anything nuclear needs steel pipe first
+  T('uranium_processing', 'Uranium processing', [r, g, b], 150, 20, ['advanced_fluids', 'oil_processing'], ['leach_drill', 'centrifuge', 'sulfuric_acid', 'uranium_processing']),
+  T('nuclear_power', 'Nuclear power', [r, g, b, 'terrestrial_pack'], 200, 30, ['uranium_processing', 'advanced_fluids', 'terrestrial_science'], ['reactor', 'coolant_tower', 'uranium_fuel_cell']),
   T('oil_processing', 'Oil processing', [r, g], 75, 15, ['fluid_handling'], ['oil_pump', 'refinery', 'chem_plant', 'basic_refining', 'heavy_cracking', 'rubber', 'solid_fuel', 'asphalt_road', 'concrete_road', 'fuel_generator']),
   T('vehicles', 'Vehicles', [r, g], 75, 15, ['oil_processing', 'automation'], ['vehicle_factory', 'chassis', 'wheel', 'petrol_engine', 'diesel_engine', 'car_petrol', 'car_diesel', 'truck_diesel', 'truck_depot']),
   T('railways', 'Railways', [r, g], 75, 15, ['vehicles'], ['rail', 'rail_signal', 'train_station', 'locomotive_diesel', 'cargo_wagon']),
@@ -416,6 +657,10 @@ export const TECHS = [
   T('augments_5', 'Augments 5', [r, g, b, 'resonance_pack'], 150, 30, ['augments_4', 'signal_theory'], AUG3.map(a => augId(a, 5))),
 ];
 for (const [t, u] of [['logistics2', 'fast_underground'], ['logistics3', 'express_underground']]) TECHS.find(x => x.id === t).unlocks.push(u);
+// Tool upgrades: a speed line and a radius line per tool, each level needing the one before.
+for (const [tool, d] of Object.entries(TOOLS)) for (const kind of ['speed', 'radius']) d[kind].forEach((v, i) => TECHS.push(T(
+  `${tool}_${kind}_${i + 1}`, `${d.name} ${kind === 'speed' ? 'speed' : 'sweep'} ${i + 1}`, d.packs[i], [30, 75, 150][i], 15,
+  i ? [`${tool}_${kind}_${i}`] : d.tech ? [d.tech] : [], [kind === 'speed' ? `${d.name.toLowerCase()} ×${v} speed` : `${d.name.toLowerCase()} hits within ${v} tiles`], { tool, toolKind: kind })));
 export const TECH = Object.fromEntries(TECHS.map(t => [t.id, t]));
 
 // The quickbar starts empty and fills itself as you first get each kind of building (see ui.js).

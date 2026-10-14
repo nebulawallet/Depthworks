@@ -1,8 +1,15 @@
 // Shared mutable game state.
-import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE, DEPOSIT } from './data.js';
+import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE, DEPOSIT, DAY } from './data.js';
 
-export const GRID = 96;
-const K = GRID / 64;  // world layout was designed on a 64 grid
+// Tiles per side of the world. Worlds made before chunks are 96; new ones are 500 to 65536 (see worldgen.js).
+export let GRID = 96;
+export function setWorldSize(n) { GRID = n; }
+const K = 96 / 64;  // the old fixed layout was designed on a 64 grid
+// The world is made of CHUNK×CHUNK chunks, generated the first time anything asks about them (worldgen.js).
+export const CHUNK = 32;
+export const chunkKey = (cx, cz) => cz * 4096 + cx;
+// The landing site: fixed on old worlds, found by worldgen.js on new ones.
+export const SPAWN = { x: 48.5, z: 52.5 };
 export const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 export const DIR_NAMES = ['north', 'east', 'south', 'west'];
 export const LAYER_MIN = -2, LAYER_MAX = 4;
@@ -30,7 +37,7 @@ export const S = {
 // ---------------------------------------------------------------- players
 // Every engineer has their own body, inventory and crafting queue. S.player is the one on this screen.
 export function newPlayer(id, name = 'Engineer', color = 0xe07a2e, local = false) {
-  return { id, name, color, local, x: 48.5, z: 52.5, vx: 0, vz: 0, face: 0, walk: 0, moving: false,
+  return { id, name, color, local, x: SPAWN.x, z: SPAWN.z, vx: 0, vz: 0, face: 0, walk: 0, moving: false,
     mining: null, mineCell: null, pickup: false, inv: local ? null : new Inventory(PLAYER.inventory), craft: [],
     fac: 1, veh: null, drive: null, fed: 0,   // fac: the factory they build for; veh: the vehicle they drive; fed: well fed until
     hp: PLAYER.health, hurtT: -99, sta: PLAYER.stamina, staT: -99, tired: false };   // health, stamina, and when each was last used
@@ -89,15 +96,26 @@ export function asActor(p, fn) { const prev = actor; actor = p; try { return fn(
 // Feedback (toasts, floating text, pickup sounds) goes to whoever caused it.
 export function notify(ev, ...a) { if (actor.local) bus.emit(ev, ...a); else bus.emit('remote', actor, ev, a); }
 
+// Buildings by tile. A building covering several tiles is stored under its anchor tile, with its other tiles in `occ`
+// (see multi.js): get() finds it from any of them, and iterating sees each building once.
+class EntMap extends Map {
+  constructor() { super(); this.occ = new Map(); }
+  get(k) { return super.get(k) ?? this.occ.get(k); }
+  has(k) { return super.has(k) || this.occ.has(k); }
+  clear() { super.clear(); this.occ.clear(); }
+}
 export const world = {
-  ents: new Map(),    // key -> entity (one per cell)
+  ents: new EntMap(),   // key -> entity (see EntMap)
   frames: new Map(),  // key -> frame (hollow, can share a cell with an entity)
   ores: new Map(),    // key -> { type, base, layer, amount } (see newDeposit)
   feats: new Map(),   // key -> { type: 'tree' | 'rock' } (surface only)
   ground: [],         // items lying on the ground: { type, x, z }
   lines: [], beltDirty: true,   // belt lines, downstream first (see belts.js)
-  tiles: new Uint8Array(GRID * GRID),   // surface tile type per cell (index into TILES)
-  flow: new Int8Array(GRID * GRID).fill(-1),   // flow direction of moving water (index into DIRS), -1 for still
+  // The surface lives in chunks: chunkKey -> { tiles, flow, biome, patch, ores, feats, oil } (see worldgen.js).
+  // `gen` is a generated world's seed and options (null for a world from before chunks, whose tiles are in
+  // `tiles` / `flow`), and `edits` is everything changed since generation: that is what saves keep.
+  chunks: new Map(), gen: null, edits: { feats: new Set(), ores: new Map(), oil: new Map(), patches: new Set() },
+  tiles: null, flow: null,
   links: [],          // cables strung by hand: { kind: item id, a: [x, y, z], b: [x, y, z] }
   marks: { markers: [], areas: [], next: 1 },   // map markers and labelled areas
   oil: new Map(),     // "x,z" -> { yield } crude oil wells on the surface (percent)
@@ -110,11 +128,31 @@ export const world = {
   nextId: 1,
 };
 // Factories are separate networks inside one world: everything built belongs to one (see sim.js sameFac).
+// The tiles a building covers: its footprint for the ones that span several (see multi.js), else its own tile.
+export const tilesOf = e => e.foot || [[e.x, e.z]];
 export const factoryOf = id => world.factories.find(f => f.id === id) || null;
 export const FAC_COLORS = ['#7ef6ff', '#ffd23f', '#9be37a', '#ff8a3d', '#ff5a7a', '#b07ad8', '#e8ecf2', '#4aa3ff'];
-export const tileAt = (x, z) => x < 0 || z < 0 || x >= GRID || z >= GRID ? 0 : world.tiles[z * GRID + x];
+let genChunk = null, genUnder = null;
+export const setChunkGen = (f, u) => { genChunk = f; genUnder = u; };
+export const inWorld = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID;
+// The chunk holding tile (x, z), made now if it doesn't exist yet. Null outside the world.
+export function chunkOf(x, z) {
+  if (!(x >= 0 && z >= 0 && x < GRID && z < GRID)) return null;
+  const cx = Math.floor(x / CHUNK), cz = Math.floor(z / CHUNK);
+  return world.chunks.get(chunkKey(cx, cz)) || (genChunk ? genChunk(cx, cz) : null);
+}
+// The chunk at (x, z) with its underground layers made too: ask this before looking at deposits below the surface.
+export function underOf(x, z) { const c = chunkOf(x, z); if (c && !c.under) genUnder?.(c); return c; }
+const cellOf = (x, z) => (Math.floor(z) & (CHUNK - 1)) * CHUNK + (Math.floor(x) & (CHUNK - 1));
+export const tileAt = (x, z) => { const c = chunkOf(x, z); return c ? c.tiles[cellOf(x, z)] : 0; };
 export const isWater = (x, z) => !!TILES[tileAt(x, z)].liquid;
-export const flowAt = (x, z) => x < 0 || z < 0 || x >= GRID || z >= GRID ? -1 : world.flow[z * GRID + x];
+export const flowAt = (x, z) => { const c = chunkOf(x, z); return c ? c.flow[cellOf(x, z)] : -1; };
+export const biomeIndexAt = (x, z) => { const c = chunkOf(x, z); return c ? c.biome[cellOf(x, z)] : 0; };
+// Weedy patches: a variant of the ground that only the shovel cares about.
+export const patchAt = (x, z) => { const c = chunkOf(x, z); return !!c && c.patch[cellOf(x, z)] === 1; };
+export function clearPatch(x, z) { const c = chunkOf(x, z); if (c) c.patch[cellOf(x, z)] = 0; world.edits.patches.add(x + ',' + z); }
+// Trees and rocks, once mined, stay gone even after their chunk is made again from the seed.
+export function removeFeat(k) { world.feats.delete(k); world.edits.feats.add(k); }
 
 export const invGet = it => actor.inv.count(it);
 export function invAdd(it, n = 1) {
@@ -154,12 +192,24 @@ export function rng(seed) {
 export function hash01(str) { let h = 2166136261; for (const c of String(str)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return ((h >>> 0) % 100000) / 100000; }
 
 export const isResearched = id => !id || S.research.done.has(id);
+// ---------------------------------------------------------------- day and night
+// The world clock S.T sets the time of day, so saves and friends agree on it.
+export const dayPhase = (T = S.T) => ((T / DAY.length + DAY.start) % 1 + 1) % 1;
+const smooth = t => t * t * (3 - 2 * t);
+export function daylight(T = S.T) {
+  const p = dayPhase(T);
+  if (p < DAY.dusk) return 1;
+  if (p < DAY.night) return 1 - smooth((p - DAY.dusk) / (DAY.night - DAY.dusk));
+  if (p < DAY.dawn) return 0;
+  return smooth((p - DAY.dawn) / (1 - DAY.dawn));
+}
 // A sandbox world starts with every technology done and every layer open.
 export function unlockAll() {
   for (const id of Object.keys(TECH)) S.research.done.add(id);
   S.research.current = null; S.maxTier = TIERS.length - 1;
 }
-export const recipeUnlocked = r => isResearched(r.tech);
+// `extra`: recipes an old save keeps after research moved them (see save.js)
+export const recipeUnlocked = r => isResearched(r.tech) || !!S.research.extra?.has(r.id);
 export const itemName = it => ITEMS[it]?.name ?? it;
 
 // Which layers can be built on right now: research opens the ground, precision opens the sky.
@@ -226,26 +276,7 @@ export function generateOil(seed = S.seed, avoid = () => false) {
   }
 }
 
-// Trees in clumps and rocks scattered; nothing on ore or right next to spawn.
-export function generateFeatures(seed = 77) {
-  world.feats.clear();
-  const R = rng(seed), sx = S.player.x, sz = S.player.z;
-  const ok = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID && !world.ores.has(key(x, 0, z)) && !world.oil.has(x + ',' + z) && !isWater(x, z) && Math.hypot(x - sx, z - sz) > 6;
-  for (let f = 0; f < 22; f++) {
-    const cx = R() * GRID, cz = R() * GRID, rad = 3 + R() * 6;
-    for (let i = 0; i < rad * rad * 1.4; i++) {
-      const a = R() * Math.PI * 2, d = Math.sqrt(R()) * rad, x = Math.floor(cx + Math.cos(a) * d), z = Math.floor(cz + Math.sin(a) * d);
-      if (ok(x, z)) world.feats.set(key(x, 0, z), { type: 'tree', v: R() });
-    }
-  }
-  for (let i = 0; i < 70; i++) { const x = Math.floor(R() * GRID), z = Math.floor(R() * GRID); if (ok(x, z)) world.feats.set(key(x, 0, z), { type: 'rock', v: R() }); }
-  // always a small wood and a couple of rocks within a short walk of the landing site
-  for (let i = 0; i < 18; i++) { const x = Math.floor(sx + 9 + (R() - .5) * 6), z = Math.floor(sz - 7 + (R() - .5) * 6); if (ok(x, z)) world.feats.set(key(x, 0, z), { type: 'tree', v: R() }); }
-  for (const [x, z] of [[sx - 7, sz + 3], [sx - 6, sz + 6]]) if (ok(Math.floor(x), Math.floor(z))) world.feats.set(key(Math.floor(x), 0, Math.floor(z)), { type: 'rock', v: R() });
-}
-
 // ---------------------------------------------------------------- water
-export const SPAWN = { x: 48.5, z: 52.5 };
 export const WATER_GEN = 2;   // bump when generateWater changes: saves made by an older one get their water redone
 function hashN(x, z, s) { let h = Math.imul(x | 0, 374761393) + Math.imul(z | 0, 668265263) + Math.imul(s | 0, 1442695041); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
 function noise(x, z, s) {
@@ -253,10 +284,11 @@ function noise(x, z, s) {
   const a = hashN(xi, zi, s), b = hashN(xi + 1, zi, s), c = hashN(xi, zi + 1, s), d = hashN(xi + 1, zi + 1, s);
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
-// Oceans along the south and east edges, inland lakes, and sometimes a river that comes in from the north or
+// Worlds from before chunks: oceans along the south and east edges, inland lakes, and sometimes a river that comes in from the north or
 // west edge and drains into a lake. Water never covers ore or the landing site, and every surface ore stays
 // reachable on foot (rivers end in inland lakes, so they never cut the map in two).
 export function generateWater(seed = S.seed) {
+  legacyArrays();
   const idx = (x, z) => z * GRID + x, inside = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID;
   const blocked = new Uint8Array(GRID * GRID);
   for (const k of world.ores.keys()) {
@@ -379,6 +411,8 @@ function surfaceOreReachable() {
   for (let i = 0; i < GRID * GRID; i++) if (!TILES[world.tiles[i]].liquid) { land++; reached += seen[i]; }
   return reached >= land * .97;
 }
+// Worlds from before chunks keep their surface in two flat arrays (worldgen.js copies them into chunks).
+export function legacyArrays() { if (world.tiles?.length !== GRID * GRID) { world.tiles = new Uint8Array(GRID * GRID); world.flow = new Int8Array(GRID * GRID).fill(-1); } }
 // Older saves had no water: dry out anything that was already built, mined or standing there.
 export function dryAround(x, z, r = 0) {
   for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {

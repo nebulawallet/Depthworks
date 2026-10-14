@@ -5,6 +5,7 @@
 // engines) is just producers and consumers on this, so it follows demand the way Factorio's does: engines draw
 // only what the network needs, boilers refill only what was drawn, pumps only what boilers took.
 import { ENTITIES, FLUIDS, RECIPE } from './data.js';
+import { perimeter } from './multi.js';
 import { S, world, key, DIRS, bus } from './state.js';
 
 export const fluidNets = [];
@@ -12,19 +13,25 @@ const ALL = [0, 1, 2, 3];
 const PIPE_KINDS = new Set(['pipe', 'upipe', 'fpump', 'valve', 'tank']);
 export const isPipeLike = e => !!e && PIPE_KINDS.has(e.kind);
 export const sameFac = (a, b) => ENTITIES[a.type]?.shared || ENTITIES[b.type]?.shared || (a.fac ?? 1) === (b.fac ?? 1);
-// More pipe, less flow: 6000/s with no pipes in the way, 3500/s at 20 pipes, 2000/s at 80, 1500/s at 180.
-export const throughputFor = pipes => Math.round(1000 + 100000 / (20 + pipes));
+// More pipe, less flow: 6000/s with no pipes in the way, 3500/s at 20 pipes, 2000/s at 80, 1500/s at 180. A line is as
+// quick as its slowest pipe: `flow` multiplies it (steel pipe 5).
+export const throughputFor = (pipes, flow = 1) => Math.round((1000 + 100000 / (20 + pipes)) * flow);
+const isSteel = e => (ENTITIES[e.type]?.flow || 1) > 1;
 
 // The fluid boxes of an entity: what fluid each holds (null for pipes, which carry whatever their line carries),
 // which absolute sides it connects on, and how much it holds.
 export function boxesOf(e) {
   const def = ENTITIES[e.type]; if (!def) return [];
+  // irrigation pipe only ever carries water, and joins only greenhouses, irrigation and plain pipes
+  const irr = def.irrigation ? { fluid: 'water', irr: true } : {};
   switch (def.kind) {
-    case 'pipe': case 'tank': return [{ i: 0, pipe: true, sides: ALL, cap: def.cap }];
-    case 'upipe': return [{ i: 0, pipe: true, sides: [e.role === 'out' ? e.dir : (e.dir + 2) % 4], cap: def.cap }];
+    case 'pipe': case 'tank': return [{ i: 0, pipe: true, sides: ALL, cap: def.cap, ...irr }];
+    case 'upipe': return [{ i: 0, pipe: true, sides: [e.role === 'out' ? e.dir : (e.dir + 2) % 4], cap: def.cap, ...irr }];
+    case 'greenhouse': return e.foot ? [{ i: 0, fluid: 'water', io: 'in', room: true, sides: ALL, cap: e.foot.length * 20, touch: perimeter(e) }] : [];
     case 'fpump': case 'valve': return [{ i: 0, pipe: true, io: 'in', sides: [(e.dir + 2) % 4], cap: def.cap }, { i: 1, pipe: true, io: 'out', sides: [e.dir], cap: def.cap }];
     case 'depot': return e.fuelFluid ? [{ i: 0, fluid: e.fuelFluid, sides: ALL, cap: def.fluidCap }] : [];
   }
+  if (def.cats?.includes('barrel') && !e.recipe) return e.mode === 'empty' ? [] : [{ i: 0, pipe: true, io: 'in', sides: [(def.ports[0].side + e.dir) % 4], cap: def.cap }];   // learns what fluid its pipe has
   if (def.ports) {
     const r = RECIPE[e.recipe], fins = Object.keys(r?.fin || {}), fouts = Object.keys(r?.fout || {}), list = [];
     let ni = 0, no = 0;
@@ -42,6 +49,9 @@ function connects(a, A, d, b, B) {
   const sa = B.pipe && A.pipeSides ? A.pipeSides : A.sides, sb = A.pipe && B.pipeSides ? B.pipeSides : B.sides;
   if (!sa.includes(d) || !sb.includes((d + 2) % 4)) return false;
   if (A.fluid && B.fluid && A.fluid !== B.fluid) return false;
+  // greenhouses take only irrigation; irrigation joins only greenhouses, irrigation and plain pipe-like things
+  if ((A.room && !B.irr) || (B.room && !A.irr)) return false;
+  if ((A.irr && !B.irr && !B.room && !B.pipe) || (B.irr && !A.irr && !A.room && !A.pipe)) return false;
   return sameFac(a, b);
 }
 
@@ -64,10 +74,11 @@ export function rebuildFluids() {
   const join = (a, b) => { parent[find(a)] = find(b); };
   for (const A of boxes) {
     const a = A.e;
-    for (const d of A.pipeSides ? [...new Set([...A.sides, ...A.pipeSides])] : A.sides) {
-      const [dx, dz] = DIRS[d], b = world.ents.get(key(a.x + dx, a.y, a.z + dz));
+    // the tile edges this box can join at: every outside edge of a building over several tiles, else its own sides
+    for (const [x, z, d] of A.touch || (A.pipeSides ? [...new Set([...A.sides, ...A.pipeSides])] : A.sides).map(d => [a.x, a.z, d])) {
+      const [dx, dz] = DIRS[d], b = world.ents.get(key(x + dx, a.y, z + dz));
       if (!b?._boxes || b === a) continue;
-      for (const B of b._boxes) if (connects(a, A, d, b, B)) { join(A.id, B.id); a.conn |= 1 << d; }
+      for (const B of b._boxes) if (connects(a, A, d, b, B)) { join(A.id, B.id); if (!A.touch) a.conn |= 1 << d; }
     }
     if (a.kind === 'upipe' && a.pair?._boxes && sameFac(a, a.pair)) join(A.id, a.pair._boxes[0].id);
   }
@@ -96,7 +107,9 @@ export function rebuildFluids() {
     if (l.from.fluid && !l.to.fluid) l.to.fluid = l.from.fluid; else if (l.to.fluid && !l.from.fluid) l.from.fluid = l.to.fluid;
   }
   for (const n of fluidNets) {
-    n.throughput = throughputFor(n.pipes);
+    n.flowK = n.members.filter(isPipeLike).reduce((m, e) => Math.min(m, ENTITIES[e.type].flow || 1), n.pipes ? 99 : 1);
+    n.steel = n.members.filter(m => isPipeLike(m) && m.kind !== 'tank' && m.kind !== 'fpump' && m.kind !== 'valve').every(isSteel);
+    n.throughput = throughputFor(n.pipes, n.flowK);
     for (const B of n.boxes) {
       const has = B.e.fa[B.i] || 0, kind = B.fluid || B.e.fluid;
       if (has > 0 && (!kind || kind === n.fluid || n.mixed)) n.amount += has;
@@ -175,9 +188,11 @@ export function fluidPost(dt, burner) {
     }
   }
   for (const e of world.ents.values()) if (e.kind === 'pump') {
-    const def = ENTITIES[e.type], w = e.fnet?.water, got = push(w, def.rate * dt, 'water');
+    // a high pressure pump only works flat out when its line is steel all the way
+    const def = ENTITIES[e.type], w = e.fnet?.water, capped = def.fullRate === 'steel' && w && !w.steel, rate = capped ? ENTITIES.water_pump.rate : def.rate;
+    const got = push(w, rate * dt, 'water');
     e.load = got / (def.rate * dt);
-    if (e.load > 0) { e.status = 'pumping'; e.lastActive = S.T; }
+    if (e.load > 0) { e.status = capped ? `pumping, held to ${rate}/s by iron pipe: use steel pipe` : 'pumping'; e.lastActive = S.T; }
     else e.status = w && w.members.some(m => m !== e) ? 'full (nothing drawing water)' : 'full: put a boiler or a pipe next to it';
   }
   syncBack();

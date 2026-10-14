@@ -3,8 +3,8 @@
 // signals split them into blocks. Vehicles are free objects: cars and tanks are driven by hand, while trucks, boats
 // and trains are "units" that follow a path of tiles (road, water or rail) to the stops of a route. One path
 // finder, one path follower and one scheduler serve all three ways, so trucks, ships and trains behave alike.
-import { ENTITIES, ITEMS, ROADS, FRAMES, VEHICLES, vehicleStats, FLUIDS, FUELS, BARREL_SIZE, PLAYER } from './data.js';
-import { S, world, key, DIRS, GRID, bus, Inventory, isWater, invGive, invAdd, invGet, actor, notify, stackOf } from './state.js';
+import { ENTITIES, ITEMS, ROADS, FRAMES, VEHICLES, vehicleStats, FLUIDS, FUELS, BARREL_SIZE, PLAYER, FEATURES } from './data.js';
+import { S, world, key, DIRS, GRID, bus, Inventory, isWater, invGive, invAdd, invGet, actor, notify, stackOf, removeFeat } from './state.js';
 import { draw, room } from './fluids.js';
 import { distTo } from './sim.js';
 
@@ -18,7 +18,9 @@ const int = (v, lo, hi, def) => { v = Math.round(+v); return Number.isFinite(v) 
 
 // ---------------------------------------------------------------- roads
 // A road tile: { s: surface (item id), w: width of its road, i: which tile across it is, a: 0 runs north-south /
-// 1 runs east-west, l: lanes, m: centre marking, e: edge lines, c: crossings at junctions }. Paths are just { s }.
+// 1 runs east-west, l: lanes, m: centre marking, e: edge lines, c: crossings at junctions, o: the road it belongs to }.
+// Paths are just { s, o }. A road is everything laid in one drag (`o`): one object, mined in one go, unless its
+// surface allows taking single tiles (ROADS[s].tileMine, paths only) with Ctrl.
 export const roadAt = (x, z) => world.roads.get(tk(x, z)) || null;
 export const isWalkway = (x, z) => !!ROADS[roadAt(x, z)?.s]?.walk;
 export const roadBlocks = (x, z) => { const r = roadAt(x, z); return !!r && !ROADS[r.s]?.walk; };
@@ -46,8 +48,9 @@ export function placeRoad(op) {
   const surf = ROADS[op.surf] ? op.surf : null;
   if (!surf) return 'that is not a road';
   if (distTo(op.x, op.z) > PLAYER.reach + 2) return 'out of reach';
-  const changes = [], need = {};
+  const changes = [], need = {}, o = op.stroke ? String(op.stroke).slice(0, 40) : 'r' + world.nextId++;
   for (const { c: [x, z], t, side } of roadCells(op.x, op.z, op.ax ? 1 : 0, op.cfg, surf)) {
+    t.o = o;
     const why = roadCellBlocked(x, z), old = roadAt(x, z);
     if (why) { if (side) continue; return why; }
     if (side && old) continue;   // sidewalks never pave over another road or path
@@ -61,10 +64,33 @@ export function placeRoad(op) {
   roadsChanged(changes.map(([x, z, t]) => [x, z, t]));
   return null;
 }
-export function removeRoad(x, z) {
+// Take up the whole road a tile belongs to (or just the tile: `one`, for surfaces that allow it).
+export function removeRoad(x, z, one = false) {
   const r = roadAt(x, z); if (!r) return;
-  world.roads.delete(tk(x, z)); invGive(r.s);
-  roadsChanged([[x, z, null]]);
+  const tiles = one || !r.o ? [[x, z]] : roadTiles(r.o);
+  for (const [a, b] of tiles) { const t = roadAt(a, b); if (t) { world.roads.delete(tk(a, b)); invGive(t.s); } }
+  roadsChanged(tiles.map(([a, b]) => [a, b, null]));
+}
+// Paste a road's lanes and markings onto another road (the whole of it; its width stays).
+export function pasteRoad(r, clip) {
+  const c = clip?.data?.road; if (!c || !r.w) return [];
+  const tiles = r.o ? roadTiles(r.o) : [], list = [];
+  for (const [x, z] of tiles) { const t = roadAt(x, z); if (!t.w) continue; t.l = Math.min(c.l, t.w * 2); t.m = c.m; t.e = c.e; t.c = c.c; list.push([x, z, t]); }
+  roadsChanged(list);
+  return list.length ? ['lanes and markings'] : [];
+}
+export const roadTiles = o => { const out = []; for (const [k, t] of world.roads) if (t.o === o) out.push(k.split(',').map(Number)); return out; };
+// Roads from before roads were objects: each connected stretch of one surface becomes one road.
+function groupOldRoads() {
+  let n = 0;
+  for (const [k, t] of world.roads) {
+    if (t.o) continue;
+    const o = 'old' + n++, q = [k.split(',').map(Number)]; t.o = o;
+    while (q.length) {
+      const [x, z] = q.pop();
+      for (const [dx, dz] of DIRS) { const u = roadAt(x + dx, z + dz); if (u && !u.o && u.s === t.s) { u.o = o; q.push([x + dx, z + dz]); } }
+    }
+  }
 }
 // Co-op: road changes made on the host arrive as a list of [x, z, tile or null].
 export function applyRoads(list) { for (const [x, z, t] of list || []) t ? world.roads.set(tk(x, z), t) : world.roads.delete(tk(x, z)); world.wayVersion = (world.wayVersion || 0) + 1; bus.emit('roads', list); }
@@ -145,25 +171,26 @@ function steps(way, x, z, h) {
   return out;
 }
 // A* over (tile, heading). Returns { tiles, cost } from the start tile to the first goal tile reached, or null.
-export function findPath(way, sx, sz, sh, goals) {
+// Costs live in maps, not world-sized arrays, and a search gives up after `limit` steps, so big worlds stay cheap.
+export function findPath(way, sx, sz, sh, goals, limit = 300000) {
   if (!goals.size) return null;
   const gl = [...goals].map(k => k.split(',').map(Number));
   const hf = (x, z) => { let m = 1e9; for (const [gx, gz] of gl) m = Math.min(m, Math.abs(gx - x) + Math.abs(gz - z)); return m; };
-  const N = GRID * GRID * 4, g = new Float32Array(N).fill(Infinity), prev = new Int32Array(N).fill(-1), heap = [];
+  const W = GRID, g = new Map(), prev = new Map(), heap = [];
   const push = (i, f) => { heap.push([f, i]); let j = heap.length - 1; while (j) { const p = (j - 1) >> 1; if (heap[p][0] <= heap[j][0]) break; [heap[p], heap[j]] = [heap[j], heap[p]]; j = p; } };
   const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let j = 0; for (;;) { const l = 2 * j + 1, r = l + 1; let m = j; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === j) break; [heap[m], heap[j]] = [heap[j], heap[m]]; j = m; } } return top; };
-  const s0 = (sz * GRID + sx) * 4 + sh; g[s0] = 0; push(s0, hf(sx, sz));
-  while (heap.length) {
-    const [f, cur] = pop(), h = cur % 4, cell = (cur - h) / 4, x = cell % GRID, z = Math.floor(cell / GRID);
-    if (f - hf(x, z) > g[cur] + 1e-6) continue;
+  const s0 = (sz * W + sx) * 4 + sh; g.set(s0, 0); push(s0, hf(sx, sz));
+  for (let n = 0; heap.length && n < limit; n++) {
+    const [f, cur] = pop(), h = cur % 4, cell = (cur - h) / 4, x = cell % W, z = Math.floor(cell / W), gc = g.get(cur);
+    if (f - hf(x, z) > gc + 1e-6) continue;
     if (goals.has(tk(x, z))) {
-      const tiles = []; for (let i = cur; i >= 0; i = prev[i]) { const c = (i - i % 4) / 4; tiles.unshift([c % GRID, Math.floor(c / GRID)]); }
-      return { tiles, cost: g[cur] };
+      const tiles = []; for (let i = cur; i !== undefined; i = prev.get(i)) { const c = (i - i % 4) / 4; tiles.unshift([c % W, Math.floor(c / W)]); }
+      return { tiles, cost: gc };
     }
     for (const [d, c] of steps(way, x, z, h)) {
       const nx = x + DIRS[d][0], nz = z + DIRS[d][1]; if (!inside(nx, nz)) continue;
-      const ns = (nz * GRID + nx) * 4 + d, ng = g[cur] + c;
-      if (ng < g[ns]) { g[ns] = ng; prev[ns] = cur; push(ns, ng + hf(nx, nz)); }
+      const ns = (nz * W + nx) * 4 + d, ng = gc + c;
+      if (ng < (g.get(ns) ?? Infinity)) { g.set(ns, ng); prev.set(ns, cur); push(ns, ng + hf(nx, nz)); }
     }
   }
   return null;
@@ -397,7 +424,7 @@ function canBeAt(way, x, z, st) {
   if (way === 'sea') return WAYS.sea(tx, tz);
   if (isWater(tx, tz) || solidAt(tx, tz)) return false;
   const f = world.feats.get(key(tx, 0, tz));
-  if (f && f.type === 'tree' && st.frame === 'tank' && !isClient()) { world.feats.delete(key(tx, 0, tz)); bus.emit('feat', tx, tz); return true; }   // tanks flatten trees
+  if (f && FEATURES[f.type]?.tool === 'axe' && st.frame === 'tank' && !isClient()) { removeFeat(key(tx, 0, tz)); bus.emit('feat', tx, tz); return true; }   // tanks flatten trees
   return !f;
 }
 function freeDrive(v, st, drive, dt, way) {
@@ -626,6 +653,7 @@ export function routeAction(op) {
       for (const u of world.units) if (u.route === r.id) u.goal = null;
       break;
     }
+    case 'setstops': if (r && Array.isArray(op.stops)) { r.stops = op.stops.slice(0, 32).map(st => cleanStop(st, r.way)).filter(Boolean); if (op.loop !== undefined) r.loop = !!op.loop; for (const u of world.units) if (u.route === r.id) { u.goal = null; if (u.stop >= r.stops.length) u.stop = 0; } } break;
     case 'unstop': if (r) { r.stops.splice(int(op.i, 0, r.stops.length - 1, 0), 1); for (const u of world.units) if (u.route === r.id) { u.goal = null; if (u.stop >= r.stops.length) u.stop = 0; } } break;
     case 'move': if (r) { const i = int(op.i, 0, r.stops.length - 1, 0), j = i + (op.by > 0 ? 1 : -1); if (j >= 0 && j < r.stops.length) [r.stops[i], r.stops[j]] = [r.stops[j], r.stops[i]]; } break;
     case 'assign': {
@@ -753,6 +781,7 @@ export function loadTransport(d) {
   world.units = (d.units || []).map(u => ({ ...u, goal: null, msg: u.msg || '', state: u.state === 'dock' && u.dock ? 'dock' : u.auto ? 'travel' : 'idle' }));
   world.routes = d.routes || [];
   world.roads = new Map(d.roads || []);
+  groupOldRoads();
   world.nextId = Math.max(d.nextId || 1, ...world.vehicles.map(v => v.id + 1), ...world.units.map(u => u.id + 1), ...world.routes.map(r => r.id + 1));
   world.railDirty = true; world.wayVersion = (world.wayVersion || 0) + 1;
 }

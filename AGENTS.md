@@ -20,28 +20,38 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
   frames stall.
 - **Co-op test:** open two tabs. In tab A set a nickname, then Host co-op → New world, and read `depthworks.S.net.code`.
   In tab B use Join co-op with that code, then drive actions with `depthworks.doAction(...)` and compare `world` on both tabs.
-- Clear test data afterwards: the keys are `depthworks.save.v3`, `depthworks.nick`, `depthworks.volume`, `depthworks.keys` and `depthworks.settings` in localStorage.
+- `begin(true, sandbox, slot, { size, seed, biomes, water, ores })` starts a generated world (see `newWorld`).
+  `ensureChunks(x, z, r)` makes chunks without walking there.
+- Clear test data afterwards: the keys are `depthworks.save.v3` (slot 1), `depthworks.save.v3.2` … `.5` (slots 2–5), `depthworks.saves` (the slot index),
+  `depthworks.nick`, `depthworks.volume`, `depthworks.keys`, `depthworks.settings` and `depthworks.worldopts` in localStorage.
 
 ## Architecture
 
 | File | Role |
 |---|---|
 | `src/data.js` | Pure data: items (stack sizes), entities, recipes, techs, tiers, tiles, fluids, voltages, quickbars, the alien script |
-| `src/state.js` | Shared mutable state `S`, `world` maps and tile grids, `Inventory` class, players, `actor`, the event `bus`, world generation (ores, trees, water, rivers), quickbars |
-| `src/sim.js` | All game rules: machines and their augments (`machineStats`), drills and deposit layers, power networks and voltages, cables, research, precision, crafting, the engineer, building, slots, map marks, factory reassignment |
+| `src/state.js` | Shared mutable state `S`, `world` maps, chunk storage (`chunkOf`, `tileAt`, `underOf`, `patchAt`), `EntMap`, `Inventory` class, players, `actor`, the event `bus`, the old fixed-map generators (worlds from before chunks), deposits, the day clock (`daylight`), quickbars |
+| `src/worldgen.js` | Generated worlds: climate noise and biomes, water and rivers, ores per biome, trees, oil, weedy patches, made chunk by chunk from the seed; `newWorld`, the landing site, world edits |
+| `src/terrain.js` | Drawing the ground chunk by chunk around the camera: progressive painting with LOD by zoom, clutter (ore piles, trees, flora, weeds), water surfaces, underground floors |
+| `src/multi.js` | Buildings over several tiles (greenhouse rooms, dams): footprints, joining touching ones, splitting, walls and doors |
+| `src/farm.js` | Weedy patches and the shovel, greenhouses, water shared over irrigation |
+| `src/plants.js` | Dams, uranium reactors and coolant towers, repairs |
+| `src/body.js` | Biome hazards and exposure, medical lab research, `playerMods` (everything that changes the engineer's numbers) |
+| `src/copypaste.js` | The clipboard: copying and pasting settings between buildings, belt lines, routes and stops |
+| `src/sim.js` | All game rules: machines and their augments (`machineStats`), drills and deposit layers, lamps, power networks and voltages, cables, research, precision, crafting (free in sandbox), the engineer, health and stamina, building (and auto-craft on place), slots, map marks, factory reassignment |
 | `src/belts.js` | Belts: lanes (2, or 3 on bus belts), lines (runs of tiles simulated as one), the nodes where lines end (splitters, bus channels, side-loads, other belts), line settings, networks |
 | `src/fluids.js` | Fluid networks: fluid boxes per entity, pipes, underground pipes, pumps, valves, tanks, machine ports, throughput, the steam chain |
 | `src/transport.js` | Roads (tile layer), rails and signal blocks, vehicles and driving, A* over road/rail/water tiles, the shared path follower, depots, routes and schedules |
 | `src/fish.js` | Water bodies, fish and their populations, fishing nets on boats |
 | `src/logistics.js` | The logistics window (L): one route editor and map for rail, road and sea, plus the belt lines tab (line editor, map, network diagram) |
 | `src/net.js` | Co-op: `doAction`, hosting/joining, op broadcast, snapshots, chat |
-| `src/save.js` | Save/load and the entity JSON format (shared with net sync) |
-| `src/scene.js` | Rendering: camera, post pass, terrain, clutter, particles, entity meshes, picking, arrows, preview |
+| `src/save.js` | Save slots, export/import files, the entity JSON format (shared with net sync), old-save migration |
+| `src/scene.js` | Rendering: camera, post pass (outlines, night and the light buffer), terrain, clutter, particles, entity meshes, picking, arrows, preview |
 | `src/models.js` | Procedural models, toon materials, ghost/preview variants, engineer, inserter IK |
-| `src/ui.js` | HUD and panels (HTML), quickbars, hide UI, key binding screen, drag and drop, chat, name tags, goals |
+| `src/ui.js` | HUD and panels (HTML), quickbars, vitals, the pause menu and settings, hide UI, key binding screen, drag and drop, chat, name tags, goals |
 | `src/map.js` | Minimap and big map: chunk-cached drawing, view modes (terrain, resources, production, power), markers and areas |
-| `src/input.js` | Key bindings: actions, defaults, rebinding (saved in localStorage) |
-| `src/main.js` | Boot, title/lobby, input, game loop |
+| `src/input.js` | Key bindings: actions, defaults, rebinding (saved in localStorage); mouse combos like `Shift+Mouse0` |
+| `src/main.js` | Boot, title screen (slots, load game, host/join), input, game loop (paused while the menu is open in solo) |
 | `src/audio.js`, `src/signal.js`, `src/icons.js` | Sound, the alien conversation, pixel icons |
 
 Modules talk through direct imports plus `bus` events (`placed`, `removed`, `remesh`, `ore`, `feat`, `research`,
@@ -108,6 +118,29 @@ so players can rebind them. Add new actions to `ACTIONS`.
     slots from `augSlots` (default 2 for `PRODUCER_KINDS`).
 17. **Deposits** never disappear: `depleteOre` moves them down a `DEPOSIT` layer. Tune layers in `data.js`.
 18. **Retired things** go in `RETIRED` (data.js) with what they give back; `save.js` takes them out of old saves.
+19. **Day and night** come from the world clock: read `daylight()` (`state.js`), never a timer of your own. Anything
+    that should glow at night gets a `light: { r, color, flicker }` on its entity (or a line in `GLOW` in data.js);
+    the scene draws it into the light buffer. Don't add Three.js scene lights for it.
+20. **Health is the host's.** Damage and respawn happen in `healthTick`/`hurt` (sim.js) on the host only; stamina is
+    run by whoever moves the engineer.
+21. **Placing through `placeOrCraft`** (sim.js), not `place`, for anything the player builds: it handles running out.
+22. **Sandbox** is `S.sandbox`: check it where something should be free (crafting, the give action), not elsewhere.
+23. **The world is chunks.** Never allocate anything world-sized (`GRID` can be 65536). Generated worlds (`world.gen`) are
+    made from the seed; anything that changes generated things must go in `world.edits` too (`removeFeat`, `clearPatch`,
+    ore and oil changes), or it comes back when the chunk is made again. Saves keep only `gen` and `edits`. Worlds from
+    before chunks (`world.gen === null`, 96 tiles) keep their surface in the save. Underground deposits are made lazily:
+    call `underOf(x, z)` before looking at layers −1 and −2. `GRID` is a live binding: read it, never cache it.
+24. **Rendering only what is near.** `terrain.js` loads chunks around the camera and drops the rest; buildings get models
+    only while their chunk is shown (`chunkShown`). Loops over all buildings for drawing should check distance first.
+25. **Buildings over several tiles** (`multi` in data) have a `foot` and live in `world.ents` under their anchor, other
+    tiles in `world.ents.occ`: `world.ents.get(key)` finds them from any tile. Remove and move them with `clearFoot`,
+    `setFoot` and `rekey` (multi.js), never by deleting a tile key. Kinds that join or split need `KINDS` handlers.
+    `tileMine` in data allows Ctrl-mining one tile. Roads are objects too: every tile of one drag shares `o`.
+26. **Engineer numbers** (speed, reach, mining, crafting, health, stamina) come from `playerMods(p)`, `reachOf`,
+    `maxHealth` and `maxStamina` (body.js), never straight from `PLAYER`, so hazards and medical upgrades apply.
+27. **Copy and paste:** buildings plug into `copyBuilding` / `applyToBuilding` (copypaste.js); panels mark rows with
+    `data-clip="kind:ref"` and register `CLIP_UI[kind]`. Apply only what fits the target and ignore the rest.
+28. **Ingredient groups:** a recipe ingredient `'#seed'` takes any item of `GROUPS.seed`. Use `ingredientMatches`.
 
 ## Style
 

@@ -23,7 +23,9 @@ export function initAudio() {
   const comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -18; comp.ratio.value = 4;
   master = ctx.createGain(); master.gain.value = volume * volume;
-  master.connect(comp); comp.connect(ctx.destination);
+  // a gentle cut above 5 kHz on everything: synthesised tones get piercing up there
+  const soft = ctx.createBiquadFilter(); soft.type = 'highshelf'; soft.frequency.value = 5000; soft.gain.value = -9;
+  master.connect(soft); soft.connect(comp); comp.connect(ctx.destination);
   sfxBus = ctx.createGain(); sfxBus.gain.value = .9; sfxBus.connect(master);
   ambBus = ctx.createGain(); ambBus.gain.value = .55; ambBus.connect(master);
   noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
@@ -72,7 +74,7 @@ export function sfx(name, minGap = 0) {
     case 'stepMetal': noise(.06, { type: 'bandpass', f: 2400, q: 3, gain: .08 }); tone(320 * p, .06, { type: 'triangle', gain: .03 }); break;
     case 'hit_ore': noise(.14, { type: 'bandpass', f: 1600 * p, q: 1.5, gain: .32 }); tone(190 * p, .07, { type: 'square', gain: .04, f2: 120 }); break;
     case 'hit_tree': tone(170 * p, .13, { type: 'triangle', gain: .28, f2: 110 }); noise(.09, { type: 'bandpass', f: 650, q: 2, gain: .18 }); break;
-    case 'hit_rock': noise(.11, { type: 'highpass', f: 2200, gain: .26 }); tone(420 * p, .06, { type: 'square', gain: .05, f2: 210 }); break;
+    case 'hit_rock': noise(.11, { type: 'bandpass', f: 1800, q: 1.2, gain: .2 }); tone(420 * p, .06, { type: 'square', gain: .05, f2: 210 }); break;
     case 'hit_ent': case 'hit_frame': tone(260 * p, .07, { type: 'square', gain: .06, f2: 140 }); noise(.05, { type: 'bandpass', f: 3200, gain: .14 }); break;
     case 'mined': tone(640 * p, .07, { gain: .1, f2: 960 }); break;
     case 'treeFall': noise(.5, { type: 'lowpass', f: 1400, f2: 200, gain: .3, attack: .02 }); tone(90, .4, { type: 'triangle', gain: .15, f2: 50 }); break;
@@ -80,10 +82,10 @@ export function sfx(name, minGap = 0) {
     case 'place': tone(150 * p, .12, { type: 'square', gain: .09, f2: 70 }); noise(.1, { type: 'lowpass', f: 900, gain: .28 }); tone(1150 * p, .14, { type: 'triangle', gain: .035, at: .02 }); break;
     case 'remove': tone(85 * p, .1, { type: 'square', gain: .08, f2: 170 }); noise(.08, { type: 'lowpass', f: 1200, gain: .2 }); break;
     case 'pickup': tone(980 * p, .045, { gain: .06, f2: 1400 }); break;
-    case 'click': tone(880, .025, { type: 'square', gain: .03 }); break;
+    case 'click': tone(660, .03, { type: 'triangle', gain: .035 }); break;
     case 'open': noise(.16, { type: 'bandpass', f: 900, f2: 2600, q: 2, gain: .1 }); break;
     case 'close': noise(.14, { type: 'bandpass', f: 2600, f2: 900, q: 2, gain: .08 }); break;
-    case 'error': tone(118, .16, { type: 'sawtooth', gain: .06 }); tone(111, .16, { type: 'sawtooth', gain: .06 }); break;
+    case 'error': tone(118, .16, { type: 'triangle', gain: .09 }); tone(111, .16, { type: 'triangle', gain: .09 }); break;
     case 'craft': tone(880, .07, { type: 'triangle', gain: .08 }); tone(1320, .1, { type: 'triangle', gain: .07, at: .06 }); break;
     case 'research': [523, 659, 784, 1047].forEach((f, i) => tone(f, .35, { type: 'triangle', gain: .1, at: i * .09 })); break;
     case 'goal': [784, 1047].forEach((f, i) => tone(f, .25, { type: 'triangle', gain: .08, at: i * .08 })); break;
@@ -95,7 +97,7 @@ export function sfx(name, minGap = 0) {
       tone(110, 2.2, { type: 'triangle', gain: .06, attack: .5, f2: 98 });
       noise(1.6, { type: 'bandpass', f: 400, f2: 3200, q: 9, gain: .05, attack: .4 }); break;
     case 'pulse': tone(55, 1.3, { gain: .35, f2: 38 }); tone(110, .9, { gain: .12, f2: 70 }); noise(.6, { type: 'lowpass', f: 300, gain: .15 }); break;
-    case 'servo': tone(420 * p, .2, { type: 'sawtooth', gain: .012, f2: 760 }); break;
+    case 'servo': tone(300 * p, .2, { type: 'triangle', gain: .02, f2: 520 }); break;
     case 'crackle': noise(.03, { type: 'highpass', f: 3000, gain: rnd(.03, .09) }); break;
     case 'spill': tone(300, .08, { type: 'square', gain: .04 }); tone(240, .1, { type: 'square', gain: .04, at: .07 }); break;
   }
@@ -125,9 +127,14 @@ function buildLoops() {
     osc('square', 196).connect(filt('lowpass', 300)).connect(am);
   });
   loop('engine', g => { const f = filt('lowpass', 190); osc('sawtooth', 38).connect(f); osc('sawtooth', 38.7).connect(f); f.connect(g); });
-  loop('shimmer', g => { osc('sine', 880).connect(g); osc('sine', 883.5).connect(g); osc('sine', 1320).connect(g); });
+  // labs and transmitters: a soft low hum with a slow breath, not the high beating tones they used to make
+  loop('shimmer', g => {
+    const am = ctx.createGain(); am.gain.value = .6; lfoOn(am.gain, .35, .3);
+    const f = filt('lowpass', 600); osc('triangle', 196).connect(f); osc('sine', 294).connect(f); f.connect(am).connect(g);
+    noiseSrc().connect(filt('bandpass', 900, 3)).connect(am);
+  });
 }
-const LOOP_LEVEL = { wind: .1, belt: .14, drill: .3, fire: .22, machine: .07, engine: .25, shimmer: .015 };
+const LOOP_LEVEL = { wind: .1, belt: .14, drill: .3, fire: .22, machine: .07, engine: .25, shimmer: .05 };
 
 // ---------------------------------------------------------------- per-frame update
 let scanT = 0, stepPhase = 0, hitT = 0, crackT = 0, fire = 0;

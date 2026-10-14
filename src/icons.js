@@ -56,6 +56,15 @@ export function iconCanvas(id) {
       for (let i = 0; i < (it.tier || 1); i++) px(4 + i * 2, 12, '#f2f2f2', 1, 1);
       break;
     }
+    case 'seed': for (const [x, y] of [[4, 6], [8, 4], [10, 9], [5, 11], [8, 10], [11, 5]]) { px(x, y, 1, 3, 2); px(x, y, 1.35, 1, 1); px(x + 2, y + 1, .65, 1, 1); } break;
+    case 'crop': {   // a bunch: stalks with a head in the crop's colour
+      for (const x of [5, 8, 11]) px(x, 6, '#4a7a3a', 1, 9);
+      for (const [x, y] of [[3, 2], [7, 1], [10, 3]]) { px(x, y, 1, 4, 5); px(x, y, 1.35, 4, 1); px(x + 3, y + 1, .7, 1, 4); }
+      break;
+    }
+    case 'vial': px(6, 1, '#c8d0da', 4, 2); px(7, 3, '#c8d0da', 2, 2); for (let y = 5; y < 15; y++) { const w = y < 7 ? 6 : 8; px(8 - w / 2, y, '#8a96a6', w, 1); px(9 - w / 2, y, y < 8 ? .7 : 1, w - 2, 1); } px(5, 8, '#ffffff', 1, 4); break;
+    case 'pellet': for (const [x, y] of [[3, 3], [9, 4], [5, 9], [10, 10]]) for (let a = 0; a < 4; a++) for (let b = 0; b < 4; b++) if (Math.hypot(a - 1.5, b - 1.5) < 2) px(x + a, y + b, a + b < 3 ? 1.35 : .9); break;
+    case 'cell': px(4, 1, '#5c6470', 8, 14); px(5, 2, '#2c3038', 6, 12); for (let y = 3; y < 13; y += 3) px(6, y, 1, 4, 2); px(6, 3, 1.4, 4, 1); px(4, 1, '#939ca8', 8, 1); break;
     case 'road': {
       const r = col >> 16 & 255;
       px(1, 3, 1, 14, 10);
@@ -128,11 +137,33 @@ function drawMachine(px, ent, col) {
     case 'pump': px(2, 13, '#3a8ad8', 12, 2); px(3, 6, '#2c3038', 1, 7); px(12, 6, '#2c3038', 1, 7); px(2, 5, '#5c6470', 12, 2); px(4, 2, 1, 6, 4); px(8, 3, 1, 6, 2); px(13, 2, '#939ca8', 2, 4); break;
     case 'boiler': px(2, 9, '#8f8373', 12, 6); px(6, 11, '#ff7a2a', 4, 2); for (let x = 1; x < 15; x++) px(x, 4, x % 5 ? 1 : .6, 1, 5); px(11, 0, '#645a4d', 2, 4); break;
     case 'engine': px(1, 12, '#2c3038', 14, 3); px(1, 5, 1, 9, 7); px(1, 5, 1.3, 9, 1); for (let x = 2; x < 10; x += 3) px(x, 6, .7, 1, 6); for (let y = 2; y < 15; y++) for (let x = 9; x < 16; x++) { const d = Math.hypot(x - 12, y - 8); if (d < 3.6 && d > 2.4) px(x, y, '#c3cad3'); } px(11, 7, '#2c3038', 2, 2); break;
+    case 'lamp':
+      if (def.burner) { px(4, 13, '#2c3038', 2, 3); px(10, 13, '#2c3038', 2, 3); px(3, 9, '#8f8373', 10, 4); px(3, 9, '#a89c8a', 10, 1); px(6, 4, '#ff8a3a', 4, 5); px(7, 2, '#ffd23f', 2, 4); break; }
+      px(7, 4, '#5c6470', 2, 11); px(5, 14, '#2c3038', 6, 2); px(4, 1, '#2c3038', 8, 2); px(5, 3, '#fff0d0', 6, 3); px(6, 3, '#ffffff', 2, 1); break;
     case 'solar': for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) px(2 + x * 4, 3 + y * 4, 1.4, 3, 3); px(1, 14, '#888', 14, 1); break;
     case 'transmitter': for (let x = 2; x < 14; x++) { const y = 3 + Math.round(Math.pow((x - 7.5) / 6, 2) * 4); px(x, y, '#cfd6df', 1, 2); } px(7, 6, '#9aa1ad', 2, 7); px(4, 13, 1, 8, 2); px(7, 2, '#7ef6ff', 2, 2); break;
   }
 }
 
+// Cursors for the engineer's tools, in the icons' pixel style: drawn 16x16, shown at 32x32 with a dark rim.
+const cursorCache = {};
+export function toolCursor(tool) {
+  if (cursorCache[tool]) return cursorCache[tool];
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const g = c.getContext('2d'), px = (x, y, col, w = 1, h = 1) => { g.fillStyle = col; g.fillRect(x * 2, y * 2, w * 2, h * 2); };
+  const handle = (x0, y0, n) => { for (let i = 0; i < n; i++) { px(x0 + i, y0 + i, '#8a5a2c'); px(x0 + i + 1, y0 + i, '#5e3b1a'); } };
+  if (tool === 'axe') { handle(5, 5, 10); for (let y = 0; y < 6; y++) px(1 + Math.floor(y / 2), y + 1, '#c3cad3', 5 - Math.floor(y / 2), 1); px(1, 1, '#ffffff', 2, 1); px(6, 2, '#5c6470', 1, 4); }
+  else if (tool === 'pickaxe') { handle(5, 5, 10); for (let i = 0; i < 8; i++) { px(i, 7 - i, '#c3cad3'); px(i + 1, 7 - i, '#939ca8'); } px(0, 7, '#ffffff'); px(7, 0, '#ffffff'); }
+  else { handle(7, 7, 8); px(1, 1, '#939ca8', 5, 5); px(2, 2, '#c3cad3', 3, 3); px(1, 1, '#ffffff', 2, 1); px(5, 5, '#5c6470', 2, 2); }
+  // dark rim
+  const img = g.getImageData(0, 0, 32, 32), d = img.data, o = new Uint8ClampedArray(d);
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+    const i = (y * 32 + x) * 4; if (d[i + 3]) continue;
+    if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => { const X = x + a, Y = y + b; return X >= 0 && Y >= 0 && X < 32 && Y < 32 && d[(Y * 32 + X) * 4 + 3]; })) { o[i] = 12; o[i + 1] = 14; o[i + 2] = 19; o[i + 3] = 230; }
+  }
+  g.putImageData(new ImageData(o, 32, 32), 0, 0);
+  return (cursorCache[tool] = `url(${c.toDataURL()}) 4 4, crosshair`);
+}
 export function iconURL(id) { const c = iconCanvas(id); return c._url ||= c.toDataURL(); }
 export function iconHTML(id, n, cls = '') {
   return `<span class="icon ${cls}" title="${ITEMS[id]?.name ?? FLUIDS[id]?.name ?? id}"><img src="${iconURL(id)}" alt="">${n !== undefined && n !== null && n !== '' ? `<b>${fmtN(n)}</b>` : ''}</span>`;

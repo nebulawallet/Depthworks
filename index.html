@@ -153,12 +153,17 @@
   @keyframes lowhp { from { border-color: var(--line); } to { border-color: #ff4a4a; box-shadow: 0 0 6px #ff4a4a; } }
   #hurt { position: fixed; inset: 0; pointer-events: none; z-index: 14; opacity: 0; box-shadow: inset 0 0 140px 30px rgba(220, 30, 30, .75); }
   #hurt.on { animation: hurtflash .6s ease-out; }
+  /* a biome hazard getting through: a soft tint at the screen's edges */
+  #hazard { position: fixed; inset: 0; pointer-events: none; z-index: 13; opacity: 0; transition: opacity 1s; }
+  .hz { border: 1px solid; padding: 0 4px; margin-left: 4px; font-size: 16px; }
+  .tools { display: flex; flex-wrap: wrap; gap: 4px 12px; } .tool { display: flex; align-items: center; gap: 4px; } .tool img { width: 24px; height: 24px; image-rendering: pixelated; } .tool.no { opacity: .45; }
+  .bar.heat { height: 10px; }
   @keyframes hurtflash { from { opacity: 1; } to { opacity: 0; } }
   .setrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; cursor: pointer; } .setrow input[type=range] { width: 200px; }
   #help:not(.ingame) .ingame-only, #help.ingame .title-only { display: none; }
   #help kbd { color: #111; background: var(--ink); padding: 0 4px; font-family: inherit; }
   #help p { margin: 6px 0; }
-  #title { width: 560px; text-align: center; background: rgba(11,13,18,.82); padding: 26px; }
+  #title { width: min(640px, calc(100vw - 24px)); text-align: center; background: rgba(11,13,18,.82); padding: 26px; }
   #title h1 { font-family: 'Silkscreen', monospace; font-weight: normal; color: var(--acc); font-size: 46px; margin: 0; letter-spacing: 4px; }
   #title .tag2 { color: var(--dim); margin: 8px 0 18px; }
   #titleBtns { display: flex; flex-direction: column; gap: 8px; align-items: center; } #titleBtns button { width: 240px; font-size: 22px; }
@@ -168,6 +173,15 @@
   #codeIn { letter-spacing: 6px; text-transform: uppercase; width: 240px; }
   .nickrow input:focus, #codeIn:focus, #chatin:focus { outline: none; border-color: var(--acc); }
   #lobbyMsg { margin-top: 10px; min-height: 22px; color: var(--warn); }
+  /* save slots on the title screen */
+  #titleBtns .slots { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; }
+  .slotrow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border: 1px solid var(--line); background: rgba(0,0,0,.25); flex-wrap: wrap; }
+  .slotrow.empty { opacity: .6; } .slotrow .grow { flex: 1; } #titleBtns .slotrow button { width: auto; font-size: 17px; padding: 1px 8px; }
+  .slothead { max-width: 520px; }
+  /* world options on the new game screen */
+  .wopts { display: grid; grid-template-columns: auto 220px; gap: 6px 12px; align-items: center; text-align: left; margin: 4px 0 8px; }
+  .wopts label { color: var(--dim); } .wopts select, .wopts input { font: inherit; font-size: 19px; background: var(--panel2); color: var(--ink); border: 2px solid var(--line2); padding: 1px 6px; width: 100%; }
+  .wopts input:disabled { opacity: .4; }
   #coop { left: 12px; top: 340px; width: 220px; font-size: 17px; }
   #coop .gh { color: var(--acc); font-size: 13px; margin-bottom: 4px; }
   #coop .code { font-family: 'Silkscreen', monospace; font-size: 22px; letter-spacing: 4px; color: var(--gold); cursor: pointer; margin: 2px 0 4px; }
@@ -210,6 +224,7 @@
   #roadcfg .dim { margin: 0 2px 0 8px; } #roadcfg .dim:first-child { margin-left: 0; } #roadcfg button { padding: 0 6px; }
   #toast { left: 50%; top: 14px; transform: translateX(-50%); display: none; pointer-events: none; color: var(--warn); z-index: 9; text-align: center; max-width: 80vw; }
   #toast.good { color: var(--ok); } #toast.sig { color: var(--acc); }
+  #clipTag { display: none; position: fixed; pointer-events: none; z-index: 21; font-size: 16px; padding: 1px 6px; color: var(--gold); border-color: var(--gold); }
   #tip { display: none; pointer-events: none; z-index: 20; max-width: 320px; font-size: 17px; }
 
   @media (max-width: 1100px) {
@@ -247,6 +262,7 @@
 <div id="craftq" class="panel hud"></div>
 <div id="minebar" class="panel"></div>
 <div id="hurt"></div>
+<div id="hazard"></div>
 
 <div id="signal" class="panel hud collapsed">
   <div id="sigToggle">SIGNAL ▾</div>
@@ -283,6 +299,7 @@
       <button data-pm="tab:guide">How to play</button>
       <div class="grow"></div>
       <button data-pm="save" class="ingame-only">Save</button>
+      <button data-pm="export" class="ingame-only">Export to file</button>
       <button data-pm="quit" class="ingame-only">Save and quit to menu</button>
       <button data-pm="back" class="title-only">Back</button>
     </div>
@@ -303,7 +320,9 @@
       <h3>Engineer</h3>
       <kbd>WASD</kbd> walk · hold <kbd>Shift</kbd> sprint · <kbd>Wheel</kbd> zoom<br>
       <kbd>LMB</kbd> build (drag belts) · open machines<br>
-      hold <kbd>RMB</kbd> mine ore, trees, rocks, buildings<br>
+      hold <kbd>RMB</kbd> mine: the axe fells trees, the pickaxe breaks ore and rock, the shovel digs weeds<br>
+      <kbd>Ctrl</kbd> + hold <kbd>RMB</kbd> take one tile off a greenhouse (or a path)<br>
+      <kbd>Shift</kbd>+<kbd>RMB</kbd> copy settings · <kbd>Shift</kbd>+<kbd>LMB</kbd> paste them (buildings, belt lines, routes, stops)<br>
       <kbd>E</kbd> inventory &amp; crafting · <kbd>T</kbd> research<br>
       <kbd>1</kbd>–<kbd>0</kbd> quickbar · <kbd>Q</kbd> copy hovered / empty hand<br>
       <kbd>R</kbd> rotate · <kbd>Z</kbd> drop · hold <kbd>F</kbd> pick up<br>
@@ -345,7 +364,8 @@
   <p class="dim">Put a water pump on water, boilers against it, and steam engines against the boilers: one pump feeds 20 boilers, one boiler feeds 2 engines.
     Water and steam pass between buildings that touch. Engines only work as hard as the network needs; when it needs more than they give, every machine slows down.
     Poles of one voltage wire up by themselves. Hold a power cable and click two poles to link them from further away. High voltage power lines cover a 21×21 area;
-    step down to low voltage with a transformer station and a transformer cable. A flashing plug means a machine has no power (red) or too little (yellow).</p>
+    step down to low voltage with a transformer station and a transformer cable. A flashing plug means a machine has no power (red) or too little (yellow).
+    Days turn to night: solar panels give nothing in the dark, so keep steam or diesel going. Lamps (powered) and braziers (burning coal or wood) light the ground, and working machines glow.</p>
   <h3 style="margin-top:10px">Oil and fluids</h3>
   <p class="dim">Pipes join every pipe and fluid port next to them; one line carries one fluid, and long lines carry less per second. Pumps push a line one way and restore full flow;
     valves pass one way only (or only overflow, or only to top up). Underground pipes jump up to 10 tiles under belts, roads and rails. Pumpjacks on crude oil feed refineries,
@@ -358,6 +378,17 @@
   <h3 style="margin-top:10px">Factories</h3>
   <p class="dim">Research Factory planning to found more factories (<kbd>K</kbd>). Each is a separate network: belts, inserters, pipes and power never cross between them,
     so goods move from one to another only by truck, train or ship. <kbd>J</kbd> switches which factory you build for.</p>
+  <h3 style="margin-top:10px">The world</h3>
+  <p class="dim">Worlds are big (pick the size when you start one) and made as you go. You land in a gentle biome; others are harsh or strange, with ores, trees and crops of their own.
+    Harsh biomes have a hazard (heat, cold, fumes, spores, resonance, radiation): it builds up while you stay and fades when you leave, and never kills you. Medical lab adaptations take it away.
+    Uranium is mostly found in the Pripyatic wastes, far from where you land; it needs a leaching drill fed with sulfuric acid.</p>
+  <h3 style="margin-top:10px">Tools and farming</h3>
+  <p class="dim">You carry an axe and a pickaxe; Soil science adds a shovel. Research makes each faster and lets it sweep everything nearby.
+    Dig weedy patches with the shovel for seeds. Greenhouses (5×5, touching ones join into one room) grow a crop from its seeds and irrigation water, and inserters take out the harvest and the spare seeds.
+    Seeds press into chlorophyll; chlorophyll, green lamps and seeds make terrestrial science packs for research and the medical lab, whose upgrades help every engineer.</p>
+  <h3 style="margin-top:10px">Big power</h3>
+  <p class="dim">Dams are dragged across water and joined to high voltage; they need a little power to start and then give a lot, most on a river. Uranium reactors boil 2000 water/s into steam for engines; coolant towers touching them must stay watered, or both break.
+    Steel pipe carries five times as much, and a high pressure pump only runs flat out through steel.</p>
   <h3 style="margin-top:10px">Fish</h3>
   <p class="dim">Hold right-click on a fish to catch it; hold it and click to eat. Boats with a fishing net catch what they pass, past a stack, but the net tears at two.
     Fished-out water takes a long time to recover.</p>
@@ -379,6 +410,7 @@
 <input id="chatin" class="hud" maxlength="200" placeholder="say something, Enter to send" autocomplete="off">
 <div id="toast" class="panel"></div>
 <div id="tip" class="panel"></div>
+<div id="clipTag" class="panel"></div>
 
 <script type="module" src="src/main.js"></script>
 </body>

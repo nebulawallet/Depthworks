@@ -2,12 +2,15 @@
 // sub-pixel offset is applied by sliding the canvas, so motion stays smooth without shimmering), then a
 // post pass draws pixel outlines from depth and normal edges and upscales with hard pixels.
 import * as THREE from 'three';
-import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE } from './data.js';
-import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet } from './state.js';
+import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE, DAY } from './data.js';
+import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, tilesOf } from './state.js';
+import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown } from './terrain.js';
 import { makeMesh, disposeMesh, setGhost, setPreview, poseInserter, itemGeo, itemMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo } from './models.js';
-import { canPlace, distTo, mineTargetAt, voltsOf, planCraft } from './sim.js';
+import { canPlace, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles } from './sim.js';
+import { footprint } from './multi.js';
+import { playerMods } from './body.js';
 import { visibleOnBelt, laneOffset, lineWarn, lanesOf } from './belts.js';
-import { roadAt, roadCells, signalRed, vehicleById, onWay, dockTiles, vstats } from './transport.js';
+import { roadAt, roadCells, roadTiles, signalRed, vehicleById, onWay, dockTiles, vstats } from './transport.js';
 import { isDown } from './input.js';
 
 export const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -29,13 +32,14 @@ S.cam = { yaw: 0, yawT: 0, pitch: .82, pitchT: .82, ppu: 20, ppuT: 20, x: 48, z:
 S.pix = 3;
 
 // ---------------------------------------------------------------- render targets + outline pass
-let lowW = 2, lowH = 2, rtColor, rtNormal;
+let lowW = 2, lowH = 2, rtColor, rtNormal, rtLight;
 const normalMat = new THREE.MeshNormalMaterial();
 const post = new THREE.ShaderMaterial({
-  uniforms: { tColor: { value: null }, tDepth: { value: null }, tNormal: { value: null }, res: { value: new THREE.Vector2() }, depthScale: { value: 299 }, depthEdge: { value: .1 } },
+  uniforms: { tColor: { value: null }, tDepth: { value: null }, tNormal: { value: null }, res: { value: new THREE.Vector2() }, depthScale: { value: 299 }, depthEdge: { value: .1 },
+    tLight: { value: null }, amb: { value: new THREE.Vector3(1, 1, 1) }, nightK: { value: 0 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `
-    uniform sampler2D tColor, tDepth, tNormal; uniform vec2 res; uniform float depthScale, depthEdge;
+    uniform sampler2D tColor, tDepth, tNormal, tLight; uniform vec2 res; uniform float depthScale, depthEdge, nightK; uniform vec3 amb;
     varying vec2 vUv;
     float D(vec2 uv) { return texture2D(tDepth, uv).r * depthScale; }
     vec3 N(vec2 uv) { return texture2D(tNormal, uv).rgb * 2.0 - 1.0; }
@@ -54,6 +58,7 @@ const post = new THREE.ShaderMaterial({
         nSum += distance(n, n2) * lead * sameSurface;
       }
       vec3 c = texture2D(tColor, vUv).rgb;
+      c *= amb + texture2D(tLight, vUv).rgb * nightK;       // night: the scene dims to moonlight, lit only where light falls
       if (dSum > depthEdge) c *= 0.32;
       else if (nSum > 0.35) c = c * 1.35 + 0.012;
       c = (c - 0.5 * c * c) * 1.12;                          // gentle filmic shoulder
@@ -69,6 +74,8 @@ function makeTargets() {
   rtColor = new THREE.WebGLRenderTarget(lowW, lowH, { ...o, type: THREE.HalfFloatType });
   rtColor.depthTexture = new THREE.DepthTexture(lowW, lowH);
   rtNormal = new THREE.WebGLRenderTarget(lowW, lowH, o);
+  rtLight?.dispose(); rtLight = new THREE.WebGLRenderTarget(lowW, lowH, { ...o, type: THREE.HalfFloatType });
+  post.uniforms.tLight.value = rtLight.texture;
   post.uniforms.tColor.value = rtColor.texture; post.uniforms.tDepth.value = rtColor.depthTexture; post.uniforms.tNormal.value = rtNormal.texture;
   post.uniforms.res.value.set(lowW, lowH);
 }
@@ -86,341 +93,60 @@ sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -.0
 Object.assign(sun.shadow.camera, { left: -36, right: 36, top: 36, bottom: -36, near: 1, far: 180 });
 scene.add(sun, sun.target);
 
-// ---------------------------------------------------------------- terrain
-const TP = 16;   // texels per tile: at the default zoom one texel is one screen pixel
-function hash2(x, y) { let h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
-function vnoise(x, y) {
-  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
-  const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
-  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
-}
-const fbm = (x, y) => vnoise(x, y) * .5 + vnoise(x * 2.1, y * 2.1) * .3 + vnoise(x * 4.3, y * 4.3) * .2;
-const PALETTES = {
-  0: [[66, 56, 44], [96, 80, 58], [74, 80, 56], [112, 94, 66]],
-  '-1': [[38, 36, 42], [52, 48, 54], [44, 42, 50], [60, 56, 62]],
-  '-2': [[28, 22, 38], [40, 32, 52], [32, 28, 44], [48, 38, 62]],
-};
-const layers = {};
-// Ore presence per layer as a flat grid, so painting can blend patch edges across tiles cheaply.
-const ORE_IDS = Object.keys(ITEMS);
-function oreGrid(y) {
-  const L = layers[y];
-  if (!L.ore) { L.ore = new Int16Array(GRID * GRID).fill(-1); for (const [k, o] of world.ores) { const [x, yy, z] = k.split(',').map(Number); if (yy === y) L.ore[z * GRID + x] = ORE_IDS.indexOf(o.type); } }
-  return L.ore;
-}
-// How far each water tile is from land (0 on land), for darker deep water.
-function depthGrid() {
-  const L = layers[0];
-  if (L.depth) return L.depth;
-  const d = L.depth = new Float32Array(GRID * GRID), q = [];
-  for (let i = 0; i < GRID * GRID; i++) { if (TILES[world.tiles[i]].liquid) d[i] = Infinity; else q.push(i); }
-  for (let h = 0; h < q.length; h++) {
-    const i = q[h], x = i % GRID, z = (i / GRID) | 0;
-    for (const [dx, dz] of DIRS) { const nx = x + dx, nz = z + dz, j = nz * GRID + nx; if (nx >= 0 && nz >= 0 && nx < GRID && nz < GRID && d[j] > d[i] + 1) { d[j] = d[i] + 1; q.push(j); } }
-  }
-  return d;
-}
-const SAND = [126, 110, 78];
-// Water and shore for one surface pixel, blended across tile centres like ore so coasts come out organic.
-// Returns null for dry ground well away from water.
-function waterPixel(wx, wz, c) {
-  const fx = wx - .5, fz = wz - .5, x0 = Math.floor(fx), z0 = Math.floor(fz), tx = fx - x0, tz = fz - z0, dg = depthGrid();
-  let field = 0, depth = 0, best = 0, bw = 0;
-  for (const [cx, cz, w] of [[x0, z0, (1 - tx) * (1 - tz)], [x0 + 1, z0, tx * (1 - tz)], [x0, z0 + 1, (1 - tx) * tz], [x0 + 1, z0 + 1, tx * tz]]) {
-    const t = tileAt(cx, cz);
-    if (!TILES[t].liquid) continue;
-    field += w; depth += w * Math.min(4, dg[cz * GRID + cx]);
-    if (w > bw) { bw = w; best = t; }
-  }
-  if (!field) return null;
-  field += (vnoise(wx * 3.7, wz * 3.7) - .5) * .3;
-  if (field < .32) return null;
-  if (field < .5) { const k = (field - .32) / .18; return c.map((v, i) => v * (1 - k) + SAND[i] * k); }   // wet sand
-  const p = TILES[best].paint, dk = 1 - Math.min(3, depth / Math.max(.01, field)) * .1, ripple = (vnoise(wx * 2.3, wz * 5.1) - .5) * 14;
-  const foam = field < .56 && !TILES[best].current ? 18 : 0;   // a light rim on still shores only
-  return p.map(v => v * dk + ripple + foam);
-}
-// Crude oil: a dark glossy stain, bigger and blacker where the well is richer.
-function oilPixel(o, fx, fz, c, grain) {
-  const d = Math.hypot(fx - .5, fz - .5), r = .26 + Math.min(.2, o.yield / 900) + (vnoise((fx + 3) * 4.1, fz * 4.1) - .5) * .18;
-  if (d > r + .1) return c;
-  if (d > r) return c.map(v => v * .8);
-  return grain > .9 ? [96, 90, 110] : [24 + grain * 10, 20 + grain * 8, 28 + grain * 12];
-}
-// What a road tile needs to know about its neighbours to paint itself: corners, junctions, kerbs.
-function roadInfo(x, z) {
-  const r = roadAt(x, z); if (!r) return null;
-  const n = DIRS.map(([dx, dz]) => roadAt(x + dx, z + dz)), car = t => !!t && !ROADS[t.s]?.walk, walk = !!ROADS[r.s]?.walk;
-  const same = n.map(t => walk ? !!t && !!ROADS[t.s]?.walk : car(t));
-  let corner = null;   // exactly two neighbours of its own kind, at right angles: round off the outside corner
-  const on = [0, 1, 2, 3].filter(d => same[d]);
-  if (on.length === 2 && (on[0] + on[1]) % 2 === 1 && n.every((t, d) => on.includes(d) || !t)) corner = [.5 + (DIRS[on[0]][0] + DIRS[on[1]][0]) * .5, .5 + (DIRS[on[0]][1] + DIRS[on[1]][1]) * .5];
-  const junction = !walk && n.some(t => car(t) && t.a !== r.a);
-  // an approach: the next tile along the road is a junction tile
-  let approach = -1;
-  if (!walk && !junction) for (const d of r.a === 0 ? [0, 2] : [1, 3]) {
-    const t = n[d]; if (!car(t)) continue;
-    const tx = x + DIRS[d][0], tz = z + DIRS[d][1];
-    if (DIRS.some(([dx, dz]) => { const q = roadAt(tx + dx, tz + dz); return car(q) && q.a !== t.a; }) || t.a !== r.a) approach = d;
-  }
-  return { r, walk, n, car: n.map(car), corner, junction, approach, def: ROADS[r.s] };
-}
-const YELLOW = [214, 176, 52], WHITE = [222, 222, 214];
-function roadPixel(I, fx, fz, c, x, z) {
-  const { r, def } = I;
-  if (I.corner && Math.hypot(fx - I.corner[0], fz - I.corner[1]) > 1) return null;   // rounded outside corner
-  if (I.walk) {   // paving slabs with grout, and a pale kerb where it meets a road
-    const sx = Math.floor(fx * 2), sz = Math.floor(fz * 2), grout = (fx * 2) % 1 < .08 || (fz * 2) % 1 < .08;
-    let col = def.paint.map(v => v + (hash2(x * 2 + sx, z * 2 + sz) - .5) * 12);
-    if (grout) col = col.map(v => v * .78);
-    for (let d = 0; d < 4; d++) if (I.car[d]) { const e = d === 0 ? fz : d === 1 ? 1 - fx : d === 2 ? 1 - fz : fx; if (e < .1) col = e < .04 ? [120, 116, 108] : [196, 192, 184]; }
-    return col;
-  }
-  const g = hash2(Math.floor(x * 16 + fx * 16), Math.floor(z * 16 + fz * 16));
-  let col = def.paint.slice();
-  if (r.s === 'gravel_road') col = col.map(v => v + (g - .5) * 34 + (g > .93 ? 26 : 0));
-  else if (r.s === 'cobble_road') {
-    const row = Math.floor(fz * 4), u = fx * 4 + (row % 2) * .5, mort = (u % 1) < .12 || (fz * 4) % 1 < .12;
-    col = mort ? col.map(v => v * .62) : col.map(v => v + (hash2(Math.floor(x * 4 + u), z * 4 + row) - .5) * 26);
-  } else if (r.s === 'concrete_road') { col = col.map(v => v + (g - .5) * 8); if (fx < .03 || fz < .03) col = col.map(v => v * .8); }
-  else col = col.map(v => v + (g - .5) * 10);
-  if (I.junction) return col;
-  const w = r.w || 1, u = (r.i || 0) + (r.a === 0 ? fx : fz), v = r.a === 0 ? z + fz : x + fx, lw = .05;
-  if (I.approach >= 0) {   // zebra crossing or a stop line on the edge that meets the junction
-    const d = I.approach, edge = d === 0 ? fz : d === 1 ? 1 - fx : d === 2 ? 1 - fz : fx;
-    if (r.c && edge < .38 && edge > .06 && (u * 5) % 1 < .5) return WHITE;
-    if (!r.c && edge < .09) return WHITE;
-  }
-  if (r.e && (u < .06 + lw && u > .06 || u > w - .06 - lw && u < w - .06)) return WHITE;
-  const L = r.l || 1;
-  for (let k = 1; k < L; k++) {
-    const b = w * k / L, centre = L % 2 === 0 && k === L / 2;
-    if (!centre) { if (Math.abs(u - b) < lw / 2 + .01 && (v % 1) < .5) return WHITE; continue; }
-    if (r.m === 'double') { if (Math.abs(Math.abs(u - b) - .05) < .025) return YELLOW; }
-    else if (r.m === 'solid') { if (Math.abs(u - b) < lw / 2 + .01) return YELLOW; }
-    else if (r.m === 'dashed') { if (Math.abs(u - b) < lw / 2 + .01 && (v % 1) < .5) return WHITE; }
-  }
-  return col;
-}
-function paintTile(y, x, z) {
-  const L = layers[y], g = L.ctx, pal = PALETTES[y], og = oreGrid(y);
-  const at = (tx, tz) => tx < 0 || tz < 0 || tx >= GRID || tz >= GRID ? -1 : og[tz * GRID + tx];
-  const img = L.img ||= g.createImageData(TP, TP), d = img.data;
-  const road = y === 0 ? roadInfo(x, z) : null, oil = y === 0 ? world.oil.get(x + ',' + z) : null;
-  for (let py = 0; py < TP; py++) for (let px = 0; px < TP; px++) {
-    const wx = x + (px + .5) / TP, wz = z + (py + .5) / TP;
-    const n = fbm(wx * .18 + y * 9, wz * .18), m = vnoise(wx * .9, wz * .9), grain = hash2(x * TP + px + y * 7777, z * TP + py);
-    const i0 = Math.min(2, Math.floor(n * 3.2)), t = Math.min(1, Math.max(0, n * 3.2 - i0));
-    let c = pal[t > .5 ? i0 + 1 : i0].slice();   // hard steps between soil bands
-    const lift = (m - .5) * 10 + (grain - .5) * 8;
-    c = c.map(v => v + lift);
-    // ore ground: bilinear presence between tile centres, roughened with noise, so patches have organic edges
-    const fx = wx - .5, fz = wz - .5, x0 = Math.floor(fx), z0 = Math.floor(fz), tx = fx - x0, tz = fz - z0;
-    const corners = [[x0, z0, (1 - tx) * (1 - tz)], [x0 + 1, z0, tx * (1 - tz)], [x0, z0 + 1, (1 - tx) * tz], [x0 + 1, z0 + 1, tx * tz]];
-    let field = 0, best = -1, bw = 0;
-    for (const [cx, cz, w] of corners) { const id = at(cx, cz); if (id >= 0) { field += w; if (w > bw) { bw = w; best = id; } } }
-    if (best >= 0 && field + (vnoise(wx * 3.1, wz * 3.1) - .5) * .7 > .45) {
-      const h = ITEMS[ORE_IDS[best]].color, oc = [h >> 16 & 255, h >> 8 & 255, h & 255];
-      c = c.map((v, k) => v * .82 + oc[k] * .05);
-      if (grain < .16) c = oc.map(v => v * (.6 + grain * 2.4));
-    }
-    if (y === 0) { const w = waterPixel(wx, wz, c); if (w) c = w; }
-    if (oil) c = oilPixel(oil, wx - x, wz - z, c, grain);
-    if (road) { const r = roadPixel(road, wx - x, wz - z, c, x, z); if (r) c = r; }
-    c = c.map(v => Math.round(v / 4) * 4);
-    const i = (py * TP + px) * 4; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
-  }
-  g.putImageData(img, x * TP, z * TP);
-}
-function makeLayer(y) {
-  const c = document.createElement('canvas'); c.width = c.height = GRID * TP;
-  const ctx = c.getContext('2d'); layers[y] = { ctx };
-  for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) paintTile(y, x, z);
-  const tex = new THREE.CanvasTexture(c);
-  tex.magFilter = tex.minFilter = THREE.NearestFilter; tex.colorSpace = THREE.SRGBColorSpace;
-  layers[y].tex = tex;
-  return tex;
-}
-const sideMat = new THREE.MeshToonMaterial({ color: 0x3b2f24, gradientMap: toonRamp });
-let slab, topMat, underPlanes = {};
-const clutterMeshes = [];   // ore piles, ground cover, trees and rocks: everything instanced on tiles
-
-// ---------------------------------------------------------------- tile clutter (instanced)
-// clutter.get(tileKey) -> [[instancedMesh, index, matrix]] so a tile can be hidden when built on.
-const clutter = new Map(), _hid = new THREE.Matrix4().makeScale(0, 0, 0);
-function addClutter(k, im, i, m) { im.setMatrixAt(i, m); (clutter.get(k) || clutter.set(k, []).get(k)).push([im, i, m.clone()]); }
-function showClutter(k, show) {
-  for (const [im, i, m] of clutter.get(k) || []) { im.setMatrixAt(i, show ? m : _hid); im.instanceMatrix.needsUpdate = true; }
-}
-function inst(geo, mat, n, y = 0) {
-  const im = new THREE.InstancedMesh(geo, mat, Math.max(1, n)); im.count = n; im.userData.y = y;
-  im.castShadow = true; im.receiveShadow = true; scene.add(im); clutterMeshes.push(im); return im;
-}
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _c = new THREE.Color();
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
-const ORE_LOOK = {
-  iron_ore: 0x8a96a8, copper_ore: 0xd07a42, coal: 0x2c2c32, stone: 0xb4a68c, crystal: 0x7ef6ff, abyssal_ore: 0x9a62e0,
-};
-function buildClutter() {
-  clutterMeshes.forEach(m => { scene.remove(m); m.dispose(); }); clutterMeshes.length = 0; clutter.clear(); featIndex.clear();
-  // ore piles: three chunks per tile, sized by how rich the tile is
-  const byType = {};
-  for (const [k, o] of world.ores) (byType[o.type + '|' + k.split(',')[1]] ||= []).push([k, o]);
-  for (const [tk, list] of Object.entries(byType)) {
-    const type = tk.split('|')[0], glow = type === 'crystal' || type === 'abyssal_ore';
-    const geo = type === 'crystal' ? facet(new THREE.OctahedronGeometry(.12, 0).scale(.7, 1.8, .7).translate(0, .18, 0)) : facet(new THREE.DodecahedronGeometry(.13, 0).scale(1, .62, 1).translate(0, .06, 0));
-    const im = inst(geo, M(0xffffff, glow ? { emissive: ITEMS[type].emissive, emissiveIntensity: .8 } : {}), list.length * 4, +tk.split('|')[1]);
-    list.forEach(([k, o], i) => {
-      const [x, y, z] = k.split(',').map(Number), r = rng(x * 131 + z * 71 + y * 17), rich = .55 + .45 * Math.min(1, o.amount / 900);
-      for (let j = 0; j < 4; j++) {
-        const s = rich * (.75 + r() * .75) * (j === 0 ? 1.35 : 1);
-        _m.compose(V(x + .12 + r() * .76, y, z + .12 + r() * .76), _q.setFromEuler(_e.set((r() - .5) * .4, r() * 6, (r() - .5) * .4)), V(s, s * (.8 + r() * .5), s));
-        addClutter(k, im, i * 4 + j, _m);
-        _c.setHex(ORE_LOOK[type]).multiplyScalar(.8 + r() * .35); im.setColorAt(i * 4 + j, _c);
-      }
-    });
-  }
-  // ground cover: tufts and pebbles on empty surface tiles
-  const tufts = [], pebbles = [];
-  for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
-    const k = key(x, 0, z); if (world.ores.has(k) || world.feats.has(k) || isWater(x, z) || world.roads.has(x + ',' + z) || world.oil.has(x + ',' + z)) continue;
-    const h = hash2(x * 3 + 1, z * 5 + 2);
-    if (h < .2) tufts.push([k, x, z, h]); else if (h > .93) pebbles.push([k, x, z, h]);
-  }
-  const tuftIm = inst(new THREE.ConeGeometry(.05, .2, 3).translate(0, .1, 0), M(0xffffff), tufts.length * 3);
-  tufts.forEach(([k, x, z, h], i) => {
-    const r = rng(x * 977 + z), cx = x + .2 + r() * .6, cz = z + .2 + r() * .6;
-    for (let j = 0; j < 3; j++) {
-      _m.compose(V(cx + (r() - .5) * .14, 0, cz + (r() - .5) * .14), _q.setFromEuler(_e.set((r() - .5) * .6, 0, (r() - .5) * .6)), V(1, .6 + r() * .9, 1));
-      addClutter(k, tuftIm, i * 3 + j, _m);
-      _c.setHSL(.2 + h * .5, .35, .3 + r() * .12); tuftIm.setColorAt(i * 3 + j, _c);
-    }
-  });
-  const pebIm = inst(facet(new THREE.DodecahedronGeometry(.07, 0).scale(1, .6, 1)), M(0xffffff), pebbles.length);
-  pebbles.forEach(([k, x, z], i) => {
-    const r = rng(x * 31 + z * 7), s = .7 + r() * .8;
-    _m.compose(V(x + .2 + r() * .6, .02, z + .2 + r() * .6), _q.setFromEuler(_e.set(0, r() * 6, 0)), V(s, s, s));
-    addClutter(k, pebIm, i, _m); _c.setHex(0x8a7f70).multiplyScalar(.8 + r() * .4); pebIm.setColorAt(i, _c);
-  });
-  // trees and rocks
-  const trees = [], rocks = [];
-  for (const [k, f] of world.feats) (f.type === 'tree' ? trees : rocks).push([k, f]);
-  const trunk = inst(new THREE.CylinderGeometry(.06, .1, .55, 5).translate(0, .27, 0), M(0x5a3a22), trees.length);
-  const crownA = inst(facet(new THREE.IcosahedronGeometry(.36, 0).scale(1, .8, 1).translate(0, .72, 0)), M(0xffffff), trees.length);
-  const crownB = inst(facet(new THREE.IcosahedronGeometry(.26, 0).scale(1, .85, 1).translate(.08, 1.02, -.04)), M(0xffffff), trees.length);
-  trees.forEach(([k, f], i) => {
-    const [x, , z] = k.split(',').map(Number), s = .85 + f.v * .45;
-    _m.compose(V(x + .5, 0, z + .5), _q.setFromEuler(_e.set(0, f.v * 6, 0)), V(s, s, s));
-    addClutter(k, trunk, i, _m); addClutter(k, crownA, i, _m); addClutter(k, crownB, i, _m);
-    _c.setHSL(.3 + f.v * .16, .38, .25 + f.v * .07); crownA.setColorAt(i, _c); _c.offsetHSL(.02, .02, .07); crownB.setColorAt(i, _c);
-    featIndex.set(crownA.uuid + i, k); featIndex.set(crownB.uuid + i, k); featIndex.set(trunk.uuid + i, k);
-  });
-  const rock = inst(facet(new THREE.DodecahedronGeometry(.42, 0).scale(1, .6, 1).translate(0, .17, 0)), M(0xffffff), rocks.length);
-  rocks.forEach(([k, f], i) => {
-    const [x, , z] = k.split(',').map(Number), s = .75 + f.v * .45;
-    _m.compose(V(x + .5, 0, z + .5), _q.setFromEuler(_e.set(0, f.v * 6, 0)), V(s, s, s));
-    addClutter(k, rock, i, _m); _c.setHex(0x8f8576).multiplyScalar(.85 + f.v * .3); rock.setColorAt(i, _c);
-    featIndex.set(rock.uuid + i, k);
-  });
-  featMeshes = [trunk, crownA, crownB, rock];
-  // crude oil: a dark puddle with a sheen over each well
-  const wells = [...world.oil.keys()];
-  const oilIm = inst(new THREE.CylinderGeometry(.3, .34, .02, 10), M(0x1a161e, { emissive: 0x2a2440, emissiveIntensity: .35 }), wells.length);
-  oilIm.castShadow = false;
-  wells.forEach((k2, i) => { const [x, z] = k2.split(',').map(Number), r = rng(x * 31 + z * 17); _m.compose(V(x + .5, .012, z + .5), _q.setFromEuler(_e.set(0, r() * 6, 0)), V(1, 1, .8 + r() * .3)); addClutter(key(x, 0, z), oilIm, i, _m); });
-  for (const im of clutterMeshes) if (im.instanceColor) im.instanceColor.needsUpdate = true;
-  // hide clutter under anything already built
-  for (const e of world.ents.values()) showClutter(key(e.x, e.y, e.z), false);
-}
-let featMeshes = [];
-const featIndex = new Map();
-
-// ---------------------------------------------------------------- water surface
-// Painted water lives in the terrain texture; on top, a thin animated sheet: slow glints on still water and
-// streaks that run along each river tile's flow direction (quads are built facing north and rotated, like models).
-function streakTexture(still) {
-  const c = document.createElement('canvas'); c.width = c.height = 16;
-  const g = c.getContext('2d'), R = rng(still ? 5 : 9);
-  if (still) for (let i = 0; i < 4; i++) { g.fillStyle = 'rgba(200,228,255,.45)'; g.fillRect(Math.floor(R() * 15), Math.floor(R() * 16), 2, 1); }
-  else for (const [x, y, len] of [[5, 2, 4], [10, 9, 3]]) {   // two soft ripples, brighter at the head
-    for (let k = 0; k < len; k++) { g.fillStyle = `rgba(190,224,255,${.18 + .3 * (1 - k / len)})`; g.fillRect(x, y + k, 1, 1); }
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.magFilter = tex.minFilter = THREE.NearestFilter; tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-const waterTex = { still: streakTexture(true), flow: streakTexture(false) };
-const waterMeshes = [];
-function buildWater() {
-  waterMeshes.forEach(m => { scene.remove(m); m.dispose(); }); waterMeshes.length = 0;
-  const still = [], flowing = [];
-  for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
-    const t = TILES[world.tiles[z * GRID + x]];
-    if (t.liquid) (world.flow[z * GRID + x] >= 0 ? flowing : still).push([x, z, world.flow[z * GRID + x]]);
-  }
-  const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-  // ripples only on some tiles, each a narrow strip nudged sideways and mirrored, so the current reads
-  // without a pattern repeating tile after tile
-  const sparse = flowing.filter(([x, z]) => hash2(x * 7 + 3, z * 5 + 1) < .5);
-  for (const [list, tex, op, w] of [[still, waterTex.still, .3, 1], [sparse, waterTex.flow, .8, .55]]) {
-    if (!list.length) continue;
-    const im = new THREE.InstancedMesh(quad, new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide }), list.length);
-    list.forEach(([x, z, d], i) => {
-      const a = -Math.max(0, d) * Math.PI / 2, side = w < 1 ? (hash2(x, z * 3) - .5) * .4 : 0;
-      im.setMatrixAt(i, _m.compose(V(x + .5 + Math.cos(a) * side, .012, z + .5 - Math.sin(a) * side), _q.setFromEuler(_e.set(0, a, 0)), V((hash2(x, z) < .5 ? -1 : 1) * w, 1, 1)));
-    });
-    im.layers.set(1); im.frustumCulled = false; scene.add(im); waterMeshes.push(im);
-  }
-}
-const RIVER_SPEED = TILES.find(t => t.current)?.current ?? 1;
-function animateWater(dt) {
-  waterTex.flow.offset.y -= RIVER_SPEED * dt;   // texture v runs north on an unrotated quad
-  waterTex.still.offset.x += .08 * dt; waterTex.still.offset.y = Math.sin(S.T * .4) * .15;
-}
-
-export function buildTerrain() {
-  for (const o of [slab, ...Object.values(underPlanes)]) if (o) scene.remove(o);
-  buildWater();
-  topMat = new THREE.MeshToonMaterial({ map: makeLayer(0), gradientMap: toonRamp });
-  slab = new THREE.Mesh(new THREE.BoxGeometry(GRID, 2, GRID), [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]);
-  slab.position.set(GRID / 2, -1, GRID / 2); slab.receiveShadow = true; scene.add(slab);
-  // underground floors are painted the first time you look down there (saves most of the start-up time)
-  for (const y of [-1, -2]) {
-    delete layers[y];
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(GRID, GRID).rotateX(-Math.PI / 2), new THREE.MeshToonMaterial({ color: 0x2a2630, gradientMap: toonRamp }));
-    p.position.set(GRID / 2, y + .002, GRID / 2); p.receiveShadow = true; scene.add(p); underPlanes[y] = p;
-  }
-  buildClutter();
+// ---------------------------------------------------------------- terrain (terrain.js draws it chunk by chunk)
+// Buildings get their models only while their chunk is shown, so far-away factories cost nothing to draw.
+const entsInChunk = (R, fn) => { for (const e of world.ents.values()) if (e.x >= R.x0 && e.x < R.x0 + R.w && e.z >= R.z0 && e.z < R.z0 + R.h) fn(e); for (const f of world.frames.values()) if (f.x >= R.x0 && f.x < R.x0 + R.w && f.z >= R.z0 && f.z < R.z0 + R.h) fn(f); };
+initTerrain(scene, {
+  onLoad: R => entsInChunk(R, e => { if (!e.mesh) attach(e); hideUnder(e); }),
+  onUnload: R => entsInChunk(R, e => detach(e)),
+  onClutter: R => entsInChunk(R, hideUnder),
+});
+// clutter under anything built is hidden (every tile of a building that covers several)
+const hideUnder = e => { if (e.kind !== 'frame') for (const [x, z] of tilesOf(e)) showClutter(key(x, e.y, z), false); };
+export function buildTerrain() { dropAllChunks(); updateCamera(0); terrainView(true); }
+function terrainView(first = false) {
+  const C = S.cam, r = Math.max(lowW, lowH) / C.ppu * .62 / Math.max(.45, Math.sin(C.pitch)) + 6;
+  updateTerrain(C.x, C.z, r, C.ppu, first);
 }
 // A road change repaints its tiles and their neighbours (corners, kerbs and junction markings depend on them).
 bus.on('roads', list => {
-  if (!layers[0]) return;
-  const seen = new Set();
+  const seen = new Set(), tiles = [];
   for (const [x, z] of list || []) for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
     const tx = x + dx, tz = z + dz, k = tx + ',' + tz;
     if (tx < 0 || tz < 0 || tx >= GRID || tz >= GRID || seen.has(k)) continue;
-    seen.add(k); paintTile(0, tx, tz);
+    seen.add(k); tiles.push([tx, tz]);
   }
+  repaintTiles(tiles);
   for (const [x, z] of list || []) showClutter(key(x, 0, z), !roadAt(x, z) && !world.ents.has(key(x, 0, z)));
-  layers[0].tex.needsUpdate = true;
 });
 bus.on('ore', (x, y, z) => {
-  showClutter(key(x, y, z), false); clutter.delete(key(x, y, z));
-  if (!layers[y]) return;
-  oreGrid(y)[z * GRID + x] = -1;
-  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) if (x + dx >= 0 && z + dz >= 0 && x + dx < GRID && z + dz < GRID) paintTile(y, x + dx, z + dz);
-  layers[y].tex.needsUpdate = true;
+  dropClutter(key(x, y, z));
+  const tiles = []; for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) tiles.push([x + dx, z + dz]);
+  repaintTiles(tiles, y);
 });
 bus.on('feat', (x, z) => {
-  const k = key(x, 0, z);
   burst(x + .5, .5, z + .5, 14, 0x6a8a4a, 2.2);
-  showClutter(k, false); clutter.delete(k);
+  dropClutter(key(x, 0, z));
 });
+// Dams change the ground under them: repaint their tiles (and where they used to be) and redo the water surface.
+function damChanged(e) {
+  if (e.kind !== 'dam') return;
+  const tiles = [...(e.foot || []), ...(e._painted || [])];
+  e._painted = e.foot?.map(t => [...t]);
+  repaintTiles(tiles);
+  const seen = new Set();
+  for (const [x, z] of tiles) { const R = shownAt(x, z); if (R && !seen.has(R)) { seen.add(R); rebuildChunkClutter(R); } }
+}
+for (const ev of ['placed', 'removed', 'remesh']) bus.on(ev, damChanged);
+bus.on('patch', (x, z) => { dropClutter(key(x, 0, z)); repaintTiles([[x, z]]); burst(x + .5, .1, z + .5, 10, 0x7a6a3a, 1.4, .05); });
 
-const layerGrid = new THREE.GridHelper(GRID, GRID, 0x7ef6ff, 0x7ef6ff);
+// the working layer's grid in depth mode: a patch around the camera, moved in whole tiles
+const layerGrid = new THREE.GridHelper(96, 96, 0x7ef6ff, 0x7ef6ff);
 layerGrid.material.transparent = true; layerGrid.material.opacity = .06; layerGrid.material.depthWrite = false;
-layerGrid.position.set(GRID / 2, .01, GRID / 2); layerGrid.visible = false; layerGrid.layers.set(UI_LAYER); scene.add(layerGrid);
+layerGrid.visible = false; layerGrid.layers.set(UI_LAYER); scene.add(layerGrid);
 
 // ---------------------------------------------------------------- particles (smoke, dust, chips)
 const PMAX = 900, parts = [];
@@ -455,39 +181,32 @@ function updateParticles(dt) {
 
 // ---------------------------------------------------------------- entity meshes
 function attach(e) { e.mesh = makeMesh(e); scene.add(e.mesh); e.ghost = undefined; applyGhost(e); }
-function detach(e) { if (e.mesh) { scene.remove(e.mesh); disposeMesh(e.mesh); e.mesh = null; } }
+function detach(e) { if (e.mesh) { scene.remove(e.mesh); disposeMesh(e.mesh); e.mesh = null; e.parts = null; } }
 bus.on('placed', e => {
+  if (!chunkShown(e.x, e.z)) return;   // its model gets made when its chunk is shown
   attach(e);
-  if (e.kind !== 'frame') showClutter(key(e.x, e.y, e.z), false);
+  hideUnder(e);
   if (S.started) { e.pop = 0; burst(e.x + .5, e.y + .05, e.z + .5, 10, 0x8a7a62, 1.6, .06); }
 });
 bus.on('removed', e => {
   detach(e);
-  if (!world.ents.has(key(e.x, e.y, e.z))) showClutter(key(e.x, e.y, e.z), true);
+  if (e.kind !== 'frame') for (const [x, z] of tilesOf(e)) if (!world.ents.has(key(x, e.y, z)) && !(e.y === 0 && roadAt(x, z))) showClutter(key(x, e.y, z), true);
   if (S.started) burst(e.x + .5, e.y + .2, e.z + .5, 8, 0x9a9aa2, 1.4, .06);
 });
 bus.on('remesh', e => { if (e.mesh) { detach(e); attach(e); } });
 export function remeshAll() {
-  for (const e of [...world.ents.values(), ...world.frames.values()]) { detach(e); attach(e); }
+  for (const e of [...world.ents.values(), ...world.frames.values()]) { detach(e); if (chunkShown(e.x, e.z)) attach(e); }
   previewKey = '';
 }
 bus.on('tier', remeshAll);
 
 const isGhost = e => S.mode === 'depth' && e.y > S.layer;
-function applyGhost(e) { const g = isGhost(e); if (g !== e.ghost) { e.ghost = g; setGhost(e.mesh, g); } }
+function applyGhost(e) { if (!e.mesh) return; const g = isGhost(e); if (g !== e.ghost) { e.ghost = g; setGhost(e.mesh, g); } }
 export function applyGhostAll() {
   for (const e of world.ents.values()) applyGhost(e);
   for (const e of world.frames.values()) applyGhost(e);
-  const depth = S.mode === 'depth', see0 = depth && S.layer < 0;
-  for (const y of [-1, -2]) if (depth && S.layer <= y + 1 && !layers[y]) { const m = underPlanes[y].material; m.map = makeLayer(y); m.color.set(0xffffff); m.needsUpdate = true; }
-  const see = (mt, on, op) => { if (mt.transparent !== on) mt.needsUpdate = true; mt.transparent = on; mt.opacity = on ? op : 1; mt.depthWrite = !on; };
-  for (const mt of [sideMat, topMat]) see(mt, see0, .12);
-  slab.layers.set(see0 ? 1 : 0);
-  const see1 = depth && S.layer < -1;
-  see(underPlanes[-1].material, see1, .15); underPlanes[-1].layers.set(see1 ? 1 : 0);
-  for (const im of clutterMeshes) im.visible = !depth || im.userData.y <= S.layer;
-  for (const im of waterMeshes) im.visible = !see0;
-  layerGrid.visible = depth; layerGrid.position.y = S.layer + .012;
+  setDepthView(S.mode === 'depth', S.layer);
+  layerGrid.visible = S.mode === 'depth'; layerGrid.position.y = S.layer + .012;
 }
 
 // ---------------------------------------------------------------- items on belts and on the ground (instanced)
@@ -747,6 +466,7 @@ function animate(dt) {
       }
       case 'assembler': {
         const on = active && e.crafting;
+        if (on && P.spin && ENTITIES[e.type].model === 'centrifuge') P.spin.rotation.y += dt * 20;
         if (on && P.spool) P.spool.rotation.x += dt * 6;
         if (on && P.gear) P.gear.rotation.y -= dt * 2.5;
         if (on && P.stir) P.stir.rotation.y += dt * 5;
@@ -763,14 +483,31 @@ function animate(dt) {
       case 'rail': if (P.lamp) P.lamp.emissive.setHex(signalRed(e) ? 0xff3a2a : 0x3aff5a); break;
       case 'tank': if (P.level) { const f = Math.min(1, (e.fa?.[0] || 0) / ENTITIES[e.type].cap); P.level.emissiveIntensity = .2 + f; } break;
       case 'lab': if (active) P.ring.rotation.y += dt * 2; P.glow.emissiveIntensity = active ? 1 + .5 * Math.sin(S.T * 4) : .2; break;
+      case 'lamp': if (P.glow) P.glow.emissiveIntensity = e.lit ? (ENTITIES[e.type].burner ? 1.6 + .4 * Math.sin(S.T * 17 + e.x) : 2.2) : .05; break;
       case 'transmitter': P.spin.rotation.y += dt * .5; P.glow.emissiveIntensity = .3 + e.prog * 3; break;
       case 'boiler': P.glow.emissiveIntensity = (e.load || 0) > 0 ? 1.4 + .5 * Math.sin(S.T * 21 + e.x) : .05; smoking = (e.load || 0) > .05; dark = true; break;
       case 'engine': P.fly.rotation.x += dt * 12 * (e.load || 0); P.glow.emissiveIntensity = (e.load || 0) > 0 ? .4 + e.load : .05; break;
       case 'pump': P.fly.rotation.x += dt * 9 * (e.load || 0); break;
+      case 'greenhouse':
+        if (P.plants) P.plants.scale.y = e.seeds ? .15 + .85 * (e.grow || 0) : .05;
+        P.roof.visible = S.mode === 'depth';   // the roof shows only in depth mode, so the room reads from above
+        P.glow.emissiveIntensity = active ? .8 + .3 * Math.sin(S.T * 2) : .1;
+        break;
+      case 'dam': P.glow.emissiveIntensity = e.running ? 1 + .4 * Math.sin(S.T * 3) : .05; break;
+      case 'medlab': if (active) P.ring.rotation.y += dt * 1.5; P.glow.emissiveIntensity = active ? 1 + .4 * Math.sin(S.T * 4) : .2; break;
+      case 'reactor': {
+        const h = (e.heat || 0) / 100, crit = h > .85 && !e.broken;
+        P.glow.emissiveIntensity = e.broken ? 0 : (e.load || 0) > 0 ? 1 + e.load : .2;
+        P.heat.emissiveIntensity = e.broken ? .3 : crit ? (Math.sin(S.T * 12) > 0 ? 2.5 : .2) : h * 1.6;   // flashes red when critical
+        smoking = (e.load || 0) > .05 || e.broken; dark = !!e.broken;
+        if (crit && Math.random() < dt * 4) burst(e.x + .5, 1, e.z + .5, 3, 0xff6a3a, .8, .05);
+        break;
+      }
+      case 'coolant': smoking = (e.load || 0) > .02; P.glow.emissiveIntensity = e.broken ? 1.5 : 0; dark = !!e.broken; break;
     }
     if (smoking && !e.ghost) {
       e.smokeT = (e.smokeT || 0) + dt;
-      if (e.smokeT > (e.kind === 'boiler' || e.kind === 'fgen' ? .5 / Math.max(.2, e.load) : .4)) {
+      if (e.smokeT > (e.kind === 'boiler' || e.kind === 'fgen' || e.kind === 'reactor' || e.kind === 'coolant' ? .5 / Math.max(.2, e.load || .2) : .4)) {
         e.smokeT = 0; _w.set(...P.smoke); e.mesh.localToWorld(_w); smoke(_w.x, _w.y, _w.z, dark);
       }
     }
@@ -781,7 +518,7 @@ function animate(dt) {
     if ((chipT += dt) > .45) {
       chipT = 0; const c = S.player.mineCell;
       const ore = world.ores.get(key(c.x, c.y, c.z));
-      const color = pm.kind === 'ore' && ore ? ORE_LOOK[ore.type] : ORE_CHIP[pm.kind] ?? 0x9aa1ad;
+      const color = pm.kind === 'ore' && ore ? oreLook(ore.type) : ORE_CHIP[pm.kind] ?? 0x9aa1ad;
       burst(c.x + .5, c.y + .25, c.z + .5, 6, color, 1.3, .055);
     }
   } else chipT = .3;
@@ -867,10 +604,10 @@ export function pickTarget() {
   ray.setFromCamera(mouse, camera);
   const y = S.mode === 'depth' ? S.layer : 0, list = [];
   for (const e of world.ents.values()) if (e.mesh && e.y === y) list.push(e.mesh);
-  if (y === 0) list.push(...featMeshes, ...vehMeshes.values());
+  if (y === 0) list.push(...featPickList(), ...vehMeshes.values());
   const hits = ray.intersectObjects(list, true);
   for (const h of hits) {
-    if (h.instanceId !== undefined) { const k = featIndex.get(h.object.uuid + h.instanceId); if (k && world.feats.has(k)) { const [x, , z] = k.split(',').map(Number); return { x, y: 0, z }; } continue; }
+    if (h.instanceId !== undefined) { const k = featKeyAt(h.object.uuid, h.instanceId); if (k && world.feats.has(k)) { const [x, , z] = k.split(',').map(Number); return { x, y: 0, z }; } continue; }
     let o = h.object; while (o && !o.userData.ent && !o.userData.veh) o = o.parent;
     if (o?.userData.veh) { const v = vehicleById(o.userData.veh); if (v) return { x: Math.floor(v.x), y: 0, z: Math.floor(v.z), veh: v.id }; continue; }
     if (o) { const e = o.userData.ent; return { x: e.x, y: e.y, z: e.z }; }
@@ -989,6 +726,10 @@ function ioHints(type, x, y, z, dir, dy) {
     const way = def.way, ok = y === 0 && DIRS.some(([ddx, ddz]) => onWay(way, x + ddx, z + ddz));
     return ok ? `${def.name}: vehicles stop at the green arrow. Inserters and pipes connect on any side` : way === 'sea' ? 'Ports go on the shore, next to water' : way === 'rail' ? 'Train stations go right beside a rail' : 'Truck depots go right beside a road';
   }
+  if (kind === 'greenhouse') return 'Greenhouse: touching greenhouses join into one room. Lead irrigation pipe to any side, put seeds in, take the harvest out with inserters. Walk in through the gaps in the walls';
+  if (kind === 'reactor') { fluidHint2At(x, y, z); return 'Uranium reactor: water pipes join at its left and right, steam at front and back. Put coolant towers against it, and keep them watered'; }
+  if (kind === 'coolant') return 'Coolant tower: put it against a uranium reactor and pipe water to it';
+  if (kind === 'medlab') return 'Medical lab: feed it terrestrial packs, chlorophyll and the crop the upgrade needs. Choose upgrades in research (T), Medical';
   if (kind === 'rail') return 'Rail: drag to lay track. Rails join every rail next to them; three or four make a junction. Use rail signals to let several trains share track';
   // fluids pass between side-by-side buildings: point at the neighbours that would join up
   const fluidHint = () => {
@@ -1077,6 +818,18 @@ function updatePending() {
   }
   pendMarks.count = n; pendMarks.instanceMatrix.needsUpdate = true;
 }
+// Tiles lit up under the cursor: the whole of a building or road that covers several tiles, the tiles a dam drag will
+// cover, the weedy patches a shovel stroke reaches. Filled in by updateHover, drawn once a frame.
+const tileMarks = new THREE.InstancedMesh(new THREE.PlaneGeometry(.94, .94).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: .32, depthWrite: false, depthTest: false }), 4096);
+tileMarks.layers.set(UI_LAYER); tileMarks.renderOrder = 7; tileMarks.frustumCulled = false; tileMarks.count = 0; tileMarks.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(tileMarks);
+let nMarks = 0;
+export function markTiles(list, color, y = 0) {
+  for (const [x, z] of list) {
+    if (nMarks >= 4096) return;
+    tileMarks.setMatrixAt(nMarks, _m.compose(V(x + .5, y + .05, z + .5), _q.identity(), V(1, 1, 1)));
+    tileMarks.setColorAt(nMarks++, _c.setHex(color));
+  }
+}
 function updateRoadPreview(hover) {
   let n = 0;
   if (hover && ROADS[S.sel] && hover.y === 0) {
@@ -1090,9 +843,12 @@ function updateRoadPreview(hover) {
   roadPrev.count = n; roadPrev.instanceMatrix.needsUpdate = true; if (roadPrev.instanceColor) roadPrev.instanceColor.needsUpdate = true;
 }
 function updateHover(hover) {
+  nMarks = 0;
   updateRoadPreview(hover);
   updatePending();
-  if (VEHICLES[S.sel] || ROADS[S.sel] || ITEMS[S.sel]?.tool === 'signal') { updateToolHover(hover); return; }
+  hoverMarks(hover);
+  tileMarks.count = nMarks; tileMarks.instanceMatrix.needsUpdate = true; if (tileMarks.instanceColor) tileMarks.instanceColor.needsUpdate = true;
+  if (VEHICLES[S.sel] || ROADS[S.sel] || ITEMS[S.sel]?.tool === 'signal' || ENTITIES[S.sel]?.drag) { updateToolHover(hover); return; }
   const sel = S.sel && ENTITIES[S.sel] ? S.sel : null;
   const kind = sel && ENTITIES[sel].kind;
   const dy = kind === 'lift' ? (S.dy === -1 ? -1 : 1) : kind === 'inserter' && S.mode === 'depth' ? S.dy : 0;
@@ -1102,7 +858,9 @@ function updateHover(hover) {
     if (sel) {
       const def = ENTITIES[sel];
       const fake = { type: sel, kind: def.kind, x: 0, y: 0, z: 0, dir: S.dir, dy, reach: def.reach, t: .5, held: null, curve: null, role: 'in' };
+      if (def.multi) { fake.type = def.as || sel; fake.foot = footprint(sel, 0, 0); fake.x = fake.foot[0][0]; fake.z = fake.foot[0][1]; }
       preview = makeMesh(fake);
+      preview.userData.off = [fake.x, fake.z];
       if (def.kind === 'inserter') poseInserter(fake);
       setPreview(preview); scene.add(preview);
     }
@@ -1119,6 +877,12 @@ function updateHover(hover) {
   const pulse = 1 + Math.sin(S.T * 6) * .025;
   marker.position.set(x + .5, y, z + .5);
   marker.scale.set(1.08 * pulse, sel ? .5 : heightOf(ent?.kind === 'feat' ? { kind: 'pole' } : ent) * .95 + .05, 1.08 * pulse);
+  // a building over several tiles: the brackets go round all of it
+  const size = sel ? ENTITIES[sel].multi && ENTITIES[sel].size : null, box = size ? footprint(sel, x, z) : real?.foot && !(hover.ctrl && ENTITIES[real.type].tileMine) ? real.foot : null;
+  if (box) {
+    const xs = box.map(t => t[0]), zs = box.map(t => t[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+    marker.position.set((x0 + x1 + 1) / 2, y, (z0 + z1 + 1) / 2); marker.scale.x = (x1 - x0 + 1.08) * pulse; marker.scale.z = (z1 - z0 + 1.08) * pulse;
+  }
   if (!sel) {
     const t = mineTargetAt(hover);
     marker.material.color.setHex(t && distTo(x, z) > t.reach ? 0xff8a3d : ent ? 0xffe9a0 : 0xffffff);
@@ -1127,13 +891,27 @@ function updateHover(hover) {
     return;
   }
   marker.material.opacity = 1;
-  preview.position.set(x + .5, y, z + .5);
+  const off = ENTITIES[sel].multi ? preview.userData.off : [0, 0];
+  preview.position.set(x + off[0] + .5, y, z + off[1] + .5);
   // out of it is only a problem when there is nothing to craft one from
   const err = canPlace(sel, x, y, z, S.dir, dy, { reach: true, noInv: true }) || (!invGet(sel) && !planCraft(sel, 1) && !S.player.pending?.length ? 'none' : null);
   marker.material.color.setHex(err ? 0xff5a4a : 0x9be37a);
   S.hint = ioHints(sel, x, y, z, S.dir, dy);
 }
 
+// Light up what the cursor would act on: a building or road as one object (one tile with Ctrl where that is allowed),
+// and with an empty hand over weedy ground, the patches a shovel stroke reaches.
+function hoverMarks(h) {
+  if (S.dragTiles?.length) { markTiles(S.dragTiles, S.dragOk ? 0x9be37a : 0xff5a4a); return; }
+  if (!h || S.sel) return;
+  const e = world.ents.get(key(h.x, h.y, h.z));
+  if (e?.foot) { if (h.ctrl && ENTITIES[e.type].tileMine) markTiles([[h.x, h.z]], 0xffa53d, h.y); else markTiles(e.foot, 0xffe9a0, h.y); return; }
+  if (h.y !== 0) return;
+  const r = roadAt(h.x, h.z);
+  if (r) { markTiles(h.ctrl && ROADS[r.s]?.tileMine ? [[h.x, h.z]] : r.o ? roadTiles(r.o) : [[h.x, h.z]], h.ctrl && ROADS[r.s]?.tileMine ? 0xffa53d : 0xffe9a0); return; }
+  const t = mineTargetAt(h);
+  if (t?.kind === 'patch' || t?.kind === 'ore' || t?.kind === 'feat') { const tiles = sweepTiles(t); if (t.kind === 'patch' || tiles.length > 1) markTiles(tiles.map(c => [c.x, c.z]), t.kind === 'patch' ? 0x9be37a : 0xffe9a0, h.y); }
+}
 // Vehicles, roads and signals in hand: a vehicle ghost or the road strip, and a coloured bracket.
 function updateToolHover(hover) {
   const pk = [S.sel, S.dir, 'tool'].join();
@@ -1149,7 +927,11 @@ function updateToolHover(hover) {
   const { x, y, z } = hover;
   marker.position.set(x + .5, y, z + .5); marker.scale.set(1.08, .4, 1.08); marker.material.opacity = 1;
   let ok = y === 0 && distTo(x, z) <= 10, hint = '';
-  if (VEHICLES[S.sel]) {
+  if (ENTITIES[S.sel]?.drag) {
+    const def = ENTITIES[S.sel];
+    ok = !S.dragTiles && y === 0 && isWater(x, z) && !world.ents.get(key(x, 0, z));
+    hint = S.dragTiles ? `${def.name}: ${S.dragTiles.length} tile${S.dragTiles.length > 1 ? 's' : ''}${S.dragOk ? '' : ` · ${S.dragErr}`}` : `${def.name}: drag across water, one ${def.name.toLowerCase()} a tile. Running, it gives ${def.outTile} kW a tile, more on a river`;
+  } else if (VEHICLES[S.sel]) {
     const st = vstats(S.sel), r = world.ents.get(key(x, 0, z));
     let a = Math.atan2(DIRS[S.dir][0], DIRS[S.dir][1]);
     if (st.way === 'rail' && r?.kind === 'rail' && !(r.conn >> S.dir & 1) && !(r.conn >> ((S.dir + 2) % 4) & 1)) { const d = [0, 1, 2, 3].find(d => r.conn >> d & 1); if (d !== undefined) a = Math.atan2(DIRS[d][0], DIRS[d][1]); }
@@ -1163,11 +945,57 @@ function updateToolHover(hover) {
 }
 
 // ---------------------------------------------------------------- frame
+// ---------------------------------------------------------------- night and light
+// Lights are soft pools drawn flat on the ground into their own low-res buffer, added up, and multiplied into the
+// picture in the post pass. That is cheap for hundreds of lights, unlike real scene lights.
+const lightTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), im = g.createImageData(64, 64);
+  for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+    const d = Math.min(1, Math.hypot(x - 31.5, y - 31.5) / 32), a = Math.pow(1 - d, 1.8), i = (y * 64 + x) * 4;
+    im.data[i] = im.data[i + 1] = im.data[i + 2] = 255; im.data[i + 3] = Math.round(a * 255);
+  }
+  g.putImageData(im, 0, 0); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.NoColorSpace; return t;
+})();
+const lightScene = new THREE.Scene();
+const lightMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ map: lightTex, transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false }), 2048);
+lightMesh.frustumCulled = false; lightMesh.count = 0; lightMesh.setColorAt(0, new THREE.Color(1, 1, 1)); lightScene.add(lightMesh);
+const _amb = new THREE.Vector3(), lerp3 = (a, b, k) => _amb.set(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k);
+// A machine's glow shows while it works; lamps while lit; depots all night.
+const glowing = e => e.kind === 'lamp' ? e.lit : e.kind === 'depot' ? true : S.T - e.lastActive < 1.5 || (e.load || 0) > .02;
+function updateLights() {
+  const dl = daylight(), night = 1 - dl;
+  post.uniforms.amb.value.copy(dl > .5 ? lerp3(DAY.duskLight, [1, 1, 1], (dl - .5) * 2) : lerp3(DAY.nightLight, DAY.duskLight, dl * 2));
+  post.uniforms.nightK.value = night;
+  if (night < .01) return false;
+  let n = 0;
+  const add = (x, y, z, r, color, k) => {
+    if (n >= 2048) return;
+    lightMesh.setMatrixAt(n, _m.compose(V(x, y + .02, z), _q.identity(), V(r, 1, r)));
+    lightMesh.setColorAt(n++, _c.setHex(color).multiplyScalar(k));
+  };
+  const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .8 + 8;
+  for (const e of world.ents.values()) {
+    const L = ENTITIES[e.type].light;
+    if (!L || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R || !glowing(e)) continue;
+    const fl = L.flicker ? .85 + .15 * Math.sin(S.T * 13 + e.x * 7) * Math.sin(S.T * 7.3 + e.z * 3) : 1;
+    add(e.x + .5, e.y, e.z + .5, L.r * fl, L.color, (L.machine ? .8 : 1.15) * fl);
+  }
+  // engineers carry a small light of their own, so you can always see what you are doing
+  for (const p of S.players.values()) add(p.local ? p.x : p.rx ?? p.x, 0, p.local ? p.z : p.rz ?? p.z, 4.5 * (1 + playerMods(p).light), 0xcfe0ff, .5);   // night eyes reach further
+  for (const v of world.vehicles) if (Math.abs(v.v || 0) > .1 || S.player.veh === v.id) add(v.rx ?? v.x, 0, v.rz ?? v.z, 3.5, 0xfff0c0, .6);   // headlights
+  lightMesh.count = n; lightMesh.instanceMatrix.needsUpdate = true; if (lightMesh.instanceColor) lightMesh.instanceColor.needsUpdate = true;
+  return true;
+}
 export function render(dt, hover) {
   updateCamera(dt);
+  if (S.started) terrainView();
+  layerGrid.position.x = Math.round(S.cam.x); layerGrid.position.z = Math.round(S.cam.z);
   updatePreview(hover);
   animate(dt);
   updateItems();
+  // the light buffer, only after dusk
+  if (updateLights()) { renderer.setRenderTarget(rtLight); renderer.setClearColor(0x000000, 1); renderer.clear(); camera.layers.set(0); renderer.render(lightScene, camera); }
   // colour + depth (the interface layer is left out while the UI is hidden)
   camera.layers.set(0); camera.layers.enable(1); if (!S.hideUI) camera.layers.enable(UI_LAYER);
   renderer.setRenderTarget(rtColor); renderer.render(scene, camera);

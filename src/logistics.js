@@ -10,6 +10,8 @@ import { doAction } from './net.js';
 import { drawMapView } from './map.js';
 import { routeById, depotsNamed, dockTiles, findPath, onWay, condText, CONDS, defaultConds, stopName, vehicleById, tk, roadAt } from './transport.js';
 import { iconHTML } from './icons.js';
+import { CLIP_UI, copyLine } from './copypaste.js';
+import { is, combo, keyName } from './input.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -20,8 +22,8 @@ const WAYS = {
   sea: { tab: 'Sea lanes', depot: 'port', unit: 'boat', route: 'lane', color: '#7ef6ff', how: 'Boats sail between ports over connected water. Click water tiles to steer a lane around something.' },
   belt: { tab: 'Belt lines', route: 'line', color: '#ffd23f', how: 'Every belt in the factory is part of a line: a run that only carries items forward. A line ends where something decides where its items go: a splitter, a bus channel, another belt. Name lines, give them speed augments and filters, or see how they join up.' },
 };
-const ZOOM = [3, 4, 6, 8, 12, 16];
-const L = { way: 'road', route: null, pick: false, itemPick: null, view: { cx: GRID / 2, cz: GRID / 2, ppt: 6 }, drag: null, delArm: false, unit: null,
+const ZOOM = [.5, 1, 2, 3, 4, 6, 8, 12, 16];
+const L = { way: 'road', route: null, pick: false, itemPick: null, view: { cx: 48, cz: 48, ppt: 6 }, drag: null, delArm: false, unit: null,
   line: null, bview: 'map', bpick: null, gv: null, rate: new Map() };   // belt lines: the picked line (a tile's key), map or network, what the item grid picks
 const CARGO_ITEMS = () => Object.keys(ITEMS).filter(it => !ITEMS[it].vehicle && (!ITEMS[it].entity || ENTITIES[it]?.kind === 'belt'));
 
@@ -30,7 +32,9 @@ export function openLogistics() {
   requestAnimationFrame(() => {   // the whole world in view, as big as fits
     const r = cv().getBoundingClientRect();
     if (L.way === 'belt' && curLine()) { L.view.ppt = 12; return; }   // opened on a belt line: stay on it, close up
-    L.view.cx = L.view.cz = GRID / 2; L.view.ppt = [...ZOOM].reverse().find(p => p * GRID <= Math.min(r.width, r.height)) ?? ZOOM[0];
+    // small worlds fit whole; big ones open around you
+    if (GRID * 3 <= Math.min(r.width, r.height)) { L.view.cx = L.view.cz = GRID / 2; L.view.ppt = [...ZOOM].reverse().find(p => p * GRID <= Math.min(r.width, r.height)); }
+    else { L.view.cx = S.player.x; L.view.cz = S.player.z; L.view.ppt = 4; }
   });
   const rs = routesOf(L.way);
   if (!routeById(L.route) || routeById(L.route).way !== L.way) L.route = rs[0]?.id ?? null;
@@ -131,7 +135,10 @@ function wireMap() {
     L.view.cx += ox / L.view.ppt - ox / n; L.view.cz += oz / L.view.ppt - oz / n; L.view.ppt = n;
   }, { passive: false });
   c.addEventListener('contextmenu', e => e.preventDefault());
-  c.addEventListener('pointerdown', e => { e.preventDefault(); c.setPointerCapture(e.pointerId); L.drag = { x: e.clientX, y: e.clientY, cx: L.view.cx, cz: L.view.cz, gx: L.gv?.ox, gy: L.gv?.oy, moved: false, button: e.button }; });
+  c.addEventListener('pointerdown', e => {
+    const code = combo(e), cp = is('copySettings', code), pa = is('pasteSettings', code);
+    if ((cp || pa) && L.way === 'belt') { e.preventDefault(); clipOnCanvas(e, cp); return; }
+    e.preventDefault(); c.setPointerCapture(e.pointerId); L.drag = { x: e.clientX, y: e.clientY, cx: L.view.cx, cz: L.view.cz, gx: L.gv?.ox, gy: L.gv?.oy, moved: false, button: e.button }; });
   c.addEventListener('pointermove', e => {
     const d = L.drag; if (!d) return;
     const dx = e.clientX - d.x, dy = e.clientY - d.y; if (Math.hypot(dx, dy) > 4) d.moved = true;
@@ -158,8 +165,8 @@ export function renderLogistics(force) {
   const way = WAYS[L.way], r = routeById(L.route);
   setHTML($('logBar'), `<b class="logo">LOGISTICS</b>${Object.entries(WAYS).map(([k, w]) => `<button data-lact="way:${k}" class="${L.way === k ? 'on' : ''}">${w.tab}</button>`).join('')}<span class="grow"></span><button data-lact="close">✕</button>`);
   if (L.way === 'belt') { setHTML(side, beltSide()); return; }
-  let h = `<div class="dim">${way.how}</div><h4>${way.tab}</h4>`;
-  h += routesOf(L.way).map(x => `<div class="mrow${x.id === L.route ? ' on' : ''}" data-lact="rsel:${x.id}"><i style="background:${way.color}"></i>${esc(x.name)} <span class="dim">${x.stops.length} stops · ${unitsOf(L.way).filter(u => u.route === x.id).length} ${way.unit}s${x.loop ? ' · loops' : ''}</span></div>`).join('') || `<div class="dim">No ${way.route}s yet.</div>`;
+  let h = `<div class="dim">${way.how} ${keyName('copySettings')} on a ${way.route} or a stop copies it; ${keyName('pasteSettings')} pastes onto another.</div><h4>${way.tab}</h4>`;
+  h += routesOf(L.way).map(x => `<div class="mrow${x.id === L.route ? ' on' : ''}" data-lact="rsel:${x.id}" data-clip="route:${x.id}"><i style="background:${way.color}"></i>${esc(x.name)} <span class="dim">${x.stops.length} stops · ${unitsOf(L.way).filter(u => u.route === x.id).length} ${way.unit}s${x.loop ? ' · loops' : ''}</span></div>`).join('') || `<div class="dim">No ${way.route}s yet.</div>`;
   h += `<div class="btns"><button data-lact="radd">+ new ${way.route}</button></div>`;
   if (r) {
     h += `<hr><input class="txt" data-lchg="rname" maxlength="32" value="${esc(r.name)}">
@@ -167,7 +174,7 @@ export function renderLogistics(force) {
     const names = depotNames(L.way), lg = legs(r);
     r.stops.forEach((st, i) => {
       const f = st.depot ? facOf(st.depot) : null, bad = lg.find(l => l.i === i && !l.ok);
-      h += `<div class="stop"><div class="stoph"><b>${i + 1}</b> ${sel('starget:' + i, [...names.map(n => ['d:' + n, n]), ...(st.depot && !names.includes(st.depot) ? [['d:' + st.depot, st.depot + ' (missing)']] : []), ...(st.at ? [['w', `waypoint ${st.at[0]}, ${st.at[1]}`]] : [])], st.depot ? 'd:' + st.depot : 'w')}
+      h += `<div class="stop" data-clip="stop:${r.id}.${i}"><div class="stoph"><b>${i + 1}</b> ${sel('starget:' + i, [...names.map(n => ['d:' + n, n]), ...(st.depot && !names.includes(st.depot) ? [['d:' + st.depot, st.depot + ' (missing)']] : []), ...(st.at ? [['w', `waypoint ${st.at[0]}, ${st.at[1]}`]] : [])], st.depot ? 'd:' + st.depot : 'w')}
         ${f ? `<i class="dot" style="background:${f.color}"></i>` : ''}${sel('sact:' + i, st.depot ? [['both', 'load + unload'], ['load', 'load'], ['unload', 'unload'], ['none', 'pass through']] : [['none', 'pass through']], st.act)}
         <span class="x" data-lact="sup:${i}">↑</span><span class="x" data-lact="sdown:${i}">↓</span><span class="x" data-lact="srm:${i}">✕</span></div>`;
       if (st.depot && st.act !== 'none') {
@@ -300,7 +307,8 @@ function beltSide() {
   let h = `<div class="dim">${WAYS.belt.how}</div><div class="btns"><button data-lact="bview:map" class="${L.bview === 'map' ? 'on' : ''}">map</button><button data-lact="bview:net" class="${L.bview === 'net' ? 'on' : ''}"${ln ? '' : ' disabled'}>network</button></div>`;
   if (ln) {
     const n = ln.n, cap = Math.floor(ln.len / SPACING), rate = lineRate(ln), tp = t.get(ln) || {};
-    h += `<hr><input class="txt" data-lchg="bname" maxlength="32" value="${esc(ln.cfg.name)}" placeholder="${esc(lineName(ln))}">`;
+    h += `<hr><div data-clip="line:${ln.segs[0].x},${ln.segs[0].y},${ln.segs[0].z}"><input class="txt" data-lchg="bname" maxlength="32" value="${esc(ln.cfg.name)}" placeholder="${esc(lineName(ln))}"></div>`;
+    h += `<div class="btns"><button data-lact="bcopy">copy settings</button>${S.clip ? `<button data-lact="bpaste">paste</button><button data-lact="bpastenet"${tipAttr2('the filter and speed augments on every line of this network')}>paste to its network (${networkOf(ln).length})</button>` : ''}</div>`;
     h += `<div class="dim">${ln.segs.length} tile${ln.segs.length > 1 ? 's' : ''} · ${n} lanes · ${(+ln.speed.toFixed(2))} tiles/s${ln.speed > ln.base ? ` (${(+ln.base.toFixed(2))} without augments)` : ''} · ${lineItems(ln)} items${rate !== null ? ` · ${Math.round(rate)}/min out` : ''}</div>`;
     h += `<div class="lanes">${ln.L.map((Ln, i) => { const c = new Map(); for (const it of Ln.items) c.set(it.type, (c.get(it.type) || 0) + 1); return `<div><span class="dim">${laneName(n, i)}</span> <span class="bar"><i style="width:${Math.min(100, Ln.items.length / cap * 100)}%"></i></span> ${[...c].map(([k, v]) => iconHTML(k, v)).join('')}</div>`; }).join('')}</div>`;
     if (lineWarn(ln)) h += `<div class="warn">${lineWarn(ln)}</div>`;
@@ -324,7 +332,7 @@ function beltSide() {
   }
   const all = world.lines.filter(l => !isSplitter(l)).sort((a, b) => (b.cfg.name ? 1 : 0) - (a.cfg.name ? 1 : 0) || b.segs.length - a.segs.length);
   h += `<hr><h4>Lines <span class="dim">${all.length}</span></h4>`;
-  h += all.slice(0, 150).map(l => `<div class="mrow${l === ln ? ' on' : ''}" data-lact="bsel:${l.segs[0].x},${l.segs[0].y},${l.segs[0].z}"><i style="background:${lineColor(l)}"></i>${esc(lineName(l))} <span class="dim">${l.segs.length} tiles · ${lineItems(l)} items${lineWarn(l) ? ' · <span class="warn">!</span>' : ''}</span></div>`).join('') || '<div class="dim">No belts built yet.</div>';
+  h += all.slice(0, 150).map(l => `<div class="mrow${l === ln ? ' on' : ''}" data-lact="bsel:${l.segs[0].x},${l.segs[0].y},${l.segs[0].z}" data-clip="line:${l.segs[0].x},${l.segs[0].y},${l.segs[0].z}"><i style="background:${lineColor(l)}"></i>${esc(lineName(l))} <span class="dim">${l.segs.length} tiles · ${lineItems(l)} items${lineWarn(l) ? ' · <span class="warn">!</span>' : ''}</span></div>`).join('') || '<div class="dim">No belts built yet.</div>';
   if (all.length > 150) h += `<div class="dim">and ${all.length - 150} more: click one on the map</div>`;
   return h;
 }
@@ -339,6 +347,9 @@ function beltAct(cmd, x, y) {
     case 'baug': if (ln) lineCmd(ln, 'laugput', x); L.bpick = null; return true;
     case 'baugrm': if (ln) lineCmd(ln, 'laugtake', x); return true;
     case 'bsf': if (ln && isSplitter(ln)) { lineCmd(ln, 'sfilter', x + ':' + (y || '')); L.bpick = null; } return true;
+    case 'bcopy': if (ln) CLIP_UI.line.copyNow(ln); return true;
+    case 'bpaste': if (ln) pasteLines([ln]); return true;
+    case 'bpastenet': if (ln) pasteLines(networkOf(ln)); return true;
   }
   return false;
 }
@@ -452,3 +463,58 @@ function netClick(e) {
   for (const q of g.ents) if (mx >= q.x && mx <= q.x + q.w && my >= q.y && my <= q.y + q.h) { L.view.cx = q.e.x; L.view.cz = q.e.z; L.bview = 'map'; renderLogistics(true); return; }
 }
 export { roadAt };
+
+// ---------------------------------------------------------------- copy and paste (see copypaste.js)
+const tipAttr2 = t => ` title="${esc(t)}"`;
+const lineAt = ref => { const e = world.ents.get(key(...ref.split(',').map(Number))); return isBeltLike(e) ? e.line : null; };
+const lineClip = ln => ({ kind: 'line', from: lineName(ln), what: ['filter', 'speed augments'], data: { line: copyLine(ln) } });
+// Paste the clipboard's belt settings onto lines (on the host, through the line's first tile).
+function pasteLines(lines) {
+  if (!S.clip) return;
+  const clip = S.clip.kind === 'line' ? S.clip : { ...S.clip, data: { line: S.clip.data.line, items: S.clip.data.items, filter: S.clip.data.filter } };
+  for (const l of lines) doAction({ a: 'paste', x: l.segs[0].x, y: l.segs[0].y, z: l.segs[0].z, clip });
+}
+CLIP_UI.line = {
+  copy: ref => { const ln = lineAt(ref); return ln && lineClip(ln); },
+  copyNow: ln => bus.emit('clipset', lineClip(ln)),
+  paste: (ref, clip) => { const ln = lineAt(ref); if (!ln) return []; pasteLines([ln]); return ['line settings']; },
+};
+// Routes: their stops and whether they loop. Stops: their cargo and leave conditions (a trigger set), kept onto a
+// stop at another depot. A belt filter pasted on a stop becomes its cargo list.
+CLIP_UI.route = {
+  copy: id => { const r = routeById(+id); return r && { kind: 'route', from: r.name, what: [`${r.stops.length} stops`, r.loop ? 'loop' : 'once'], data: { way: r.way, loop: r.loop, stops: JSON.parse(JSON.stringify(r.stops)) } }; },
+  paste: (id, clip) => {
+    const r = routeById(+id), d = clip.data;
+    if (!r) return [];
+    if (d.stops) { doAction({ a: 'route', do: 'setstops', id: r.id, stops: d.stops, loop: d.loop }); return [`${d.stops.length} stops`]; }
+    if (d.conds || d.items) { r.stops.forEach((st, i) => editStop(r, i, s => pasteStop(s, d))); return ['cargo and conditions to every stop']; }
+    return [];
+  },
+};
+const pasteStop = (st, d) => { if (d.items) st.items = [...d.items]; if (d.conds && st.depot) { st.conds = JSON.parse(JSON.stringify(d.conds)); if (d.act && d.act !== 'none') st.act = d.act; } };
+CLIP_UI.stop = {
+  copy: ref => { const [rid, i] = ref.split('.').map(Number), r = routeById(rid), st = r?.stops[i]; return st && { kind: 'stop', from: `stop ${i + 1} of ${r.name}`, what: ['cargo', 'conditions'], data: { items: [...st.items], conds: JSON.parse(JSON.stringify(st.conds)), act: st.act } }; },
+  paste: (ref, clip) => {
+    const [rid, i] = ref.split('.').map(Number), r = routeById(rid), d = clip.data; if (!r?.stops[i]) return [];
+    const items = d.items || d.line?.filter || (d.filter ? [d.filter] : null);
+    if (!items && !d.conds) return [];
+    editStop(r, i, st => pasteStop(st, { ...d, items }));
+    return [items ? 'cargo' : null, d.conds ? 'conditions' : null].filter(Boolean);
+  },
+};
+// The network diagram: on a line's box, copy or paste that line; on empty space, paste to the whole network.
+function clipOnCanvas(e, copy) {
+  const ln = curLine(); if (!ln) return;
+  let hit = null;
+  if (L.bview === 'net' && L.gv && netCache.boxes) {
+    const r = cv().getBoundingClientRect(), mx = (e.clientX - r.left - L.gv.ox) / L.gv.s, my = (e.clientY - r.top - L.gv.oy) / L.gv.s;
+    for (const [l, b] of netCache.boxes) if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) hit = l;
+  } else { const t = tileAtEvent(e); for (const y of [0, 1, -1, 2, -2, 3, 4]) { const b = world.ents.get(key(t.x, y, t.z)); if (isBeltLike(b) && b.line) { hit = b.line; break; } } }
+  if (copy) { if (hit) bus.emit('clipset', lineClip(hit)); return; }
+  if (!S.clip) { bus.emit('toast', 'nothing copied'); return; }
+  const lines = hit ? [hit] : networkOf(ln);
+  pasteLines(lines);
+  bus.emit('toast', `Pasted onto ${lines.length} line${lines.length > 1 ? 's' : ''}`);
+  setTimeout(() => renderLogistics(true), 0);
+}
+bus.on('cliprender', () => { if (S.modal === 'logistics') renderLogistics(true); });

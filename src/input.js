@@ -1,5 +1,6 @@
-// Key bindings. Every action has one or more key codes (KeyboardEvent.code). Defaults follow Factorio's
-// layout; anything the player rebinds is kept in localStorage. Number keys 1-0 always pick quickbar slots.
+// Key bindings. Every action has one or more key codes (KeyboardEvent.code), or mouse buttons with modifiers written
+// like 'Shift+Mouse2' (see combo). Defaults follow Factorio's layout; anything the player rebinds is kept in
+// localStorage. Number keys 1-0 always pick quickbar slots.
 const STORE = 'depthworks.keys';
 export const ACTIONS = [
   ['up', 'Walk up', ['KeyW', 'ArrowUp']], ['down', 'Walk down', ['KeyS', 'ArrowDown']],
@@ -13,7 +14,12 @@ export const ACTIONS = [
   ['orbitLeft', 'Orbit left', ['BracketLeft']], ['orbitRight', 'Orbit right', ['BracketRight']], ['pitch', 'Inserter pitch / lift direction', ['KeyV']],
   ['board', 'Get in or out of a vehicle', ['KeyB']], ['logistics', 'Routes for trains, trucks and boats', ['KeyL']],
   ['factories', 'Factories', ['KeyK']], ['nextFactory', 'Next factory to build for', ['KeyJ']],
+  ['copySettings', 'Copy settings', ['Shift+Mouse2']], ['pasteSettings', 'Paste settings', ['Shift+Mouse0']],
 ];
+// Actions that a mouse button (with modifiers) can do, so the key screen listens for clicks too.
+export const MOUSE_ACTIONS = new Set(['copySettings', 'pasteSettings']);
+// A mouse button with the modifiers held, as written in bindings: 'Shift+Mouse0' is Shift + left-click.
+export const combo = e => (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + 'Mouse' + e.button;
 const DEFAULTS = Object.fromEntries(ACTIONS.map(([id, , keys]) => [id, keys]));
 let binds = load();
 function load() {
@@ -35,8 +41,9 @@ export function rebind(action, code) {
   store(); return true;
 }
 export function resetKeys() { binds = Object.fromEntries(Object.entries(DEFAULTS).map(([id, k]) => [id, [...k]])); store(); }
+const MOUSE = ['LMB', 'MMB', 'RMB', 'Mouse 4', 'Mouse 5'];
 const NAMES = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', BracketLeft: '[', BracketRight: ']', PageUp: 'PgUp', PageDown: 'PgDn',
   AltLeft: 'Alt', AltRight: 'Alt Gr', NumpadEnter: 'Num Enter', Backquote: '`', Minus: '-', Equal: '=', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backslash: '\\', Space: 'Space' };
-export const codeName = c => !c ? '—' : NAMES[c] ?? c.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ').replace(/(Left|Right)$/, '');
+export const codeName = c => !c ? '—' : /Mouse\d$/.test(c) ? c.replace(/Mouse(\d)$/, (_, b) => MOUSE[b] || 'Mouse ' + b) : NAMES[c] ?? c.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ').replace(/(Left|Right)$/, '');
 export const keyName = action => codeName(binds[action]?.[0]);
 export const keyNames = action => (binds[action] || []).map(codeName);

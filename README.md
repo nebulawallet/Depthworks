@@ -9,6 +9,16 @@ conversation with something that only understands machines.
 
 ## Features
 
+- **Big generated worlds:** 500 to 65536 tiles a side, made chunk by chunk as you explore, with world options for
+  size, seed, biome size, water and ore. Eleven biomes, from meadows and taiga to the glass desert, the ashlands, the
+  glowcap hollows, the singing steppe and the Pripyatic wastes, each with its own ground, ores, trees and crops, and
+  the harsh ones with a hazard you adapt to over time.
+- **Tools:** an axe and a pickaxe from the start, a shovel later; research makes them faster and lets them sweep an area.
+- **Farming:** dig weedy patches for seeds, grow crops in greenhouse rooms on irrigation, press seeds into chlorophyll,
+  and research body upgrades and adaptations in the medical lab with terrestrial science.
+- **Big power:** dams across rivers, uranium reactors with coolant towers, steel pipe and high pressure pumps.
+- **Copy and paste settings:** Shift + right-click copies a building's, belt line's, route's or stop's settings,
+  Shift + left-click pastes them onto another.
 - **Factorio-style engineer:** walk with WASD, mine ore, trees and rocks by holding right-click, and craft from your
   inventory (missing parts get crafted for you). Building has a reach limit.
 - **Real inventories:** 80 slots for you, typed slots for every machine (fuel, input, result, ingredients,
@@ -22,6 +32,9 @@ conversation with something that only understands machines.
 - **Deposits that go deeper:** ore never runs out; each tile works down through surface, depth (richer, slower) and
   an endless bedrock layer that only big drills or depth augments reach.
 - **Sandbox:** a world with everything researched, free and instant crafting, and any item on request.
+- **Day and night:** solar panels follow the sun; lamps, braziers and working machines light the dark.
+- **Health and stamina:** vehicles hurt, food heals, Shift sprints.
+- **Saves:** five slots, plus export to and load from files.
 - **Power:** steam engines, diesel generators and solar panels on separate pole networks, with
   visible wires and supply areas, high voltage lines and transformers.
 - **Oil and fluids:** pipes that branch wherever they meet, underground pipes, pumps, valves and storage tanks, with
@@ -46,7 +59,7 @@ conversation with something that only understands machines.
 
 | Key | Action |
 |---|---|
-| WASD | Walk |
+| WASD | Walk (hold Shift to sprint) |
 | Left click | Build (drag to lay belts) · open a machine |
 | Hold right click | Mine ore, trees, rocks and buildings |
 | E | Inventory and crafting (closes an open machine) |
@@ -54,6 +67,8 @@ conversation with something that only understands machines.
 | 1–0 | Quickbar |
 | Q / R / Z / F | Copy hovered building · rotate · drop · hold to pick up |
 | Ctrl + click | Move items in or out of a machine |
+| Shift + right / left click | Copy settings / paste them |
+| Ctrl + hold right click | Take one tile off a greenhouse or a path |
 | In inventories | Drag stacks · right-drag for half · Shift + click to send across |
 | Tab | Depth mode (PgUp/PgDn or Shift+wheel for layers, [ ] to orbit, V to set inserter pitch) |
 | B | Get in or out of a vehicle (WASD drives; A/D pick the branch on rails) |
@@ -62,7 +77,8 @@ conversation with something that only understands machines.
 | M | Map |
 | Enter | Chat (co-op) |
 | Alt | Toggle the small arrows, recipe icons and factory tags |
-| H / F1 | Hide the interface · help and key bindings |
+| H | Hide the interface |
+| F1 or Esc | Menu: settings, controls and key bindings, how to play, save, export, quit (pauses solo games) |
 
 ## Co-op
 
@@ -85,7 +101,9 @@ python -m http.server 5173
 ```
 
 Then open http://localhost:5173. On Windows you can double-click `play.bat` instead.
-The game autosaves to your browser every 30 seconds.
+The game autosaves to your browser every 30 seconds, into one of five slots (Load game on the title screen).
+Browser storage can be cleared, so use **Export to file** in the menu now and then; **Load from file** brings a world
+back, on any computer.
 
 ## Publishing on GitHub Pages
 
