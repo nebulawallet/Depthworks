@@ -485,9 +485,46 @@ function craftQueueTick(dt) {
       actor.craft.shift();
       for (const [k, n] of Object.entries(c.give)) { invGive(k, n); bump('made', k, n); }
       if (c.top) { notify('crafted', c.rid); notify('float', `+${c.give[c.rid] || 1} ${ITEMS[c.rid].name}`, actor.x, 1.2, actor.z); }
+      placePending();
     }
   }
 }
+
+// ---------------------------------------------------------------- building with what you don't have yet
+// Placing something you've run out of crafts it (and the parts it needs, as hand crafting always does) when you
+// have the materials. The spot waits in `actor.pending` and gets built as soon as the craft lands, so dragging a
+// belt line past the end of your stack keeps going, one tile per finished belt.
+const samePlace = (a, b) => a.x === b.x && a.y === b.y && a.z === b.z;
+const coming = it => actor.craft.reduce((t, c) => t + (c.give[it] || 0), 0);
+export function placeOrCraft(op, fac) {
+  const err = canPlace(op.type, op.x, op.y, op.z, op.dir, op.dy, { reach: true, fac, noInv: true });
+  if (err) { notify('toast', err); return null; }
+  if (invGet(op.type) >= 1) return place(op.type, op.x, op.y, op.z, op.dir, op.dy, false, fac);
+  const pend = actor.pending ||= [];
+  if (pend.some(p => samePlace(p, op))) return null;
+  const waiting = pend.filter(p => p.type === op.type).length;
+  if (coming(op.type) <= waiting && !queueCraft(op.type, 1)) {
+    notify('toast', `out of ${ENTITIES[op.type].name.toLowerCase()}, and nothing to craft one from`); return null;
+  }
+  pend.push({ type: op.type, x: op.x, y: op.y, z: op.z, dir: op.dir, dy: op.dy, fac });
+  notify('pending');
+  placePending();
+  return null;
+}
+// Build every waiting spot whose item is in hand now. Spots that went bad (taken, out of reach) or whose craft was
+// cancelled are dropped.
+export function placePending() {
+  const pend = actor.pending; if (!pend?.length) return;
+  for (let i = 0; i < pend.length; i++) {
+    const p = pend[i];
+    if (invGet(p.type) < 1) { if (coming(p.type) <= pend.slice(0, i).filter(q => q.type === p.type && invGet(q.type) < 1).length) { pend.splice(i--, 1); } continue; }
+    pend.splice(i--, 1);
+    if (!canPlace(p.type, p.x, p.y, p.z, p.dir, p.dy, { reach: true, fac: p.fac })) place(p.type, p.x, p.y, p.z, p.dir, p.dy, false, p.fac);
+  }
+  notify('pending');
+}
+// A belt dragged round a corner turns the tile before it, which may still be waiting for its craft.
+export function turnPending(x, y, z, dir) { const p = actor.pending?.find(q => samePlace(q, { x, y, z })); if (p) { p.dir = dir; notify('pending'); } return !!p; }
 
 // ---------------------------------------------------------------- the engineer
 export const playerCell = () => ({ x: Math.floor(actor.x), z: Math.floor(actor.z) });
@@ -678,7 +715,7 @@ export function powerSummary() {
 const FAST_REPLACE = new Set(['belt', 'inserter']);   // belts only for belts with the same number of lanes
 export function canPlace(type, x, y, z, dir = S.dir, dy = S.dy, opts = {}) {
   if (x < 0 || z < 0 || x >= GRID || z >= GRID) return 'out of bounds';
-  if (invGet(type) < 1) return `no ${ENTITIES[type].name} in inventory`;
+  if (!opts.noInv && invGet(type) < 1) return `no ${ENTITIES[type].name} in inventory`;
   if (opts.reach && distTo(x, z) > PLAYER.reach) return 'out of reach';
   const [lo, hi] = layerRange();
   if (y < lo || y > hi) return layerLockReason(y);

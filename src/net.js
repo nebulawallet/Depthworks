@@ -8,7 +8,7 @@
 import { Peer } from 'peerjs';
 import { S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, invGive, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
 import { ITEMS, TECH } from './data.js';
-import { place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory } from './sim.js';
+import { placeOrCraft, turnPending, place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory } from './sim.js';
 import { serialize, entToJSON, entFromJSON, applyEntJSON } from './save.js';
 import { placeRoad, applyRoads, placeSignal, placeVehicle, board, routeAction, vehToJSON, unitToJSON, applyVehicles } from './transport.js';
 import { fishToList, fishFromList } from './fish.js';
@@ -45,9 +45,7 @@ function applyAction(op) {
   switch (op.a) {
     case 'place': {
       const fac = factoryOf(op.fac) ? op.fac : actor.fac;
-      const err = canPlace(op.type, op.x, op.y, op.z, op.dir, op.dy, { reach: true, fac });
-      if (err) { notify('toast', err); return null; }
-      return place(op.type, op.x, op.y, op.z, op.dir, op.dy, false, fac);
+      return placeOrCraft(op, fac);
     }
     case 'road': { const err = placeRoad(op); if (err) notify('toast', err); break; }
     case 'signal': { const err = placeSignal(op.x, op.z, op.dir); if (err) notify('toast', err); break; }
@@ -70,7 +68,7 @@ function applyAction(op) {
       break;
     }
     case 'rotate': if (e) rotateEntity(e, op.by || 1); break;
-    case 'setdir': if (e && e.dir !== op.dir) rotateEntity(e, (op.dir - e.dir + 4) % 4); break;
+    case 'setdir': if (e && e.dir !== op.dir) rotateEntity(e, (op.dir - e.dir + 4) % 4); else if (!e) turnPending(op.x, op.y, op.z, op.dir); break;
     case 'craft': if (!queueCraft(op.rid, op.n || 1)) notify('toast', 'missing ingredients for ' + (ITEMS[op.rid]?.name ?? op.rid)); break;
     case 'give': if (S.sandbox && ITEMS[op.it]) invGive(op.it, Math.max(1, Math.min(1000, Math.floor(op.n) || 1))); break;   // sandbox only
     case 'cancel': cancelCraft(op.i); break;
@@ -241,7 +239,7 @@ function hostTick(dt) {
     }
     for (const k of c.cache.keys()) if (!states.has(k)) c.cache.delete(k);
     const p = c.p;
-    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, fac: p.fac } });
+    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, fac: p.fac, pend: (p.pending || []).map(q => ({ ...q })) } });
   }
 }
 
@@ -338,6 +336,7 @@ function applyState(m) {
   S.player.mining = you.mining;
   if (S.player.veh !== (you.veh ?? null)) { S.player.veh = you.veh ?? null; bus.emit('vehicles'); }
   S.player.fed = you.fed || 0;
+  S.player.pending = you.pend || [];
   bus.emit('inv');
   // world
   world.ground = m.ground.map(([i, x, z]) => ({ type: ITEM_IDS[i], x, z }));

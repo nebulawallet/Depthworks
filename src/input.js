@@ -8,7 +8,7 @@ export const ACTIONS = [
   ['map', 'Map', ['KeyM']], ['cycleBar', 'Next quickbar', ['KeyX']], ['hideUI', 'Hide interface', ['KeyH']],
   ['rotate', 'Rotate', ['KeyR']], ['pipette', 'Copy hovered building', ['KeyQ']], ['drop', 'Drop one item', ['KeyZ']],
   ['pickup', 'Pick up from the ground', ['KeyF']], ['altMode', 'Recipe icons and arrows', ['AltLeft', 'AltRight']],
-  ['signal', 'Signal panel', ['KeyG']], ['help', 'Help and settings', ['F1']], ['chat', 'Chat', ['Enter', 'NumpadEnter']],
+  ['signal', 'Signal panel', ['KeyG']], ['help', 'Menu (also Esc)', ['F1']], ['chat', 'Chat', ['Enter', 'NumpadEnter']],
   ['depthMode', 'Depth mode', ['Tab']], ['layerUp', 'Layer up', ['PageUp']], ['layerDown', 'Layer down', ['PageDown']],
   ['orbitLeft', 'Orbit left', ['BracketLeft']], ['orbitRight', 'Orbit right', ['BracketRight']], ['pitch', 'Inserter pitch / lift direction', ['KeyV']],
   ['board', 'Get in or out of a vehicle', ['KeyB']], ['logistics', 'Routes for trains, trucks and boats', ['KeyL']],

@@ -1,9 +1,9 @@
 import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES } from './data.js';
-import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, generateWater, generateOil, startingInventory, layerRange, layerLockReason, itemName, freshBars, factoryOf, unlockAll } from './state.js';
+import { S, world, inv, invGet, bus, key, DIRS, generateOres, generateFeatures, generateWater, generateOil, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll } from './state.js';
 import { stockFish } from './fish.js';
 import { simulate, place, removeAt, canPlace, computeVolume, completeResearch, distTo } from './sim.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
-import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI } from './ui.js';
+import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI, openMenu, setMenuTab, setSetting } from './ui.js';
 import { save, load, loadData, hasSave, wipeSave } from './save.js';
 import { doAction, host, join, netTick, leave, rememberFriends, cleanName } from './net.js';
 import './signal.js';
@@ -27,7 +27,7 @@ function enterWorld(fresh) {
   buildTerrain(); remeshAll(); applyGhostAll(); resetMap(); initUI(); resize();
   started = S.started = true; document.body.classList.add('ingame'); closeModals();
   bus.emit('players');
-  if (fresh) openModal('help');
+  if (fresh) openMenu('guide');
 }
 function begin(fresh, sandbox = false) {
   generateOres();
@@ -74,7 +74,7 @@ function titleScreen(view = 'main') {
     });
     $('bHost').addEventListener('click', () => titleScreen('host'));
     $('bJoin').addEventListener('click', () => titleScreen('join'));
-    $('bHelp').addEventListener('click', () => openModal('help'));
+    $('bHelp').addEventListener('click', () => openMenu('guide'));
   } else if (view === 'host') {
     $('titleBtns').innerHTML = '<div class="dim">Friends join your world and play in it with you. Keep this tab open while they play.</div>'
       + (hasSave() ? btn('bHostSaved', 'Host my saved world') : '') + btn('bHostNew', 'Host a new world') + btn('bHostSand', 'Host a sandbox') + btn('bBack', 'Back');
@@ -117,12 +117,21 @@ function titleScreen(view = 'main') {
 bus.on('netlost', () => { toast('Lost connection to the host.', 4000); setTimeout(() => location.reload(), 3000); });
 bus.on('beforesave', rememberFriends);
 
-$('helpClose').addEventListener('click', () => started ? closeModals() : openModal('title'));
-$('saveBtn').addEventListener('click', () => { if (!started) return; if (save()) toast('saved'); else if (S.net.role === 'client') toast('only the host can save this world'); });
-$('quitBtn').addEventListener('click', () => { if (started) save(); started = false; leave(); location.reload(); });
-for (const b of document.querySelectorAll('[data-pix]')) b.addEventListener('click', () => { S.pix = +b.dataset.pix; resize(); });
-$('volume').value = Math.round(getVolume() * 100);
-$('volume').addEventListener('input', e => { setVolume(e.target.value / 100); sfx('click'); });
+// the pause menu's buttons and settings
+$('help').addEventListener('click', e => {
+  const b = e.target.closest?.('[data-pm]'); if (!b) return;
+  const a = b.dataset.pm;
+  sfx('click');
+  if (a.startsWith('tab:')) setMenuTab(a.slice(4));
+  else if (a === 'resume') closeModals();
+  else if (a === 'back') openModal('title');
+  else if (a === 'save') { if (save()) toast('saved'); else if (S.net.role === 'client') toast('only the host can save this world'); }
+  else if (a === 'quit') { if (started) save(); started = false; leave(); location.reload(); }
+});
+$('help').addEventListener('change', e => { const c = e.target.closest?.('[data-set]'); if (c) setSetting(c.dataset.set, c.checked); });
+const showVolume = () => { $('volumeN').textContent = $('volume').value + '%'; };
+$('volume').value = Math.round(getVolume() * 100); showVolume();
+$('volume').addEventListener('input', e => { setVolume(e.target.value / 100); showVolume(); sfx('click'); });
 setInterval(() => { if (started) save(); }, 30000);
 addEventListener('beforeunload', () => { if (started) save(); leave(); });
 
@@ -152,7 +161,8 @@ addEventListener('keydown', e => {
   if (c === 'Escape') {
     if (cancelCursor()) return;
     if (S.linkFrom) { S.linkFrom = null; renderHotbar(); return; }
-    if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else selectItem(null);
+    // Esc closes whatever is open, then empties the hand, and only then opens the menu
+    if (S.modal) closeModals(); else if (entityOpen()) closeEntity(); else if (S.sel) selectItem(null); else openMenu('settings');
     return;
   }
   if (is('chat', c)) { e.preventDefault(); keys.clear(); openChat(); return; }
@@ -163,7 +173,7 @@ addEventListener('keydown', e => {
   if (is('inventory', c)) { if (entityOpen()) { closeEntity(); sfx('close'); return; } sfx(S.modal === 'inventory' ? 'close' : 'open'); return toggleModal('inventory'); }
   if (is('research', c)) { sfx(S.modal === 'research' ? 'close' : 'open'); return toggleModal('research'); }
   if (is('map', c)) { sfx(S.modal === 'map' ? 'close' : 'open'); return toggleModal('map'); }
-  if (is('help', c)) { e.preventDefault(); return toggleModal('help'); }
+  if (is('help', c)) { e.preventDefault(); if (S.modal === 'help') closeModals(); else openMenu('settings'); return; }
   if (is('hideUI', c)) return setHideUI(!S.hideUI);
   if (is('cycleBar', c)) return cycleBar();
   if (is('signal', c)) return $('signal').classList.toggle('collapsed');
@@ -276,7 +286,8 @@ function paintAt(c, first) {
       if (lastPlacedCell?.kind === 'belt') doAction({ a: 'setdir', x: lastPlacedCell.x, y: lastPlacedCell.y, z: lastPlacedCell.z, dir: S.dir });
     }
   }
-  const dy = effDy(S.sel), err = canPlace(S.sel, c.x, c.y, c.z, S.dir, dy, { reach: true });
+  // running out is fine: the host crafts another if it can (placeOrCraft in sim.js)
+  const dy = effDy(S.sel), err = canPlace(S.sel, c.x, c.y, c.z, S.dir, dy, { reach: true, noInv: true });
   if (err) {
     if (first) {
       if (err === 'occupied' && ent && S.sel !== 'frame') { if (distTo(c.x, c.z) <= PLAYER.reach) { openEntity(ent); sfx('open'); } building = false; }
@@ -287,7 +298,6 @@ function paintAt(c, first) {
   doAction({ a: 'place', type: S.sel, x: c.x, y: c.y, z: c.z, dir: S.dir, dy, fac: S.player.fac });
   lastPlacedCell = { ...c, kind: def.kind };
   lastPaint = c;
-  if (S.net.role !== 'client' && !invGet(S.sel)) toast(`out of ${itemName(S.sel)}`);
   renderHotbar();
 }
 
@@ -327,7 +337,8 @@ function frame() {
   requestAnimationFrame(frame);
   const n = performance.now(), dt = Math.min(.05, (n - last) / 1000); last = n; lastFrame = n;
   try {
-    if (started && S.modal !== 'title') {
+    const paused = S.modal === 'help' && S.net.role === 'solo';   // the menu pauses a solo game
+    if (started && S.modal !== 'title' && !paused) {
       hover = pick();
       S.player.mineCell = rmb && !S.modal ? hover : null;
       const typing = document.activeElement?.tagName === 'INPUT';

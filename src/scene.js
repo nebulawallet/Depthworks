@@ -3,9 +3,9 @@
 // post pass draws pixel outlines from depth and normal edges and upscales with hard pixels.
 import * as THREE from 'three';
 import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE } from './data.js';
-import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf } from './state.js';
+import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet } from './state.js';
 import { makeMesh, disposeMesh, setGhost, setPreview, poseInserter, itemGeo, itemMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo } from './models.js';
-import { canPlace, distTo, mineTargetAt, voltsOf } from './sim.js';
+import { canPlace, distTo, mineTargetAt, voltsOf, planCraft } from './sim.js';
 import { visibleOnBelt, laneOffset, lineWarn, lanesOf } from './belts.js';
 import { roadAt, roadCells, signalRed, vehicleById, onWay, dockTiles, vstats } from './transport.js';
 import { isDown } from './input.js';
@@ -1064,6 +1064,18 @@ function updatePreview(hover) {
 // What you'd lay with a road in hand: one quad per tile of the strip, green where it fits, red where it doesn't.
 const roadPrev = new THREE.InstancedMesh(new THREE.PlaneGeometry(.96, .96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: .4, depthWrite: false }), 12);
 roadPrev.layers.set(UI_LAYER); roadPrev.renderOrder = 6; roadPrev.frustumCulled = false; roadPrev.count = 0; roadPrev.setColorAt(0, new THREE.Color(1, 1, 1)); scene.add(roadPrev);
+// Spots waiting for their item to be crafted (see placeOrCraft in sim.js): a pale square that breathes.
+const pendMarks = new THREE.InstancedMesh(new THREE.PlaneGeometry(.86, .86).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7ef6ff, transparent: true, opacity: .3, depthWrite: false }), 128);
+pendMarks.layers.set(UI_LAYER); pendMarks.renderOrder = 6; pendMarks.frustumCulled = false; pendMarks.count = 0; scene.add(pendMarks);
+function updatePending() {
+  let n = 0;
+  const s = .92 + Math.sin(S.T * 5) * .08;
+  for (const p of S.player.pending || []) {
+    if (n >= 128) break;
+    pendMarks.setMatrixAt(n++, _m.compose(V(p.x + .5, p.y + .04, p.z + .5), _q.identity(), V(s, 1, s)));
+  }
+  pendMarks.count = n; pendMarks.instanceMatrix.needsUpdate = true;
+}
 function updateRoadPreview(hover) {
   let n = 0;
   if (hover && ROADS[S.sel] && hover.y === 0) {
@@ -1078,6 +1090,7 @@ function updateRoadPreview(hover) {
 }
 function updateHover(hover) {
   updateRoadPreview(hover);
+  updatePending();
   if (VEHICLES[S.sel] || ROADS[S.sel] || ITEMS[S.sel]?.tool === 'signal') { updateToolHover(hover); return; }
   const sel = S.sel && ENTITIES[S.sel] ? S.sel : null;
   const kind = sel && ENTITIES[sel].kind;
@@ -1114,7 +1127,8 @@ function updateHover(hover) {
   }
   marker.material.opacity = 1;
   preview.position.set(x + .5, y, z + .5);
-  const err = canPlace(sel, x, y, z, S.dir, dy, { reach: true });
+  // out of it is only a problem when there is nothing to craft one from
+  const err = canPlace(sel, x, y, z, S.dir, dy, { reach: true, noInv: true }) || (!invGet(sel) && !planCraft(sel, 1) && !S.player.pending?.length ? 'none' : null);
   marker.material.color.setHex(err ? 0xff5a4a : 0x9be37a);
   S.hint = ioHints(sel, x, y, z, S.dir, dy);
 }

@@ -53,7 +53,7 @@ export function openModal(id) {
   for (const m of modals) $(m).style.display = m === id ? '' : 'none';
   S.modal = id;
   if (id === 'map') openMapView();
-  if (id === 'help') renderKeys();
+  if (id === 'help') renderMenu();
   if (id === 'logistics') openLogistics();
   renderModal();
 }
@@ -78,7 +78,38 @@ export function setHideUI(on) {
   document.body.classList.toggle('hide-ui', on);
 }
 
-// ---------------------------------------------------------------- key bindings (in the help window)
+// ---------------------------------------------------------------- the pause menu (F1 / Esc)
+// Solo games stop while it is open (main.js); in co-op the world keeps running for everyone else.
+let menuTab = 'guide';
+export function openMenu(tab) { menuTab = tab; openModal('help'); }
+export function setMenuTab(tab) { menuTab = tab; renderMenu(); }
+function renderMenu() {
+  const m = $('help'), inGame = !!S.started;
+  if (!inGame && menuTab === 'settings') menuTab = 'guide';
+  m.classList.toggle('ingame', inGame);
+  $('pmTitle').textContent = !inGame ? 'HOW TO PLAY' : S.net.role === 'solo' ? 'PAUSED' : 'MENU';
+  $('pmNote').textContent = inGame && S.net.role !== 'solo' ? 'co-op: the world keeps running while this is open' : '';
+  for (const b of m.querySelectorAll('[data-pm^="tab:"]')) b.classList.toggle('on', b.dataset.pm === 'tab:' + menuTab);
+  for (const p of m.querySelectorAll('[data-tab]')) p.classList.toggle('on', p.dataset.tab === menuTab);
+  if (menuTab === 'controls') renderKeys();
+  if (menuTab === 'settings') {
+    for (const c of m.querySelectorAll('[data-set]')) c.checked = c.dataset.set === 'altMode' ? S.altMode : !!S.settings[c.dataset.set];
+    $('pmGame').innerHTML = `${S.sandbox ? 'Sandbox world. ' : ''}${S.net.role === 'client' ? 'You are a guest: the host saves this world.' : 'The game saves itself every 30 seconds, and when you quit.'}${S.net.role === 'host' ? ` Invite code: <b>${esc(S.net.code || '…')}</b>` : ''}`;
+  }
+}
+// Interface settings, kept in this browser.
+const SETTINGS_KEY = 'depthworks.settings';
+S.settings = { goals: true, minimap: true };
+try { Object.assign(S.settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch { /* storage unavailable */ }
+export function applySettings() { $('goals').classList.toggle('off', !S.settings.goals); $('minimap').classList.toggle('off', !S.settings.minimap); }
+export function setSetting(k, v) {
+  if (k === 'altMode') S.altMode = v; else S.settings[k] = v;
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(S.settings)); } catch { /* storage unavailable */ }
+  applySettings();
+}
+applySettings();
+
+// ---------------------------------------------------------------- key bindings (in the menu)
 let rebinding = null;
 function renderKeys() {
   setHTML($('keys'), ACTIONS.map(([id, label]) => `<div class="krow"><span>${label}</span><button data-key="${id}" class="${rebinding === id ? 'on' : ''}">${rebinding === id ? 'press a key…' : keyNames(id).join(' / ') || '—'}</button></div>`).join('')

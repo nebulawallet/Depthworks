@@ -134,7 +134,18 @@
   .tech.active { border-color: var(--gold); background: #22200f; }
   .tn { font-size: 12px; color: var(--ink); margin-bottom: 3px; } .tc, .tu { min-height: 22px; } .tag { color: var(--acc); }
   .tech .warn { font-size: 15px; }
-  #help { width: 760px; } #help .cols2 { grid-template-columns: 1fr 1fr; }
+  /* the pause menu (F1 or Esc): a list on the left, the page on the right */
+  #help { width: min(900px, calc(100vw - 24px)); height: min(680px, calc(100vh - 24px)); display: flex; flex-direction: column; padding: 12px 14px; }
+  #help .cols2 { grid-template-columns: 1fr 1fr; }
+  .pmhead { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; } .pmhead h2 { color: var(--acc); margin: 0; }
+  .pmcols { display: flex; gap: 14px; flex: 1; min-height: 0; }
+  .pmnav { display: flex; flex-direction: column; gap: 5px; width: 190px; flex: none; } .pmnav .grow { flex: 1; }
+  .pmnav button { text-align: left; padding: 6px 10px; } .pmnav button.on { border-color: var(--acc); color: var(--acc); }
+  .pmbody { flex: 1; overflow: auto; padding-right: 6px; } .pmbody > div { display: none; } .pmbody > div.on { display: block; }
+  .pmbody h3:first-child { margin-top: 0; }
+  #goals.off, #minimap.off { display: none; }
+  .setrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; cursor: pointer; } .setrow input[type=range] { width: 200px; }
+  #help:not(.ingame) .ingame-only, #help.ingame .title-only { display: none; }
   #help kbd { color: #111; background: var(--ink); padding: 0 4px; font-family: inherit; }
   #help p { margin: 6px 0; }
   #title { width: 560px; text-align: center; background: rgba(11,13,18,.82); padding: 26px; }
@@ -252,10 +263,30 @@
 <div id="factories" class="panel modal" style="display:none"><h3>Factories</h3><div id="facBody"></div></div>
 
 <div id="help" class="panel modal" style="display:none">
-  <h2 style="color:var(--acc);margin:0 0 4px">HOW TO PLAY</h2>
-  <p class="dim">Build a factory that runs, then build it deeper. Working machines add up to <span class="okc">active engineering volume</span>,
-    and volume buys <b>precision</b>: higher layers, finer models, deeper research. At the bottom of the world is the material for a transmitter.
-    Something out there answers, but only with the mechanisms it has heard you use.</p>
+  <div class="pmhead"><h2 id="pmTitle">PAUSED</h2><span id="pmNote" class="dim"></span></div>
+  <div class="pmcols">
+    <div class="pmnav">
+      <button data-pm="resume" class="ingame-only">Resume</button>
+      <button data-pm="tab:settings" class="ingame-only">Settings</button>
+      <button data-pm="tab:controls">Controls</button>
+      <button data-pm="tab:guide">How to play</button>
+      <div class="grow"></div>
+      <button data-pm="save" class="ingame-only">Save</button>
+      <button data-pm="quit" class="ingame-only">Save and quit to menu</button>
+      <button data-pm="back" class="title-only">Back</button>
+    </div>
+    <div class="pmbody">
+      <div data-tab="settings">
+        <h3>Sound</h3>
+        <div class="setrow">Volume <input id="volume" type="range" min="0" max="100"> <span id="volumeN" class="dim"></span></div>
+        <h3>Interface</h3>
+        <label class="setrow"><input type="checkbox" data-set="altMode"> Machine icons and arrows on buildings <span class="dim">(alt mode, also its key)</span></label>
+        <label class="setrow"><input type="checkbox" data-set="goals"> Goals list</label>
+        <label class="setrow"><input type="checkbox" data-set="minimap"> Minimap</label>
+        <h3>Game</h3>
+        <div class="dim" id="pmGame"></div>
+      </div>
+      <div data-tab="controls">
   <div class="cols2">
     <div>
       <h3>Engineer</h3>
@@ -267,8 +298,8 @@
       <kbd>R</kbd> rotate · <kbd>Z</kbd> drop · hold <kbd>F</kbd> pick up<br>
       <kbd>Ctrl</kbd>+<kbd>LMB</kbd> move items in or out of a machine<br>
       In inventories: drag stacks between slots · right-drag: half · <kbd>Shift</kbd>+click: send across<br>
-      <kbd>Esc</kbd> close · <kbd>G</kbd> signal · <kbd>Alt</kbd> recipe icons<br>
-      <kbd>X</kbd> next quickbar · <kbd>M</kbd> map · <kbd>H</kbd> hide interface · <kbd>F1</kbd> help<br>
+      <kbd>Esc</kbd> close, then menu · <kbd>G</kbd> signal · <kbd>Alt</kbd> recipe icons<br>
+      <kbd>X</kbd> next quickbar · <kbd>M</kbd> map · <kbd>H</kbd> hide interface · <kbd>F1</kbd> menu<br>
       <kbd>B</kbd> drive · <kbd>L</kbd> routes · <kbd>K</kbd> factories · <kbd>J</kbd> next factory<br>
       <kbd>Enter</kbd> chat (co-op) · keys can be changed below
     </div>
@@ -280,6 +311,13 @@
       Layers above yours turn to ghosts. Anything above layer 0 stands on a <b>hollow frame</b>; you can also build inside frames and walk under them.
     </div>
   </div>
+        <h3 style="margin-top:10px">Change keys <span class="dim">(click one, then press the new key)</span></h3>
+        <div id="keys"></div>
+      </div>
+      <div data-tab="guide">
+  <p class="dim">Build a factory that runs, then build it deeper. Working machines add up to <span class="okc">active engineering volume</span>,
+    and volume buys <b>precision</b>: higher layers, finer models, deeper research. At the bottom of the world is the material for a transmitter.
+    Something out there answers, but only with the mechanisms it has heard you use.</p>
   <h3 style="margin-top:10px">Getting started</h3>
   <p class="dim">You land with 8 iron plates, a burner drill and a stone furnace. Mine coal and stone by hand, put the drill on iron ore facing the furnace, and fuel both.
     Craft from there (E). Electricity comes from steam: a water pump on water, boilers burning fuel beside it, steam engines beside those, and small poles; machines only run inside a pole's blue supply area. Belts have two lanes (bus belts three); click any belt for its line and its network (also under L, Belt lines).</p>
@@ -312,12 +350,8 @@
   <h3 style="margin-top:10px">Fish</h3>
   <p class="dim">Hold right-click on a fish to catch it; hold it and click to eat. Boats with a fishing net catch what they pass, past a stack, but the net tears at two.
     Fished-out water takes a long time to recover.</p>
-  <h3 style="margin-top:10px">Keys <span class="dim">(click one, then press the new key)</span></h3>
-  <div id="keys"></div>
-  <div class="btns" style="justify-content:space-between">
-    <div>Pixel size: <button data-pix="2">fine</button> <button data-pix="3">normal</button> <button data-pix="4">chunky</button>
-      &nbsp; Volume <input id="volume" type="range" min="0" max="100" style="vertical-align:middle;width:110px"></div>
-    <div><button id="saveBtn">Save</button> <button id="quitBtn">Save &amp; title</button> <button id="helpClose">Close</button></div>
+      </div>
+    </div>
   </div>
 </div>
 

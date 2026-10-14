@@ -20,7 +20,7 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
   frames stall.
 - **Co-op test:** open two tabs. In tab A set a nickname, then Host co-op → New world, and read `depthworks.S.net.code`.
   In tab B use Join co-op with that code, then drive actions with `depthworks.doAction(...)` and compare `world` on both tabs.
-- Clear test data afterwards: the keys are `depthworks.save.v3`, `depthworks.nick`, `depthworks.volume` and `depthworks.keys` in localStorage.
+- Clear test data afterwards: the keys are `depthworks.save.v3`, `depthworks.nick`, `depthworks.volume`, `depthworks.keys` and `depthworks.settings` in localStorage.
 
 ## Architecture
 
