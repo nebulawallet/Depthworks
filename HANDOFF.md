@@ -342,7 +342,9 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 - **Tree lines:** many far-apart prerequisites are handled by merging every line into one bus beside the node it enters
   (and forking every line out of one trunk). Lines from another section are fainter; hovering lights the path and fades
   the rest. Line width stays the same at every zoom.
-- **Camera keys:** `-` tilts lower, `[` higher, in six steps. The grid toggle is `N` (also in settings). The old free
+- **Camera:** in depth mode a middle-button drag rotates the camera spherically round the point it looks at (all the
+  way round, tilt between 0.3 and 1.45 rad) and stays where you leave it; Shift + middle drag pans that point. The keys
+  step from wherever it is. `-` tilts lower, `[` higher, in six steps. The grid toggle is `N` (also in settings). The old free
   camera (C) and the `[` `]` orbit keys are gone; saved rebinds of those are simply dropped.
 - **Selection vs. paste:** with a selection going, Shift + click keeps adding and removing even with settings copied;
   pasting onto it is the "paste to all" button on its bar. With no selection, Shift + click pastes as before. A plain

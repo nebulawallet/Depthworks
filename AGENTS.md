@@ -102,7 +102,7 @@ so players can rebind them. Add new actions to `ACTIONS`.
    north (−z), and directions go clockwise. Models are built facing north and rotated by `-dir * π/2`.
 9. **Pixel camera:** zoom is whole low-res pixels per tile (`ZOOMS` in `scene.js`). Don't introduce
    continuous camera zoom or yaw outside the existing tweens, or the image starts shimmering. The one exception is
-   the free camera (`S.cam.free`, the `cameraMode` key): the player turns and tilts it by hand and accepts the shimmer.
+   depth mode's orbit drag (`camOrbit`): the player swings the camera round by hand and accepts the shimmer.
 10. **Water is a tile grid,** not entities: `world.tiles` (index into `TILES`) and `world.flow` (a `DIRS` index, or −1)
     on the surface. Use `isWater`, `tileAt` and `flowAt`. Liquid tiles block walking and building except for things
     marked `onWater`. If you change `generateWater`, bump `WATER_GEN` so older saves get their water redone.
@@ -181,8 +181,9 @@ so players can rebind them. Add new actions to `ACTIONS`.
 38. **The map shows what was seen** (explore.js). Never draw a tile that isn't explored, and only redraw tiles that are
     live (`isLive`); anything that should reveal or watch the map goes through `reveal` and the live areas, not by
     drawing chunks directly. `world.explored` is saved with the world.
-39. **The camera only turns in depth mode.** Flat mode follows the engineer, facing north. Depth mode orbits, tilts and
-    pans (`camLeft`, `camRight`, `camLower`, `camHigher`, `camPan`), and leaving it tweens back (`resetCamera` in main.js).
+39. **The camera only turns in depth mode.** Flat mode follows the engineer, facing north. Depth mode rotates it on a
+    sphere round the point it looks at (`camOrbit` drag, `camLeft` / `camRight` / `camLower` / `camHigher` steps) and
+    pans that point (`camPan`, Shift + middle drag); leaving it tweens back (`resetCamera` in main.js).
 40. **Selection is many** (`S.picks`, refs by anchor; ui.js). Anything that acts on "the selected building" should act on
     every one it fits (`fastTransferMany`, the `pastemany` action).
 41. **Trades move nothing until both accept** (trade.js). Offers are promises; the swap is checked on copies of both

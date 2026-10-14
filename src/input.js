@@ -13,13 +13,13 @@ export const ACTIONS = [
   ['depthMode', 'Depth mode', ['Tab']], ['layerUp', 'Layer up', ['PageUp']], ['layerDown', 'Layer down', ['PageDown']],
   ['camLeft', 'Orbit left (depth mode)', ['Semicolon']], ['camRight', 'Orbit right (depth mode)', ['Quote']],
   ['camLower', 'Tilt the camera lower (depth mode)', ['Minus']], ['camHigher', 'Tilt the camera higher (depth mode)', ['BracketLeft']],
-  ['camPan', 'Pan the camera (depth mode, drag)', ['Mouse1']], ['depthGrid', 'Grid in depth mode', ['KeyN']], ['pitch', 'Inserter pitch / lift direction', ['KeyV']],
+  ['camOrbit', 'Rotate the camera round what it looks at (depth mode, drag)', ['Mouse1']], ['camPan', 'Pan the camera (depth mode, drag)', ['Shift+Mouse1']], ['depthGrid', 'Grid in depth mode', ['KeyN']], ['pitch', 'Inserter pitch / lift direction', ['KeyV']],
   ['board', 'Get in or out of a vehicle', ['KeyB']], ['logistics', 'Routes for trains, trucks and boats', ['KeyL']],
   ['factories', 'Factories', ['KeyK']], ['nextFactory', 'Next factory to build for', ['KeyJ']],
   ['copySettings', 'Copy settings', ['Shift+Mouse2']], ['pasteSettings', 'Paste settings', ['Shift+Mouse0']],
 ];
 // Actions that a mouse button (with modifiers) can do, so the key screen listens for clicks too.
-export const MOUSE_ACTIONS = new Set(['copySettings', 'pasteSettings', 'camPan']);
+export const MOUSE_ACTIONS = new Set(['copySettings', 'pasteSettings', 'camOrbit', 'camPan']);
 // A mouse button with the modifiers held, as written in bindings: 'Shift+Mouse0' is Shift + left-click.
 export const combo = e => (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + 'Mouse' + e.button;
 const DEFAULTS = Object.fromEntries(ACTIONS.map(([id, , keys]) => [id, keys]));

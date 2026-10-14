@@ -220,17 +220,19 @@ setInterval(() => { if (started) saveNow(true); }, 30000);
 addEventListener('beforeunload', () => { if (started) save(); leave(); });
 
 // ---------------------------------------------------------------- mode + layers
-// The camera. Outside depth mode it follows the engineer, looking north, and nothing turns it. In depth mode it can
-// orbit a quarter turn at a time (camLeft / camRight), tilt in steps (camLower / camHigher) and pan freely with a
-// middle-button drag (camPan); a middle click that doesn't drag is still the pipette. Leaving depth mode tweens it back
-// to the default view. Every key is rebindable (input.js).
-const TILTS = [.35, .55, .75, .95, 1.15, 1.35], FLAT_PITCH = .82, DEPTH_PITCH = .55;
+// The camera. Outside depth mode it follows the engineer, looking north, and nothing turns it. In depth mode it rotates
+// on a sphere round the point it looks at: a middle-button drag (camOrbit) swings it round freely, sideways all the way
+// round and up and down between ORBIT_PITCH, and the keys step it a quarter turn (camLeft / camRight) or a tilt step
+// (camLower / camHigher) from wherever it is. Shift + middle drag (camPan) moves the point it looks at. A middle click
+// that doesn't drag is still the pipette. Leaving depth mode tweens it back to the default view. Every key and button
+// is rebindable (input.js).
+const TILTS = [.35, .55, .75, .95, 1.15, 1.35], FLAT_PITCH = .82, DEPTH_PITCH = .55, ORBIT_PITCH = [.3, 1.45];
 function toggleMode() {
   const C = S.cam;
   if (S.mode === 'flat') { S.mode = 'depth'; C.pitchT = DEPTH_PITCH; }
   else { S.mode = 'flat'; S.layer = 0; resetCamera(); }
   applyGhostAll(); renderHotbar();
-  toast(S.mode === 'depth' ? `DEPTH MODE · ${keyName('layerUp')}/${keyName('layerDown')}: layer · ${keyName('camLeft')} ${keyName('camRight')}: orbit · ${keyName('camLower')} ${keyName('camHigher')}: tilt · drag ${keyName('camPan')}: pan · ${keyName('depthGrid')}: grid` : 'FLAT MODE', 2600);
+  toast(S.mode === 'depth' ? `DEPTH MODE · ${keyName('layerUp')}/${keyName('layerDown')}: layer · ${keyName('camLeft')} ${keyName('camRight')}: orbit · ${keyName('camLower')} ${keyName('camHigher')}: tilt · drag ${keyName('camOrbit')}: rotate · ${keyName('camPan')} drag: pan · ${keyName('depthGrid')}: grid` : 'FLAT MODE', 2600);
 }
 // Back to the default view: facing north (the nearest whole turn, so it unwinds the short way), the usual tilt, no pan.
 function resetCamera() { const C = S.cam; C.yawT = Math.round(C.yawT / (Math.PI * 2)) * Math.PI * 2; C.pitchT = FLAT_PITCH; C.panXT = C.panZT = 0; }
@@ -238,7 +240,7 @@ function tilt(by) {
   const C = S.cam, i = TILTS.reduce((b, t, k) => Math.abs(t - C.pitchT) < Math.abs(TILTS[b] - C.pitchT) ? k : b, 0);
   C.pitchT = TILTS[Math.max(0, Math.min(TILTS.length - 1, i + by))];
 }
-let rot = null;   // a middle-button drag: { x, y, panX, panZ, moved }
+let rot = null;   // a middle-button drag: { x, y, pan (or orbit), panX, panZ, yaw, pitch, moved }
 function setLayer(l) {
   const [lo, hi] = layerRange();
   if (l < lo || l > hi) { toast(layerLockReason(l)); return; }
@@ -367,10 +369,13 @@ const planOn = () => planning || S.bpHand;
 view.addEventListener('contextmenu', e => e.preventDefault());
 view.addEventListener('pointermove', e => {
   setMouse(e);
-  if (rot) {   // depth mode: drag to pan, the ground following the mouse
+  if (rot) {   // depth mode: drag to rotate round the focus (sideways: round it, up and down: over it), or to pan
     const dx = e.clientX - rot.x, dy = e.clientY - rot.y, C = S.cam;
     if (Math.hypot(dx, dy) > 4) rot.moved = true;
-    if (rot.moved && S.mode === 'depth') {
+    if (rot.moved && S.mode === 'depth' && !rot.pan) {
+      C.yawT = C.yaw = rot.yaw - dx * .008;
+      C.pitchT = C.pitch = Math.max(ORBIT_PITCH[0], Math.min(ORBIT_PITCH[1], rot.pitch + dy * .005));
+    } else if (rot.moved && S.mode === 'depth') {
       const k = 1 / (C.ppu * S.pix), sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), fwd = dy * k / Math.max(.3, Math.sin(C.pitch));
       C.panXT = C.panX = rot.panX - cy * dx * k + sy * fwd; C.panZT = C.panZ = rot.panZ + sy * dx * k + cy * fwd;
     }
@@ -381,7 +386,8 @@ view.addEventListener('pointerdown', e => {
   if (!started) return;
   if (S.modal && S.modal !== 'title') closeModals();
   setMouse(e); hover = pick();
-  if (is('camPan', combo(e)) || e.button === 1) { e.preventDefault(); rot = { x: e.clientX, y: e.clientY, panX: S.cam.panX || 0, panZ: S.cam.panZ || 0, moved: false, button: e.button }; return; }
+  const pan = is('camPan', combo(e));
+  if (pan || is('camOrbit', combo(e)) || e.button === 1) { e.preventDefault(); rot = { x: e.clientX, y: e.clientY, pan, panX: S.cam.panX || 0, panZ: S.cam.panZ || 0, yaw: S.cam.yaw, pitch: S.cam.pitch, moved: false, button: e.button }; return; }
   // Shift + left click: with something to build in hand it plans a blueprint (below); with an empty hand it pastes
   // copied settings, or with nothing copied, selects what is under the cursor for transfer modes
   // with a selection going, Shift + click keeps adding to it (or taking out) even with settings copied: paste onto it
