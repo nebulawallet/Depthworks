@@ -3,7 +3,7 @@
 const STORE = 'depthworks.keys';
 export const ACTIONS = [
   ['up', 'Walk up', ['KeyW', 'ArrowUp']], ['down', 'Walk down', ['KeyS', 'ArrowDown']],
-  ['left', 'Walk left', ['KeyA', 'ArrowLeft']], ['right', 'Walk right', ['KeyD', 'ArrowRight']],
+  ['left', 'Walk left', ['KeyA', 'ArrowLeft']], ['right', 'Walk right', ['KeyD', 'ArrowRight']], ['sprint', 'Sprint (hold)', ['ShiftLeft']],
   ['inventory', 'Inventory and crafting', ['KeyE', 'KeyI']], ['research', 'Research', ['KeyT']],
   ['map', 'Map', ['KeyM']], ['cycleBar', 'Next quickbar', ['KeyX']], ['hideUI', 'Hide interface', ['KeyH']],
   ['rotate', 'Rotate', ['KeyR']], ['pipette', 'Copy hovered building', ['KeyQ']], ['drop', 'Drop one item', ['KeyZ']],

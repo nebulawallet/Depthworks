@@ -36,7 +36,7 @@ function begin(fresh, sandbox = false) {
     S.sandbox = sandbox;
     S.research = { done: new Set(), current: null, progress: {} }; S.maxTier = 0;
     if (sandbox) unlockAll();
-    Object.assign(S.player, { x: 48.5, z: 52.5, face: 0, fac: 1, veh: null });
+    Object.assign(S.player, { x: 48.5, z: 52.5, face: 0, fac: 1, veh: null, hp: PLAYER.health, sta: PLAYER.stamina, tired: false });
     Object.assign(world, { vehicles: [], units: [], routes: [], factories: [{ id: 1, name: 'Main factory', color: '#7ef6ff' }], facNext: 2, nextId: 1 });
     world.roads.clear();
     S.seed = Math.floor(Math.random() * 1e9);   // every new world gets its own coastline, lakes and maybe a river

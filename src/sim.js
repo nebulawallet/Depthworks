@@ -1,9 +1,9 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT } from './data.js';
-import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize } from './state.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT, FRAMES } from './data.js';
+import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize, SPAWN } from './state.js';
 import { isBeltLike, dropOnBelt, takeFromBelt, beltWants, beltsTick, touchBelts, clearSeg, segItems, beltCommand, lanesOf } from './belts.js';
 import { rebuildFluids, fluidPre, fluidPost, producerCaps, burnNet, burnRate, draw, push, avail, room, passThrough, fluidConflict, flush, sameFac, isPipeLike } from './fluids.js';
-import { roadAt, removeRoad, isWalkway, roadBlocks, transportTick, rebuildRails, wayNear, vehSlots, vehSlotAccept, vehSlotPut, vehSlotTake, vehicleById, vehicleTarget, removeVehicle, depotCommand } from './transport.js';
+import { roadAt, removeRoad, isWalkway, roadBlocks, transportTick, rebuildRails, wayNear, vehSlots, vehSlotAccept, vehSlotPut, vehSlotTake, vehicleById, vehicleTarget, removeVehicle, depotCommand, vstats } from './transport.js';
 import { fishTarget, catchFish, fishTick } from './fish.js';
 export { sameFac };
 const isClient = () => S.net.role === 'client';
@@ -560,11 +560,12 @@ export function playerTick(dt, input) {
   if (p.veh) {   // driving: the vehicle carries you, and your keys drive it
     const v = vehicleById(p.veh);
     if (!v) p.veh = null;
-    else { p.drive = { t: input.fz || 0, s: input.fx || 0 }; p.x = v.x; p.z = v.z; p.vx = p.vz = 0; p.moving = false; p.face = v.ang; if (!isClient()) { mineTick(dt); pickupTick(dt); } return; }
+    else { staminaTick(p, dt, false); p.drive = { t: input.fz || 0, s: input.fx || 0 }; p.x = v.x; p.z = v.z; p.vx = p.vz = 0; p.moving = false; p.face = v.ang; if (!isClient()) { mineTick(dt); pickupTick(dt); } return; }
   }
   // quick acceleration and braking: responsive, but not a teleporting box
   const a = 1 - Math.exp(-dt * (input.mx || input.mz ? 22 : 30));
-  const spd = PLAYER.speed * (isWalkway(Math.floor(p.x), Math.floor(p.z)) ? SIDEWALK_SPEED : 1) * (p.fed > S.T ? 1.25 : 1);
+  const sprint = staminaTick(p, dt, !!input.sprint && !!(input.mx || input.mz));
+  const spd = PLAYER.speed * (isWalkway(Math.floor(p.x), Math.floor(p.z)) ? SIDEWALK_SPEED : 1) * (p.fed > S.T ? 1.25 : 1) * (sprint ? PLAYER.sprint : 1);
   p.vx = (p.vx || 0) + (input.mx * spd - (p.vx || 0)) * a;
   p.vz = (p.vz || 0) + (input.mz * spd - (p.vz || 0)) * a;
   let vx = p.vx, vz = p.vz;
@@ -582,6 +583,44 @@ export function playerTick(dt, input) {
   p.moving = sp > .4;
   if (!isClient()) { mineTick(dt); pickupTick(dt); }
 }
+
+// ---------------------------------------------------------------- health and stamina
+// Sprinting burns stamina; it comes back after a short rest. Run it dry and you can't sprint until it refills a bit.
+// Whoever moves the engineer runs this: each player for themselves, so a guest's sprint feels instant.
+function staminaTick(p, dt, want) {
+  if (p.tired && p.sta >= PLAYER.rested) p.tired = false;
+  const go = want && !p.tired && p.sta > 0;
+  if (go) { p.sta = Math.max(0, p.sta - PLAYER.sprintCost * dt); p.staT = S.T; if (!p.sta) p.tired = true; }
+  else if (S.T - p.staT > PLAYER.staminaDelay) p.sta = Math.min(PLAYER.stamina, p.sta + PLAYER.staminaRegen * dt);
+  p.sprinting = go;
+  return go;
+}
+// Health is the host's to decide. Moving vehicles hurt anyone they run into (not their own crew); health comes back
+// slowly after a while, faster while well fed. At zero you wake up at the landing site, with everything you carried.
+function healthTick(dt) {
+  const p = actor;
+  if (!p.veh) for (const v of world.vehicles) {
+    const sp = Math.abs(v.v || 0);
+    if (sp < PLAYER.hitSpeed || S.T - (p.hitT ?? -99) < 1) continue;
+    const st = vstats(v.type), u = v.unit && world.units.find(q => q.id === v.unit);
+    if (!st || st.way === 'sea' || p.veh === v.id || u?.cars.includes(p.veh)) continue;
+    if (Math.hypot(v.x - p.x, v.z - p.z) > FRAMES[st.frame].len / 2 + PLAYER.radius + .1) continue;
+    p.hitT = S.T;
+    hurt(p, Math.round(sp * PLAYER.hitDamage), ITEMS[v.type]?.name.toLowerCase() || 'vehicle');
+    if (p.hp <= 0) return;
+  }
+  if (S.T - p.hurtT > PLAYER.regenDelay && p.hp < PLAYER.health) p.hp = Math.min(PLAYER.health, p.hp + (p.fed > S.T ? PLAYER.fedRegen : PLAYER.regen) * dt);
+}
+export function hurt(p, n, by) {
+  p.hp -= n; p.hurtT = S.T;
+  notify('hurt', n);
+  if (p.hp > 0) return;
+  p.hp = PLAYER.health; p.veh = null; p.vx = p.vz = 0; p.mining = null;
+  p.x = SPAWN.x; p.z = SPAWN.z;
+  notify('respawn', p.x, p.z);
+  notify('toast', `You were run over by a ${by}. You woke up at the landing site.`);
+}
+export function heal(p, n) { p.hp = Math.min(PLAYER.health, p.hp + n); }
 
 // What right-click would mine at a cell, in Factorio's priority: buildings, then trees/rocks, then ore.
 export function mineTargetAt(c) {
@@ -700,7 +739,7 @@ export function simulate(dt, input = { mx: 0, mz: 0 }) {
       setActor(p);
       if (p.local) playerTick(dt, input);
       else if (!isClient()) { mineTick(dt); pickupTick(dt); }
-      if (!isClient()) craftQueueTick(dt);
+      if (!isClient()) { craftQueueTick(dt); healthTick(dt); }
     }
   } finally { setActor(S.player); }
   if ((volTimer += dt) > .5) { volTimer = 0; computeVolume(); }

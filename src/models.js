@@ -762,9 +762,12 @@ export function makePlayer(color = 0xe07a2e) {
   P.armL = limb(body, .09, .3, .1, suit, -.21, .68, 0);
   P.armR = limb(body, .09, .3, .1, suit, .21, .68, 0);
   for (const a of [P.armL, P.armR]) a.add(new THREE.Mesh(box(.1, .07, .11).translate(0, -.31, 0), dark));
-  const pick = new THREE.Group(); pick.position.set(0, -.3, .02); P.armR.add(pick); P.pick = pick;
+  // tilted down in the fist, so the handle stands up behind the head when raised and reaches forward, point down, on the strike
+  const pick = new THREE.Group(); pick.position.set(0, -.3, .02); pick.rotation.x = .9; P.armR.add(pick); P.pick = pick;
   pick.add(new THREE.Mesh(box(.03, .03, .36).translate(0, 0, .18), M(C.wood)));
-  pick.add(new THREE.Mesh(box(.26, .045, .045).translate(0, 0, .34), M(C.light)));
+  // the head crosses the handle in the plane of the swing (not sideways), tapering to a point at each end
+  pick.add(new THREE.Mesh(box(.045, .16, .05).translate(0, 0, .34), M(C.light)));
+  for (const s of [1, -1]) pick.add(new THREE.Mesh(new THREE.ConeGeometry(.026, .07, 4).rotateX(s > 0 ? 0 : Math.PI).translate(0, s * .115, .34), M(C.light)));
   pick.visible = false;
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   g.userData.P = P; g.userData.color = color;

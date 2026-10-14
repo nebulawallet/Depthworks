@@ -159,7 +159,10 @@ export function renderHotbar() {
     return `<div class="${cls}" data-act="hot:${b}.${i}"${tipAttr(tipHtml)}><span class="k">${(i + 1) % 10}</span>${it ? iconHTML(it, n || '') : ''}</div>`;
   }).join('');
   const pick = S.bars.map((_, k) => `<div class="bpick${k === b ? ' on' : ''}" data-act="bar:${k}"${tipAttr(`${HOTBARS[k].name} bar${k === b ? '' : ': click to use it'} · ${keyName('cycleBar')} switches bars`)}>${k + 1}</div>`).join('');
-  setHTML($('hotbar'), `<div class="bpicks">${pick}</div><div class="hbar">${cells}</div>`);
+  // health and stamina sit at the bar's left; their widths follow every frame in updateVitals
+  const vit = `<div class="vitals"><div class="vbar hp"${tipAttr('Health. Vehicles hurt; it comes back on its own after a while, faster when well fed. Food heals.')}><i id="vHp"></i></div>`
+    + `<div class="vbar st"${tipAttr(`Stamina. Hold ${keyName('sprint')} to sprint; it refills when you stop.`)}><i id="vSt"></i></div></div>`;
+  setHTML($('hotbar'), `${vit}<div class="bpicks">${pick}</div><div class="hbar">${cells}</div>`);
   $('hand').style.bottom = $('hotbar').offsetHeight + 18 + 'px';
   const ent = S.sel && ENTITIES[S.sel], tool = ITEMS[S.sel]?.tool === 'link', it = ITEMS[S.sel];
   const forFac = ent && !ent.shared && (world.factories.length > 1 || isResearched('factory_planning')) ? ` · for ${facChip(S.player.fac, 'factories')}` : '';
@@ -803,7 +806,21 @@ function renderMineBar() {
 }
 
 let slowT = 0;
+function updateVitals() {
+  const p = S.player, hp = $('vHp'), st = $('vSt'); if (!hp) return;
+  hp.style.width = Math.max(0, p.hp / PLAYER.health * 100) + '%';
+  st.style.width = Math.max(0, p.sta / PLAYER.stamina * 100) + '%';
+  hp.parentElement.classList.toggle('low', p.hp < PLAYER.health * .3);
+  st.parentElement.classList.toggle('tired', !!p.tired);
+}
+// a hit: a red flash at the screen's edges and the damage over the engineer
+bus.on('hurt', n => {
+  const f = $('hurt'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on');
+  bus.emit('float', '-' + Math.round(n), S.player.x, 1.3, S.player.z);
+});
+bus.on('respawn', (x, z) => { S.player.x = x; S.player.z = z; S.player.vx = S.player.vz = 0; });
 export function updateUI(dt, hover) {
+  updateVitals();
   setHTML($('info'), describeCell(hover));
   renderMineBar();
   if (S.modal === 'logistics') drawLogistics();

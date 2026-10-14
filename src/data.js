@@ -69,8 +69,8 @@ export const ITEMS = {
   armor_plate:    { name: 'Armour plate', color: 0x5a6250, shape: 'plate' },
   turret:         { name: 'Turret', color: 0x6a7258, shape: 'part' },
   fishing_net:    { name: 'Fishing net', color: 0xb8a878, shape: 'net', desc: 'Put it on a boat. The boat catches fish it passes. Past one stack of fish the net strains, and at two it breaks.' },
-  raw_fish:       { name: 'Raw fish', color: 0x8ab0c8, shape: 'fish', food: 60, desc: 'Food. Hold it and click to eat: you walk and mine faster for a minute. Cook it in a furnace for longer.' },
-  cooked_fish:    { name: 'Cooked fish', color: 0xd8904a, shape: 'fish', food: 180, desc: 'Food. Hold it and click to eat: you walk and mine faster for three minutes.' },
+  raw_fish:       { name: 'Raw fish', color: 0x8ab0c8, shape: 'fish', food: 60, heal: 15, desc: 'Food. Hold it and click to eat: heals a little, and you walk, mine and heal faster for a minute. Cook it in a furnace for more.' },
+  cooked_fish:    { name: 'Cooked fish', color: 0xd8904a, shape: 'fish', food: 180, heal: 40, desc: 'Food. Hold it and click to eat: heals, and you walk, mine and heal faster for three minutes.' },
 };
 for (const id of ROAD_IDS) ITEMS[id] = { name: ROADS[id].name, color: (ROADS[id].paint[0] << 16) | (ROADS[id].paint[1] << 8) | ROADS[id].paint[2], shape: 'road', road: id,
   desc: ROADS[id].desc ?? `Hold it and drag to lay road. The road panel next to your hand sets width, lanes, markings and sidewalks. Trucks drive at ${Math.round(ROADS[id].speed * 100)}% speed on it.` };
@@ -242,7 +242,11 @@ export const FEATURES = {
   tree: { name: 'Tree', time: .6, gives: { wood: 4 } },
   rock: { name: 'Rock', time: 1.6, gives: { stone: 20, coal: 6 } },
 };
-export const PLAYER = { speed: 6.5, reach: 10, mineReach: 3, inventory: 80, radius: .28 };
+export const PLAYER = { speed: 6.5, reach: 10, mineReach: 3, inventory: 80, radius: .28,
+  // health comes back `regen` a second once `regenDelay` seconds pass without a hit (faster while well fed);
+  // sprinting multiplies speed by `sprint` and burns stamina, and an empty bar has to refill to `rested` first
+  health: 100, regen: 2, fedRegen: 6, regenDelay: 5, stamina: 100, sprint: 1.55, sprintCost: 20, staminaRegen: 16, staminaDelay: .8, rested: 25,
+  hitSpeed: 1.5, hitDamage: 9 };   // vehicles moving faster than hitSpeed hurt you: hitDamage per tile a second
 
 export const BELT_KINDS = new Set(['belt', 'underground', 'splitter', 'lift']);
 

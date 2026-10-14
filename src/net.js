@@ -8,7 +8,7 @@
 import { Peer } from 'peerjs';
 import { S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, invGive, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
 import { ITEMS, TECH } from './data.js';
-import { placeOrCraft, turnPending, place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory } from './sim.js';
+import { placeOrCraft, turnPending, heal, place, rotateEntity, queueCraft, cancelCraft, fastTransfer, dropAt, entityCommand, techAvailable, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory } from './sim.js';
 import { serialize, entToJSON, entFromJSON, applyEntJSON } from './save.js';
 import { placeRoad, applyRoads, placeSignal, placeVehicle, board, routeAction, vehToJSON, unitToJSON, applyVehicles } from './transport.js';
 import { fishToList, fishFromList } from './fish.js';
@@ -63,8 +63,8 @@ function applyAction(op) {
     case 'eat': {
       const food = ITEMS[op.it]?.food;
       if (!food || !invGet(op.it)) break;
-      invAdd(op.it, -1); actor.fed = Math.max(actor.fed || 0, S.T) + food;
-      notify('toast', 'well fed: faster walking and mining for ' + Math.round(actor.fed - S.T) + ' s');
+      invAdd(op.it, -1); actor.fed = Math.max(actor.fed || 0, S.T) + food; heal(actor, ITEMS[op.it].heal || 0);
+      notify('toast', 'well fed: faster walking, mining and healing for ' + Math.round(actor.fed - S.T) + ' s');
       break;
     }
     case 'rotate': if (e) rotateEntity(e, op.by || 1); break;
@@ -149,7 +149,7 @@ function onHostMessage(conn, m) {
     const used = new Set([...S.players.values()].map(p => p.color));
     const p = newPlayer(conn.peer, name, COLORS.find(col => !used.has(col)) ?? COLORS[S.players.size % COLORS.length]);
     const back = S.remoteInv?.[name];
-    if (back) { p.inv.loadAny(back.inv); p.x = back.x; p.z = back.z; }
+    if (back) { p.inv.loadAny(back.inv); p.x = back.x; p.z = back.z; if (back.hp > 0) p.hp = back.hp; }
     else {   // newcomers land next to the host with the same starter kit everyone gets
       p.x = S.player.x + 1.2; p.z = S.player.z + .6;
       for (const [k, v] of Object.entries({ iron_plate: 8, burner_drill: 1, furnace: 1 })) p.inv.add(k, v);
@@ -178,7 +178,7 @@ function dropFriend(id) {
   const c = net.conns.get(id); if (!c) return;
   net.conns.delete(id);
   const p = c.p;
-  (S.remoteInv ||= {})[p.name] = { inv: invToList(p.inv), x: p.x, z: p.z };   // their stuff waits for them
+  (S.remoteInv ||= {})[p.name] = { inv: invToList(p.inv), x: p.x, z: p.z, hp: p.hp };   // their stuff waits for them
   for (const q of p.craft) for (const [k, n] of Object.entries(q.give || {})) p.inv.add(k, n);
   (S.remoteInv[p.name]).inv = invToList(p.inv);
   S.players.delete(id);
@@ -239,7 +239,7 @@ function hostTick(dt) {
     }
     for (const k of c.cache.keys()) if (!states.has(k)) c.cache.delete(k);
     const p = c.p;
-    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, fac: p.fac, pend: (p.pending || []).map(q => ({ ...q })) } });
+    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, hp: Math.round(p.hp), fac: p.fac, pend: (p.pending || []).map(q => ({ ...q })) } });
   }
 }
 
@@ -336,6 +336,7 @@ function applyState(m) {
   S.player.mining = you.mining;
   if (S.player.veh !== (you.veh ?? null)) { S.player.veh = you.veh ?? null; bus.emit('vehicles'); }
   S.player.fed = you.fed || 0;
+  if (typeof you.hp === 'number') S.player.hp = you.hp;
   S.player.pending = you.pend || [];
   bus.emit('inv');
   // world

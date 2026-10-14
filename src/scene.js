@@ -810,8 +810,9 @@ export function moveInput() {
   if (isDown('right', keys)) fx++;
   if (isDown('left', keys)) fx--;
   if (!fx && !fz) return { mx: 0, mz: 0, fx, fz };
+  const sprint = isDown('sprint', keys);
   const sy = Math.sin(S.cam.yaw), cy = Math.cos(S.cam.yaw), mx = -sy * fz + cy * fx, mz = -cy * fz - sy * fx, l = Math.hypot(mx, mz);
-  return { mx: mx / l, mz: mz / l, fx, fz };   // fx / fz are the raw keys, for driving
+  return { mx: mx / l, mz: mz / l, fx, fz, sprint };   // fx / fz are the raw keys, for driving
 }
 export function zoomStep(dir) {
   const C = S.cam; let i = ZOOMS.indexOf(C.ppuT); if (i < 0) i = 4;

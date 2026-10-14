@@ -144,6 +144,16 @@
   .pmbody { flex: 1; overflow: auto; padding-right: 6px; } .pmbody > div { display: none; } .pmbody > div.on { display: block; }
   .pmbody h3:first-child { margin-top: 0; }
   #goals.off, #minimap.off { display: none; }
+  /* health and stamina, beside the quickbar */
+  .vitals { display: flex; flex-direction: column; gap: 4px; width: 70px; margin-right: 2px; }
+  .vbar { height: 9px; background: #1a1f2a; border: 1px solid var(--line); position: relative; }
+  .vbar i { display: block; height: 100%; width: 100%; }
+  .vbar.hp i { background: #d84a4a; } .vbar.st i { background: #e5c03a; }
+  .vbar.low { animation: lowhp .8s ease-in-out infinite alternate; } .vbar.tired i { background: #8a7a4a; }
+  @keyframes lowhp { from { border-color: var(--line); } to { border-color: #ff4a4a; box-shadow: 0 0 6px #ff4a4a; } }
+  #hurt { position: fixed; inset: 0; pointer-events: none; z-index: 14; opacity: 0; box-shadow: inset 0 0 140px 30px rgba(220, 30, 30, .75); }
+  #hurt.on { animation: hurtflash .6s ease-out; }
+  @keyframes hurtflash { from { opacity: 1; } to { opacity: 0; } }
   .setrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; cursor: pointer; } .setrow input[type=range] { width: 200px; }
   #help:not(.ingame) .ingame-only, #help.ingame .title-only { display: none; }
   #help kbd { color: #111; background: var(--ink); padding: 0 4px; font-family: inherit; }
@@ -236,6 +246,7 @@
 <canvas id="minimap" class="panel hud" width="180" height="180" data-tip="Map: click or press M"></canvas>
 <div id="craftq" class="panel hud"></div>
 <div id="minebar" class="panel"></div>
+<div id="hurt"></div>
 
 <div id="signal" class="panel hud collapsed">
   <div id="sigToggle">SIGNAL ▾</div>
@@ -290,7 +301,7 @@
   <div class="cols2">
     <div>
       <h3>Engineer</h3>
-      <kbd>WASD</kbd> walk · <kbd>Wheel</kbd> zoom<br>
+      <kbd>WASD</kbd> walk · hold <kbd>Shift</kbd> sprint · <kbd>Wheel</kbd> zoom<br>
       <kbd>LMB</kbd> build (drag belts) · open machines<br>
       hold <kbd>RMB</kbd> mine ore, trees, rocks, buildings<br>
       <kbd>E</kbd> inventory &amp; crafting · <kbd>T</kbd> research<br>
