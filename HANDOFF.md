@@ -15,8 +15,8 @@ glyphs, and something answers using only the mechanisms it has heard.
 
 ## Where the last session left off
 
-The newest work is **not committed yet**: it waits for the owner's "push" (`main` is still at "Add research queue and
-tree, power tiers, blueprints, crafting stations and more"). The owner has not played any of it by hand.
+Everything is committed and pushed (`main` at "Add map exploration, radars, big drills, trading and a medical research
+tree"). The owner has not played any of it by hand: start with "Not verified" below, then their feedback.
 
 This session worked through another long list from the owner. In short:
 
