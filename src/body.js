@@ -44,7 +44,7 @@ export function bodyTick(p, dt) {
   exposureTick(p, dt);
   const m = playerMods(p), max = maxHealth(p);
   if (m.drain > 0 && p.hp > max / 2) p.hp = Math.max(max / 2, p.hp - m.drain * dt);
-  if (m.sunHeal > 0 && daylight() > .5 && p.hp < max) p.hp = Math.min(max, p.hp + m.sunHeal * dt);
+  if (m.sunHeal > 0 && daylight() > .3 && p.hp < max) p.hp = Math.min(max, p.hp + m.sunHeal * dt);
   if (p.hp > max) p.hp = max;
 }
 

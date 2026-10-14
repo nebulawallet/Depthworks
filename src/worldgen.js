@@ -343,7 +343,7 @@ function findSpawn() {
 // ---------------------------------------------------------------- ground colours
 // Each tile's ground palette is the blend of the biomes actually around it (a blur over BLUR tiles each way), so
 // a border fades evenly into whatever lies across it. Cached on the chunk: c.ground[(i * 4 + band) * 3 + rgb].
-const BLUR = 6;
+const BLUR = 4;
 export function groundColors(c) {
   if (c.ground) return c.ground;
   const W = CHUNK + BLUR * 2, base = new Float32Array(W * W * 12), tmp = new Float32Array(W * W * 12);

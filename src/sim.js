@@ -455,7 +455,7 @@ function tickEntity(e, dt) {
     }
     case 'lamp': {   // on by itself once it gets properly dark
       e.lit = false;
-      if (daylight() > .75) { e.status = 'off: it is light out'; break; }
+      if (daylight() > .2) { e.status = 'off: it is light out'; break; }
       if (def.burner) { if (burner(e, true, def.burn, dt)) e.lit = true; else { e.status = 'out of fuel'; break; } }
       else { demand(def.power); if (sat > 0) e.lit = true; else { e.status = noPower(e); break; } }
       e.status = 'lit'; e.lastActive = S.T;

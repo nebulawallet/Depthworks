@@ -157,37 +157,37 @@ export const FEATURES = {
 // kinds; `flora` is ground cover drawn for looks: [kind, colour, share of tiles, glows]; `patches` is the share of
 // weedy ground (its tangle drawn in `weed`, else the first flora colour); `seeds` are the three crops whose seeds its weedy patches give.
 export const BIOMES = [
-  { id: 'meadow', name: 'Temperate meadow', clim: [.5, .5, .15], spawn: 4, hazard: null, ground: { name: 'Meadow soil', pal: [[62, 70, 40], [80, 92, 52], [70, 80, 46], [94, 100, 60]] },
+  { id: 'meadow', name: 'Temperate meadow', clim: [.5, .5, .15], spawn: 4, hazard: null, ground: { name: 'Meadow soil', pal: [[66, 60, 38], [96, 92, 54], [78, 92, 46], [116, 106, 66]] },
     ores: { iron_ore: { w: 1 }, copper_ore: { w: 1 }, coal: { w: 1 }, stone: { w: .8 } }, under: { crystal: { w: 1 }, iron_ore: { w: .6, rich: 3 }, copper_ore: { w: .5, rich: 3 } }, deep: { abyssal_ore: { w: 1, rich: 2 }, crystal: { w: .3, rich: 3 } },
     trees: { tree: 3, birch: 1 }, treeDensity: .5, rocks: .004, flora: [['tuft', 0x5a8a3a, .2], ['flower', 0xe0d04a, .03], ['flower', 0xd84a8a, .02]], patches: .06, oil: .25, seeds: ['wheat', 'flax', 'clover'] },
-  { id: 'forest', name: 'Old forest', clim: [.42, .72, .2], spawn: 3, hazard: null, ground: { name: 'Forest loam', pal: [[52, 52, 34], [66, 70, 42], [58, 60, 38], [76, 78, 48]] },
+  { id: 'forest', name: 'Old forest', clim: [.42, .72, .2], spawn: 3, hazard: null, ground: { name: 'Forest loam', pal: [[50, 44, 30], [72, 70, 42], [58, 74, 38], [88, 82, 52]] },
     ores: { iron_ore: { w: 1.1 }, coal: { w: 1.2 }, stone: { w: .7 }, copper_ore: { w: .6 } }, under: { crystal: { w: .8 }, iron_ore: { w: .8, rich: 3 } }, deep: { abyssal_ore: { w: 1, rich: 2 } },
     trees: { tree: 3, pine: 2, birch: 1 }, treeDensity: 1, rocks: .006, flora: [['tuft', 0x3a6a2a, .22], ['fern', 0x3a7a3a, .08], ['shroom', 0xc8603a, .01]], patches: .05, oil: .2, seeds: ['blueberry', 'hops', 'beet'] },
-  { id: 'steppe', name: 'Dry steppe', clim: [.66, .3, .2], spawn: 3, hazard: null, ground: { name: 'Steppe dirt', pal: [[96, 84, 56], [116, 100, 66], [104, 92, 60], [128, 112, 74]] },
+  { id: 'steppe', name: 'Dry steppe', clim: [.66, .3, .2], spawn: 3, hazard: null, ground: { name: 'Steppe dirt', pal: [[118, 96, 60], [150, 124, 78], [132, 120, 64], [168, 142, 92]] },
     ores: { copper_ore: { w: 1.2, size: 1.4 }, stone: { w: 1.2, size: 1.3 }, iron_ore: { w: .8 }, coal: { w: .7 } }, under: { crystal: { w: .7 }, copper_ore: { w: .9, rich: 3 } }, deep: { abyssal_ore: { w: .8, rich: 2 } },
     trees: { acacia: 2, tree: 1 }, treeDensity: .15, rocks: .006, flora: [['tuft', 0x9a9a4a, .25], ['tuft', 0xb8a85a, .1]], patches: .05, oil: .45, seeds: ['millet', 'sunflower', 'sorghum'] },
-  { id: 'taiga', name: 'Boreal taiga', clim: [.25, .6, .2], spawn: 2, hazard: null, ground: { name: 'Taiga peat', pal: [[56, 58, 46], [70, 74, 58], [62, 66, 52], [82, 86, 68]] },
+  { id: 'taiga', name: 'Boreal taiga', clim: [.25, .6, .2], spawn: 2, hazard: null, ground: { name: 'Taiga peat', pal: [[58, 54, 42], [80, 80, 60], [64, 80, 58], [98, 96, 74]] },
     ores: { iron_ore: { w: 1.3, size: 1.2 }, coal: { w: 1 }, stone: { w: 1 }, copper_ore: { w: .6 } }, under: { iron_ore: { w: 1, rich: 3 }, crystal: { w: .7 } }, deep: { abyssal_ore: { w: 1, rich: 2 } },
     trees: { pine: 4, snow_pine: 1, birch: 1 }, treeDensity: .9, rocks: .008, flora: [['tuft', 0x4a6a4a, .15], ['berry', 0xd83a4a, .02]], patches: .05, oil: .2, seeds: ['rye', 'cranberry', 'potato'] },
-  { id: 'marsh', name: 'Fen', clim: [.55, .92, .25], spawn: 1, hazard: null, wet: 1, ground: { name: 'Fen mud', pal: [[48, 54, 40], [60, 68, 48], [54, 60, 44], [70, 78, 54]] },
+  { id: 'marsh', name: 'Fen', clim: [.55, .92, .25], spawn: 1, hazard: null, wet: 1, ground: { name: 'Fen mud', pal: [[40, 50, 28], [58, 74, 38], [46, 70, 44], [72, 88, 48]] },
     ores: { coal: { w: 1.3, rich: 1.3 }, iron_ore: { w: .6 }, copper_ore: { w: .8 } }, under: { coal: { w: .8, rich: 3 }, crystal: { w: .6 } }, deep: { abyssal_ore: { w: .8, rich: 2 } },
     trees: { willow: 3, tree: 1 }, treeDensity: .45, rocks: .002, flora: [['reed', 0x8a9a4a, .25], ['tuft', 0x4a7a4a, .1]], patches: .07, oil: .5, seeds: ['rice', 'reedgrass', 'taro'] },
-  { id: 'desert', name: 'Glass desert', clim: [.93, .08, .3], spawn: 0, hazard: 'heat', dry: 1, ground: { name: 'Sand', pal: [[176, 152, 104], [196, 172, 120], [184, 160, 110], [206, 184, 132]] },
+  { id: 'desert', name: 'Glass desert', clim: [.93, .08, .3], spawn: 0, hazard: 'heat', dry: 1, ground: { name: 'Sand', pal: [[192, 160, 102], [218, 186, 124], [204, 168, 108], [232, 204, 146]] },
     ores: { copper_ore: { w: 1.4, pat: 'vein', rich: 1.4 }, stone: { w: 1.5, size: 1.6 }, iron_ore: { w: .5 } }, under: { copper_ore: { w: 1, rich: 4 }, crystal: { w: .8 } }, deep: { abyssal_ore: { w: 1, rich: 2.5 } },
     trees: { cactus: 1 }, treeDensity: .08, weed: 0x8a8a4a, rocks: .006, flora: [['tuft', 0xb8a86a, .05], ['shard', 0xe8d8a8, .02]], patches: .03, oil: .9, seeds: ['prickly_pear', 'date_palm', 'agave'] },
-  { id: 'tundra', name: 'Frost waste', clim: [.04, .35, .3], spawn: 0, hazard: 'cold', ground: { name: 'Frozen ground', pal: [[176, 186, 196], [204, 212, 220], [188, 198, 208], [220, 226, 232]] },
+  { id: 'tundra', name: 'Frost waste', clim: [.04, .35, .3], spawn: 0, hazard: 'cold', ground: { name: 'Frozen ground', pal: [[178, 192, 210], [212, 222, 234], [192, 206, 224], [234, 240, 248]] },
     ores: { iron_ore: { w: 1.5, size: 1.5, rich: 1.3 }, coal: { w: 1.2 }, stone: { w: .8 } }, under: { iron_ore: { w: 1.1, rich: 4 }, crystal: { w: 1 } }, deep: { abyssal_ore: { w: 1.1, rich: 2.5 } },
     trees: { snow_pine: 2, deadwood: 1 }, treeDensity: .12, weed: 0x6a7a70, rocks: .01, rockKind: 'ice_rock', flora: [['tuft', 0x8a9aa0, .06], ['shard', 0xe8f0ff, .02]], patches: .04, oil: .3, seeds: ['lichen', 'snowberry', 'arctic_moss'] },
-  { id: 'ashlands', name: 'Ashlands', clim: [.9, .5, .95], spawn: 0, hazard: 'fumes', dry: 1, ground: { name: 'Ash', pal: [[48, 42, 40], [62, 54, 50], [56, 48, 44], [74, 64, 58]] },
+  { id: 'ashlands', name: 'Ashlands', clim: [.9, .5, .95], spawn: 0, hazard: 'fumes', dry: 1, ground: { name: 'Ash', pal: [[44, 38, 36], [68, 58, 52], [60, 44, 38], [86, 72, 62]] },
     ores: { coal: { w: 1.6, pat: 'scatter', rich: 1.6 }, iron_ore: { w: 1, pat: 'scatter', rich: 1.4 }, stone: { w: 1 } }, under: { abyssal_ore: { w: .5, rich: 2 }, crystal: { w: .6 } }, deep: { abyssal_ore: { w: 1.6, rich: 3 } },
     trees: { charred: 2, deadwood: 1 }, treeDensity: .15, rocks: .012, rockKind: 'ash_rock', weed: 0x6a4a3a, flora: [['ember', 0xff5a1a, .03, true], ['shard', 0x3a3430, .05]], patches: .04, oil: .7, seeds: ['emberroot', 'ash_pepper', 'cinderbloom'] },
-  { id: 'fungal', name: 'Glowcap hollows', clim: [.45, .8, .95], spawn: 0, hazard: 'spores', ground: { name: 'Mycelium', pal: [[60, 46, 66], [76, 58, 82], [68, 52, 74], [88, 68, 92]] },
+  { id: 'fungal', name: 'Glowcap hollows', clim: [.45, .8, .95], spawn: 0, hazard: 'spores', ground: { name: 'Mycelium', pal: [[62, 42, 76], [88, 60, 104], [76, 48, 92], [106, 76, 120]] },
     ores: { copper_ore: { w: 1 }, stone: { w: .8 }, coal: { w: .8 }, iron_ore: { w: .7 } }, under: { crystal: { w: 1.3, rich: 2 } }, deep: { abyssal_ore: { w: 1, rich: 2 } },
     trees: { glowcap: 4, tree: 1 }, treeDensity: .75, rocks: .004, flora: [['shroom', 0x7ef6c8, .1, true], ['shroom', 0xd8a8ff, .05, true], ['tuft', 0x6a4a7a, .1]], patches: .07, oil: .2, seeds: ['glowspore', 'puffball', 'threadmold'] },
-  { id: 'crystal', name: 'Singing steppe', clim: [.25, .25, .95], spawn: 0, hazard: 'resonance', ground: { name: 'Glass silt', pal: [[96, 104, 120], [112, 122, 140], [104, 112, 130], [124, 134, 152]] },
+  { id: 'crystal', name: 'Singing steppe', clim: [.25, .25, .95], spawn: 0, hazard: 'resonance', ground: { name: 'Glass silt', pal: [[88, 104, 132], [116, 134, 164], [98, 120, 152], [136, 154, 182]] },
     ores: { stone: { w: 1.4, pat: 'vein' }, copper_ore: { w: 1.1 }, iron_ore: { w: .8 } }, under: { crystal: { w: 2, rich: 3 } }, deep: { crystal: { w: 1, rich: 4 }, abyssal_ore: { w: .8, rich: 2 } },
     trees: { crystal_spire: 1 }, treeDensity: .12, weed: 0x6a8a98, rocks: .004, flora: [['shard', 0x9fe8f2, .08, true], ['tuft', 0x8aa0b8, .08]], patches: .04, oil: .15, seeds: ['chimegrass', 'prism_lily', 'shardroot'] },
-  { id: 'pripyat', name: 'Pripyatic wastes', clim: [.62, .4, .95], spawn: 0, hazard: 'radiation', ground: { name: 'Fallout dust', pal: [[78, 80, 58], [94, 98, 70], [86, 88, 64], [106, 110, 78]] },
+  { id: 'pripyat', name: 'Pripyatic wastes', clim: [.62, .4, .95], spawn: 0, hazard: 'radiation', ground: { name: 'Fallout dust', pal: [[86, 86, 50], [112, 112, 64], [98, 106, 52], [130, 128, 76]] },
     ores: { uranium_ore: { w: 1.7, size: 1.1, rich: 1.2 }, iron_ore: { w: 1 }, stone: { w: .8 }, copper_ore: { w: .6 } }, under: { uranium_ore: { w: .8, rich: 3 }, crystal: { w: .5 } }, deep: { abyssal_ore: { w: 1, rich: 2 } },
     trees: { mutant_tree: 3, deadwood: 2 }, treeDensity: .35, rocks: .008, flora: [['tuft', 0x9ab83a, .12], ['glowtuft', 0xb8f04a, .03, true]], patches: .06, oil: .4, seeds: ['wormwood', 'rust_potato', 'ghost_rye'] },
 ];
@@ -400,9 +400,10 @@ const GLOW = { furnace: [2.4, 0xff7a2a, 1], electric_furnace: [2, 0xff8a3a], boi
   train_station: [3, 0xffe0a0], truck_depot: [3, 0xffe0a0], port: [3, 0xffe0a0], medical_lab: [2.2, 0xd8f0ff], centrifuge: [1.8, 0x9be37a],
   reactor: [4.5, 0x9be37a], leach_drill: [1.4, 0xd8e04a], greenhouse: [3, 0x7aff8a] };
 for (const [id, [r, color, flicker]] of Object.entries(GLOW)) ENTITIES[id].light = { r, color, flicker: !!flicker, machine: true };
-// The day: `length` seconds a full turn, `start` where a new world begins (0 is the start of the day). Daylight is 1
-// through the day, fades over dusk, is 0 through the night and comes back at dawn (fractions of the day below).
-export const DAY = { length: 420, start: .05, dusk: .55, night: .65, dawn: .9, nightLight: [.16, .19, .32], duskLight: [1, .74, .56] };
+// The day runs on a clock: `length` real seconds a full 24 hours (24 minutes: a minute an hour), and a world starts at
+// hour `start`. The sun rises at `sunrise` and sets at `sunset` (hours) and climbs and sinks smoothly in between, so the
+// light changes all day: warm and low in the morning and evening, white at midday, moonlight at night (the tints).
+export const DAY = { length: 1440, start: 8, sunrise: 5.5, sunset: 20, nightLight: [.24, .27, .4], duskLight: [1, .86, .72] };
 // Producers take augments: two slots unless the building sets `augSlots`.
 export const PRODUCER_KINDS = new Set(['drill', 'furnace', 'assembler', 'lab', 'oilpump', 'medlab']);
 for (const e of Object.values(ENTITIES)) if (PRODUCER_KINDS.has(e.kind)) e.augSlots ??= 2;

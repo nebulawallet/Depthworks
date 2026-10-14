@@ -194,15 +194,13 @@ export function hash01(str) { let h = 2166136261; for (const c of String(str)) h
 export const isResearched = id => !id || S.research.done.has(id);
 // ---------------------------------------------------------------- day and night
 // The world clock S.T sets the time of day, so saves and friends agree on it.
-export const dayPhase = (T = S.T) => ((T / DAY.length + DAY.start) % 1 + 1) % 1;
+// The hour of the day, 0 to 24.
+export const hourOf = (T = S.T) => ((T / DAY.length * 24 + DAY.start) % 24 + 24) % 24;
 const smooth = t => t * t * (3 - 2 * t);
-export function daylight(T = S.T) {
-  const p = dayPhase(T);
-  if (p < DAY.dusk) return 1;
-  if (p < DAY.night) return 1 - smooth((p - DAY.dusk) / (DAY.night - DAY.dusk));
-  if (p < DAY.dawn) return 0;
-  return smooth((p - DAY.dawn) / (1 - DAY.dawn));
-}
+// How high the sun is: 1 at midday, 0 on the horizon, below 0 at night.
+export const sunHeight = (T = S.T) => { const h = hourOf(T); return Math.sin(Math.PI * (h - DAY.sunrise) / (DAY.sunset - DAY.sunrise)) * (h >= DAY.sunrise && h < DAY.sunset ? 1 : 0) - (h >= DAY.sunrise && h < DAY.sunset ? 0 : .3); };
+// Daylight, 0 to 1, following the sun all day long: twilight a little past the horizon, full only at midday.
+export function daylight(T = S.T) { return smooth(Math.max(0, Math.min(1, (sunHeight(T) + .08) / 1.08))); }
 // A sandbox world starts with every technology done and every layer open.
 export function unlockAll() {
   for (const id of Object.keys(TECH)) S.research.done.add(id);

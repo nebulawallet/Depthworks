@@ -52,7 +52,7 @@ glyphs, and something answers using only the mechanisms it has heard.
 | Sound | All synthesised (Web Audio), proximity machine loops, volume slider. A high-shelf cut above 5 kHz on everything; labs and transmitters hum low instead of the old high beating tones |
 | Co-op | Peer-to-peer (PeerJS), invite codes, nicknames, chat, host-authoritative sync. Played by the owner with a friend on another network. Messages travel as JSON text (see below) |
 | Save | Five slots in localStorage (slot 1 is the old save key), autosave every 30 s to the slot in play, a Load game screen (load, export, delete), Load from file, Export to file from the pause menu. Old formats still load (older saves gain water, cables, marks, quickbars, oil wells, fish, deposit layers, and everything joins the main factory) |
-| Day and night | A 7-minute day: solar follows daylight, the world dims to moonlight through a light buffer in the post pass. Lamps (5 kW) and braziers (fuel) light the ground; working machines, depots, engineers and moving vehicles glow |
+| Day and night | A 24-minute day on a clock shown in the status panel (a minute an hour; the sun rises at 05:30, sets at 20:00 and climbs and sinks smoothly in between, so the light and its warmth change all day): solar follows daylight, the world dims to moonlight through a light buffer in the post pass. Lamps (5 kW) and braziers (fuel) light the ground; working machines, depots, engineers and moving vehicles glow |
 | Hosting | Public repo, served from GitHub Pages off `main`. After a push, players need Ctrl+F5 once to get fresh modules |
 
 ## Verified, and how
@@ -175,7 +175,7 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 - **The newest systems by hand:** auto-craft during a real mouse drag, the sound changes by ear, Export to file from
   inside a running game, health and the pause menu in co-op, and night with many lamps on screen (each light is a
   quad in a buffer, so it should be cheap, but it hasn't been measured).
-- **Balance:** the 7-minute day, lamp and brazier costs, augment recipes, deposit layer sizes and vehicle damage are
+- **Balance:** the 24-minute day, lamp and brazier costs, augment recipes, deposit layer sizes and vehicle damage are
   first guesses.
 - **Old worlds stay 96×96.** Only new worlds are big; an old save can't grow.
 
@@ -259,6 +259,6 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
   so its localStorage (and saves) are separate.
 - The browser caches modules hard. After editing, refresh them with `fetch('/src/<file>.js', { cache: 'reload' })`
   for each changed file, then reload, or the old code keeps running. Await all the fetches before reloading.
-- To see night, set `depthworks.S.T` (the day is `DAY.length` seconds, phase `DAY.start` at T = 0) and run a second.
+- To see night, set `depthworks.S.T` (T = 0 is hour `DAY.start`; an hour is `DAY.length / 24` seconds: `S.T = 14 * 60` is 22:00) and run a second.
 - In the in-app browser pane, a hidden pane gets no animation frames. Taking a screenshot forces a frame, and
   `depthworks.run(seconds)` steps the simulation.

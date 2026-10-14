@@ -1,6 +1,6 @@
 // HUD and panels. Panels re-render on a timer, so actions use pointerdown delegation via data-act.
 import { ENTITIES, ITEMS, RECIPE, RECIPES, TECHS, TECH, TIERS, CONVERSATION, PLAYER, HOTBARS, VOLTAGES, TILES, FLUIDS, ROADS, FUELS, FRAMES, ENGINES, VEHICLES, DEPOSIT, AUGMENTS, DAY, FEATURES, BIOMES, HAZARDS, MEDICAL, MED, CROPS, TOOLS, recipeIcon, recipeName, groupOf } from './data.js';
-import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt, factoryOf, FAC_COLORS, isResearched, endless, dayPhase, patchAt, biomeIndexAt } from './state.js';
+import { S, world, inv, invGet, bus, key, DIR_NAMES, itemName, recipeUnlocked, layerRange, tileAt, flowAt, factoryOf, FAC_COLORS, isResearched, endless, hourOf, daylight, patchAt, biomeIndexAt } from './state.js';
 import { playerMods, maxHealth, maxStamina, reachOf, hazardAt, resistance, medLevel, unitsFor, unitCost, medAvailable } from './body.js';
 import { seedsNeeded, FARM, patchName } from './farm.js';
 import { damRating, REACTOR } from './plants.js';
@@ -861,12 +861,14 @@ function renderGoals() {
 }
 
 // ---------------------------------------------------------------- status + hover info
-// The time of day, and how long until it changes.
+// The clock, and what part of the day it is.
 function timeOfDay() {
-  const p = dayPhase(), parts = [['Day', DAY.dusk], ['Dusk', DAY.night], ['Night', DAY.dawn], ['Dawn', 1]], i = parts.findIndex(([, end]) => p < end);
-  const left = Math.ceil((parts[i][1] - p) * DAY.length), m = Math.floor(left / 60), s = String(left % 60).padStart(2, '0');
-  return `${parts[i][0] === 'Night' || parts[i][0] === 'Dusk' ? '☾' : '☀'} ${parts[i][0]} <span class="dim">${parts[(i + 1) % 4][0].toLowerCase()} in ${m}:${s}</span>`;
+  const h = hourOf(), hh = Math.floor(h), mm = Math.floor((h - hh) * 60), dl = daylight(), noon = (DAY.sunrise + DAY.sunset) / 2;
+  const part = dl < .05 ? 'Night' : dl > .6 ? 'Day' : h < noon ? 'Morning' : 'Evening', clock = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  const next = h >= DAY.sunrise && h < DAY.sunset ? `sunset ${fmtHour(DAY.sunset)}` : `sunrise ${fmtHour(DAY.sunrise)}`;
+  return `${part === 'Night' ? '☾' : '☀'} <b>${clock}</b> ${part} <span class="dim">${next}</span>`;
 }
+const fmtHour = h => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
 function renderStatus() {
   const tr = TIERS[S.maxTier], nx = TIERS[S.maxTier + 1], P = powerSummary(), [lo, hi] = layerRange();
   const cur = TECH[S.research.current];

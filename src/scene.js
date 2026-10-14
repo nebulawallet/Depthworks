@@ -964,7 +964,7 @@ const _amb = new THREE.Vector3(), lerp3 = (a, b, k) => _amb.set(a[0] + (b[0] - a
 // A machine's glow shows while it works; lamps while lit; depots all night.
 const glowing = e => e.kind === 'lamp' ? e.lit : e.kind === 'depot' ? true : S.T - e.lastActive < 1.5 || (e.load || 0) > .02;
 function updateLights() {
-  const dl = daylight(), night = 1 - dl;
+  const dl = daylight(), night = Math.max(0, 1 - dl * 2.5);   // pools of light show from late evening, not in the afternoon
   post.uniforms.amb.value.copy(dl > .5 ? lerp3(DAY.duskLight, [1, 1, 1], (dl - .5) * 2) : lerp3(DAY.nightLight, DAY.duskLight, dl * 2));
   post.uniforms.nightK.value = night;
   if (night < .01) return false;
