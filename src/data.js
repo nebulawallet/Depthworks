@@ -1,5 +1,8 @@
 // Static game data: items, entities, recipes, research, precision tiers, the alien script.
 
+// The game's version, shown on the title screen: 0.minor for each push that adds a system, 0.minor.patch for fixes.
+export const VERSION = '0.5 alpha';
+
 export const TIERS = [
   { need: 0,   name: 'Coarse',     res: 5,  up: 1 },
   { need: 15,  name: 'Fitted',     res: 8,  up: 2 },

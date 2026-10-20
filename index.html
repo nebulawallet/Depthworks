@@ -198,6 +198,7 @@
   #help:not(.ingame) .ingame-only, #help.ingame .title-only { display: none; }
   #help kbd { color: #111; background: var(--ink); padding: 0 4px; font-family: inherit; }
   #help p { margin: 6px 0; }
+  #version { position: absolute; right: 10px; bottom: 6px; font-size: 13px; letter-spacing: .04em; }
   #title { width: min(640px, calc(100vw - 24px)); text-align: center; background: rgba(11,13,18,.82); padding: 26px; }
   #title h1 { font-family: 'Silkscreen', monospace; font-weight: normal; color: var(--acc); font-size: 46px; margin: 0; letter-spacing: 4px; }
   #title .tag2 { color: var(--dim); margin: 8px 0 18px; }
@@ -453,6 +454,7 @@
   <div class="nickrow">Nickname <input id="nick" maxlength="16" autocomplete="off" spellcheck="false"></div>
   <div id="titleBtns"></div>
   <div id="lobbyMsg" class="dim"></div>
+  <div id="version" class="dim"></div>
 </div>
 
 <div id="coop" class="panel hud" style="display:none"></div>

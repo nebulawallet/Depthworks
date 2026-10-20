@@ -1,4 +1,4 @@
-import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE, TECH, WIRE_TECH } from './data.js';
+import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE, TECH, WIRE_TECH, VERSION } from './data.js';
 import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID, recipeUnlocked, isResearched } from './state.js';
 import { newWorld, ensureChunks } from './worldgen.js';
 import { stockFish } from './fish.js';
@@ -21,6 +21,7 @@ import { exploredFromJSON } from './explore.js';
 import { myTrade } from './trade.js';
 
 const $ = id => document.getElementById(id);
+$('version').textContent = VERSION;
 let chartT = 0, started = false, hover = null, building = false, rmb = false, lastPaint = null, lastPlacedCell = null;
 
 // ---------------------------------------------------------------- nickname
