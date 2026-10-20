@@ -91,6 +91,15 @@ export function setGhost(root, ghost) {
     o.layers.set(o.isSprite ? UI_LAYER : ghost || o.userData.overlay ? 1 : 0);   // glass and roofs never get outlines
   });
 }
+// A shot animal flashes white for a moment: every part swaps to one unlit material, then back.
+const HIT_FLASH = new THREE.MeshBasicMaterial({ color: 0xfff0e8 });
+export function setHitFlash(root, on) {
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    if (!o.userData.base) o.userData.base = o.material;
+    o.material = on ? HIT_FLASH : o.userData.base;
+  });
+}
 // The placement preview. Normally a plain ghost: the building drawn solid, tinted green where it can go and red where it
 // can't. Planning a blueprint (Shift, or a blueprint in hand) it takes the blueprint's stippled look instead, through the
 // same shared dither path. `look`: 'ok' | 'bad' | 'bp'.
@@ -1306,6 +1315,8 @@ export function makePlayer(color = 0xe07a2e) {
 function gunModel(id) {
   const g = new THREE.Group(), metal = M(0x34383f), hi = M(0x8a929c), wood = M(C.wood), olive = M(0x4a5040);
   const add = (w, h, d, mat, x, y, z) => { const m = new THREE.Mesh(box(w, h, d), mat); m.position.set(x, y, z); g.add(m); };
+  // where the barrel ends: shots, tracers and the muzzle flash start here
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, .04, { pistol: .15, shotgun: .46, rifle: .49, smg: .3 }[id] ?? .41); g.add(muzzle); g.userData.muzzle = muzzle;
   switch (id) {
     case 'pistol': add(.035, .05, .17, metal, 0, .03, .06); add(.03, .08, .04, metal, 0, -.02, -.01); add(.036, .012, .17, hi, 0, .058, .06); break;
     case 'shotgun': add(.035, .035, .52, metal, 0, .03, .2); add(.045, .045, .12, wood, 0, -.005, .22); add(.045, .07, .2, wood, 0, -.01, -.1); break;

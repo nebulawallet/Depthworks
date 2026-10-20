@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE, DAY, DITHER, ROAD_POWER, ANIMALS, WEAPONS, recipeIcon } from './data.js';
 import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, nightDepth, lodAt, tilesOf } from './state.js';
 import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown, oreChanged } from './terrain.js';
-import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, treadMat, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat, makeAnimal, animateAnimal } from './models.js';
+import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, treadMat, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat, makeAnimal, animateAnimal, setHitFlash } from './models.js';
 import { canPlace, canSlope, slopeLayer, TUNNEL_D, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
 import { portEdges } from './fluids.js';
 import { bpAt } from './blueprint.js';
@@ -497,16 +497,39 @@ function animateAnimals(dt) {
     an.rsp = (an.rsp || 0) + ((dt > 0 ? Math.hypot(an.rx - px, an.rz - pz) / dt : 0) - (an.rsp || 0)) * Math.min(1, dt * 8);
     m.visible = !!S.started && Math.abs(an.rx - cx) < R && Math.abs(an.rz - cz) < R;
     if (!m.visible) continue;
-    m.position.set(an.rx, 0, an.rz);
+    // a fresh hit: a white flash and a jolt away from the shot
+    const h = hits.get(an.id), age = h ? (performance.now() - h.at) / 1000 : 9, jolt = age < .25 ? (1 - age / .25) * .14 : 0;
+    m.position.set(an.rx + (h ? h.dx * jolt : 0), jolt * .4, an.rz + (h ? h.dz * jolt : 0));
     animateAnimal(m, an, S.T, dt, an.rsp, isShorn(an));
     if (m.userData.ghost !== under) { m.userData.ghost = under; setGhost(m, under); }
+    const flash = age < .09 && !under;
+    if (m.userData.flash !== flash) { m.userData.flash = flash; setHitFlash(m, flash); }
+    if (h && age > .4) hits.delete(an.id);
   }
   for (const [id, m] of animalMeshes) if (!liveIds.has(id)) { scene.remove(m); disposeMesh(m); animalMeshes.delete(id); }
+  // the dead fall on their side, lie a moment, and sink into the ground
+  for (let i = dying.length - 1; i >= 0; i--) {
+    const d = dying[i], age = (d.age += dt);
+    d.m.rotation.z = d.side * 1.45 * Math.min(1, age / .28) ** 2;
+    d.m.position.y = age > .9 ? -(age - .9) * .9 : 0;
+    if (d.m.userData.flash && age > .09) { d.m.userData.flash = false; setHitFlash(d.m, false); }
+    if (age > 1.5) { scene.remove(d.m); disposeMesh(d.m); dying.splice(i, 1); }
+  }
 }
-// A shot animal puffs; a dead one leaves a burst of fur, feathers or shell.
+// Shots show on the animal: blood at its body's height, a flash and a jolt (above); a kill leaves the body to fall over.
+const hits = new Map(), dying = [];
+const bodyY = t => { const L = ANIMALS[t]?.look; return L ? ((L.leg ?? .05) + L.body[1] * .6) * 1.2 : .3; };
 bus.on('animalfx', f => {
-  if (f.kind === 'hit') burst(f.x, .3, f.z, 5, 0x8a2a24, 1.1, .045);
-  if (f.kind === 'die') { const L = ANIMALS[f.t]?.look; burst(f.x, .25, f.z, 12, L?.wool ?? L?.col ?? 0x8a6a4a, 1.6, .055); burst(f.x, .2, f.z, 6, 0x6a1a18, 1, .05); }
+  if (f.kind === 'hit') {
+    burst(f.x, bodyY(f.t), f.z, 10, 0xa8261e, 1.8, .055); burst(f.x, bodyY(f.t), f.z, 4, 0x5a0e0a, 1.2, .07);
+    const d = Math.hypot(f.x - (f.fx ?? f.x), f.z - (f.fz ?? f.z)) || 1;
+    hits.set(f.id, { at: performance.now(), dx: (f.x - (f.fx ?? f.x)) / d, dz: (f.z - (f.fz ?? f.z)) / d });
+  }
+  if (f.kind === 'die') {
+    const L = ANIMALS[f.t]?.look; burst(f.x, bodyY(f.t), f.z, 12, L?.wool ?? L?.col ?? 0x8a6a4a, 1.6, .055); burst(f.x, .15, f.z, 8, 0x6a1a18, 1.2, .06);
+    const m = animalMeshes.get(f.id);
+    if (m && m.visible) { animalMeshes.delete(f.id); m.userData.animal = undefined; m.userData.flash = true; setHitFlash(m, true); dying.push({ m, age: 0, side: Math.random() < .5 ? 1 : -1 }); }
+  }
 });
 
 // ---------------------------------------------------------------- gunfire
@@ -515,12 +538,21 @@ bus.on('animalfx', f => {
 // overlays (UI_LAYER), so night never hides them.
 const tracers = [], flashes = [];
 const flashGeo = new THREE.OctahedronGeometry(.09, 0), flashMat = new THREE.MeshBasicMaterial({ color: 0xfff0b0 });
+// Where a shot leaves the gun: the muzzle of the gun in the shooter's hands, turned to face the shot at once (the model
+// otherwise swings round over a few frames). Without a model to hand, a point at about that height in front of them.
+const _mz = new THREE.Vector3();
+function muzzleAt(s) {
+  const m = s.by === S.player.id ? playerMesh : others.get(s.by), gun = m?.userData.P?.gun, mark = gun?.children[0]?.userData.muzzle;
+  const [ex, ez] = s.shots[0], a = Math.atan2(ex - s.x, ez - s.z);
+  if (!mark || gun.userData.type !== s.gun) return [s.x + Math.sin(a) * .6, (s.h || 0) + .7, s.z + Math.cos(a) * .6];
+  m.rotation.y = a; m.updateMatrixWorld(true);
+  mark.getWorldPosition(_mz);
+  return [_mz.x, _mz.y, _mz.z];
+}
 bus.on('shot', s => {
-  if (!WEAPONS[s.gun] || Math.hypot(s.x - S.cam.x, s.z - S.cam.z) > 70) return;
-  const y = (s.h || 0) + .6;
-  let mx = s.x, mz = s.z;
+  if (!WEAPONS[s.gun] || !s.shots?.length || Math.hypot(s.x - S.cam.x, s.z - S.cam.z) > 70) return;
+  const [mx, y, mz] = muzzleAt(s);
   for (const [ex, ez, hit] of s.shots) {
-    const a = Math.atan2(ex - s.x, ez - s.z); mx = s.x + Math.sin(a) * .5; mz = s.z + Math.cos(a) * .5;
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(mx, y, mz), V(ex, hit ? .32 : .1, ez)]), new THREE.LineBasicMaterial({ color: 0xffe6a0, transparent: true }));
     line.layers.set(UI_LAYER); line.renderOrder = 30; line.frustumCulled = false; scene.add(line); tracers.push({ m: line, age: 0 });
     if (!hit) burst(ex, .06, ez, 3, 0x9a8a6a, .7, .04);

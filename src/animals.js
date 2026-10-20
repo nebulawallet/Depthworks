@@ -237,7 +237,7 @@ const driverOf = v => { for (const p of S.players.values()) if (p.veh === v.id) 
 // Takes damage from a bullet; dies at zero health. Returns true if that killed it.
 export function hurtAnimal(an, dmg, by) {
   an.hp -= dmg;
-  bus.emit('animalfx', { kind: 'hit', x: an.x, z: an.z, t: an.t });
+  bus.emit('animalfx', { kind: 'hit', id: an.id, x: +an.x.toFixed(2), z: +an.z.toFixed(2), t: an.t, fx: by ? +by.x.toFixed(2) : an.x, fz: by ? +by.z.toFixed(2) : an.z });
   if (an.hp > 0) { if (ANIMALS[an.t].flee) { an.st = 'flee'; an.fleeT = S.T + AR.calm; } return false; }
   killAnimal(an, by, 'shot');
   return true;
@@ -251,7 +251,7 @@ export function killAnimal(an, by, how) {
   const drops = Object.entries(ANIMALS[an.t].drops);
   if (by) asActor(by, () => { for (const [it, n] of drops) invGive(it, n); notify('gain', drops.map(([it, n]) => [it, n, by.inv.count(it)]), an.x, .6, an.z); });
   else for (const [it, n] of drops) for (let q = 0; q < n; q++) spill(it, an.x, an.z);
-  if (how !== 'caught') bus.emit('animalfx', { kind: 'die', x: an.x, z: an.z, t: an.t });
+  if (how !== 'caught') bus.emit('animalfx', { kind: 'die', id: an.id, x: +an.x.toFixed(2), z: +an.z.toFixed(2), t: an.t });
 }
 export function shearAnimal(an, by) {
   if (!woolly(an)) return false;

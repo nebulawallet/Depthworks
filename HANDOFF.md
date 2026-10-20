@@ -31,6 +31,9 @@ entry.
   SMG, assault rifle; Firearms 1–3 in the Military section; gunpowder, three ammunitions. Left-click fires (`fire` in
   main.js), R reloads, crosshair cursor, gun held in the engineer's hands, tracers / flashes on UI_LAYER, synthesised
   shots. Magazines per engineer (`p.mags`), saved and synced.
+- **0.6.1** (owner's feedback the next day): hits show (white flash `setHitFlash`, a jolt away from the shooter, blood
+  at body height; the dead fall on their side and sink, the `dying` list in scene.js), shots start at the gun's muzzle
+  (a marker on each gun model, `muzzleAt`), and every animal has about half the health.
 - **The owner's calls:** wool, leather, feathers, ember chitin, glow slime and crystal shell exist as drops with **no
   recipes yet** (the owner wants crafting with them later, not in 0.6); old worlds get **no** pistol gift.
 - **Wiki:** generated animal pages (kind `animal`), `GEN.animals` / `weapons` / `kills`, an Animals section and infobox

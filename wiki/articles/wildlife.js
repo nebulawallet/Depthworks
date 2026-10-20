@@ -98,11 +98,11 @@ Each gun loads a magazine from the [[Weapons#Ammunition|ammunition]] in your inv
 == The guns ==
 
 ; {{i|pistol}}
-: Every engineer lands with one, its magazine loaded, and 30 rounds. Enough for rabbits and sheep; a cow takes about six shots.
+: Every engineer lands with one, its magazine loaded, and 30 rounds. Enough for most animals: one shot for a rabbit, two for a sheep, four for a cow.
 ; {{i|shotgun}}
 : Eight pellets in a wide spread, at short range. Close up, one shell drops most animals; at range the pellets scatter. {{t|firearms}}.
 ; {{i|rifle}}
-: Slow, perfectly accurate and long-reaching: one shot drops anything up to a cow, two a horse, a musk ox or a moose. {{t|firearms_2}}.
+: Slow, perfectly accurate and long-reaching: one shot drops any animal, even a moose. {{t|firearms_2}}.
 ; {{i|smg}}
 : Fully automatic and quick, but weak and short-ranged, and it eats pistol rounds. {{t|firearms_2}}.
 ; {{i|assault_rifle}}
@@ -133,13 +133,13 @@ Every animal has health, and every bullet does its gun's damage. With the pistol
 
 {{gen|kills|pistol}}
 
-The bolt-action rifle drops most animals in one shot. The shotgun's pellets each do a little; close up, most of them land.
+The bolt-action rifle drops any animal in one shot. The shotgun's pellets each do a little; close up, most of them land.
 
 == Getting close ==
 
 * '''Farm animals''' let you walk right up. Don't sprint at them, and don't miss: a shot sends the whole group running.
 * '''Wild animals''' run before you get close. Deer and wild horses outrun you; use a rifle from range, or come at them while they graze.
-* Every shot scares everything within 16 tiles, so the first shot counts most. A wounded animal runs too.
+* Every shot scares everything within 16 tiles, so the first shot counts most. A wounded animal runs too. Every hit shows: the animal flashes, jolts and bleeds, and a killed one falls over.
 * Trees stop bullets. In a forest, find a clear line.
 * At night most animals are asleep and stay put, but you see less.
 

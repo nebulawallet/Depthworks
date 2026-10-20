@@ -3,6 +3,15 @@
 // CLAUDE.md for how versions are numbered and what an entry should say. Text may use <b> and <i>.
 export const CHANGELOG = [
   {
+    version: '0.6.1', stage: 'beta', date: '2026-10-21', title: 'Hits you can see',
+    summary: 'Shooting an animal now shows, shots come out of the gun, and animals go down sooner.',
+    changes: [
+      '<b>Hits show.</b> A shot animal flashes white, jolts away from the shot and bleeds from its body, not its feet. A killed animal falls on its side and sinks into the ground instead of vanishing.',
+      '<b>Shots leave the barrel.</b> The muzzle flash and the tracer start at the end of the gun in your hands, not in the middle of the engineer.',
+      '<b>Animals have about half the health they had.</b> With the pistol: a rabbit takes one shot, a sheep two, a cow four, a moose or musk ox six. One rifle shot drops any animal.',
+    ],
+  },
+  {
     version: '0.6', stage: 'beta', date: '2026-10-20', title: 'Animals and weapons',
     summary: 'Depthworks is now in beta. The world fills with animals, from cows and sheep to glowing beetles and crystal crabs, and every engineer carries a gun to hunt them.',
     changes: [
