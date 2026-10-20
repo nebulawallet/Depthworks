@@ -24,6 +24,8 @@ export const laneName = (n, i) => n === 3 ? ['left', 'middle', 'right'][i] : i ?
 // How far each lane sits sideways from the belt's centre line (negative: left of the way items move).
 export const laneOffset = (n, i) => n === 3 ? (i - 1) * .27 : i ? .2 : -.2;
 const isBusTile = b => b.kind === 'belt' && lanesOf(b) === 3;
+// How many layers a tile carries items up (1) or down (-1) on its way to the next tile: lifts, and angled belts.
+export const slopeOf = b => !b ? 0 : b.kind === 'lift' ? (b.dy || 1) : b.kind === 'belt' ? (b.dy || 0) : 0;
 export const isBusNode = b => isBusTile(b) && !!(b.chL || b.chR || b.midOff || b.sort);
 
 // ---------------------------------------------------------------- tiles and how they connect
@@ -32,8 +34,7 @@ export function visibleOnBelt(b, p) { return b.kind !== 'underground' || (b.role
 export function primaryNext(b) {
   const [dx, dz] = DIRS[b.dir];
   if (b.kind === 'underground' && b.role === 'in') return b.pair;
-  if (b.kind === 'lift') return world.ents.get(key(b.x + dx, b.y + b.dy, b.z + dz));
-  return world.ents.get(key(b.x + dx, b.y, b.z + dz));
+  return world.ents.get(key(b.x + dx, b.y + slopeOf(b), b.z + dz));
 }
 const neighbour = (b, d) => world.ents.get(key(b.x + DIRS[d][0], b.y, b.z + DIRS[d][1]));
 export const splitOuts = b => [b.dir, (b.dir + 3) % 4, (b.dir + 1) % 4];   // front, left, right
@@ -45,7 +46,7 @@ export function entryFor(t, moveDir, from) {
   const rel = (moveDir - t.dir + 4) % 4;
   if (rel === 2) return -1;
   if (rel === 0) return 0;
-  if (t.kind === 'lift' || t.kind === 'splitter') return -1;
+  if (t.kind === 'lift' || t.kind === 'splitter' || slopeOf(t)) return -1;   // slopes only take items from behind
   if (t.kind === 'belt' && ((rel === 1 && t.curve === 'L') || (rel === 3 && t.curve === 'R'))) return 0;
   if (lanesOf(t) === 3) return -1;
   return t.kind === 'underground' ? .25 : t.len / 2;
@@ -58,8 +59,9 @@ function outputsInto(n, b) {
 }
 function computeCurve(b) {
   const [dx, dz] = DIRS[b.dir];
+  if (slopeOf(b)) return null;   // slopes never curve
   if (outputsInto(world.ents.get(key(b.x - dx, b.y, b.z - dz)), b)) return null;
-  for (const ldy of [1, -1]) { const n = world.ents.get(key(b.x - dx, b.y - ldy, b.z - dz)); if (n && n.kind === 'lift' && n.dy === ldy && n.dir === b.dir && sameFac(n, b)) return null; }
+  for (const ldy of [1, -1]) { const n = world.ents.get(key(b.x - dx, b.y - ldy, b.z - dz)); if (n && slopeOf(n) === ldy && n.dir === b.dir && sameFac(n, b)) return null; }
   const side = d => outputsInto(neighbour(b, d), b);
   const L = side((b.dir + 3) % 4), R = side((b.dir + 1) % 4);
   return L && !R ? 'L' : R && !L ? 'R' : null;
@@ -130,7 +132,7 @@ function buildTaps(belts) {
   for (const c of world.tapChests || []) c.tapFed = false;
   const taps = [], chests = [];
   for (const b of belts) {
-    if (!tapsOf(b) || b.kind !== 'belt' || lanesOf(b) !== 2) continue;
+    if (!tapsOf(b) || b.kind !== 'belt' || lanesOf(b) !== 2 || slopeOf(b)) continue;
     for (const [k, li, rel] of OUT_SIDES) {
       const f = b.bout[k]; if (!f) continue;
       const d = (b.dir + rel) % 4, n = neighbour(b, d);

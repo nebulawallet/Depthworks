@@ -209,6 +209,7 @@ export function renderHotbar() {
     : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : ` · Ctrl+click a machine to put it in${S.picks.length && S.pickMode ? ` (${TRANSFER_MODES[S.pickMode].name.toLowerCase()} mode on the selection)` : ''}${S.picks.length > 1 ? ` · Ctrl+click a selected one: shared over all ${S.picks.length}` : ''} · Z drops one`)
     + (ent?.kind === 'lift' ? ` · ${S.dy === -1 ? 'down' : 'up'}` : '')
     + (ent?.kind === 'inserter' && S.mode === 'depth' ? ` · ${['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]}` : '')
+    + (ent?.kind === 'belt' && !ent.lanes && S.mode === 'depth' ? ` · ${['level', 'slopes up ↑', 'slopes down ↓'][[0, 1, -1].indexOf(S.dy)]} (${keyName('pitch')})` : '')
     : '';
   setHTML($('hand'), hand);
   $('hand').style.display = hand ? '' : 'none';
@@ -403,7 +404,7 @@ function beltHTML(e) {
     return `<div><span class="dim">${laneName(n, i)}</span> ${kinds.map(k => iconHTML(k, on.filter(it => it[0] === k).length)).join('') || '<span class="dim">empty</span>'}</div>`;
   }).join('')}</div>`;
   if (e.kind === 'underground') h += `<div class="dim">${e.role === 'in' ? (e.pair ? `entrance, linked ${e.len} tiles ahead` : `entrance: place an exit up to ${def.range - 1} tiles ahead`) : e.pair ? 'exit, linked' : 'exit with no entrance'}</div>`;
-  if (e.kind === 'lift') h += `<div class="dim">carries items ${e.dy > 0 ? 'up' : 'down'} to layer ${e.y + e.dy}</div>`;
+  if (e.kind === 'lift' || (e.kind === 'belt' && e.dy)) h += `<div class="dim">${e.kind === 'belt' ? 'angled: ' : ''}carries items ${e.dy > 0 ? 'up' : 'down'} to layer ${e.y + e.dy}</div>`;
   const pickGrid = what => beltPick === what ? `<div class="grid small">${knownItems().map(it => `<div class="cell" data-act="bpickset:${it}"${tipAttr(itemName(it))}>${iconHTML(it)}</div>`).join('')}</div>` : '';
   if (e.kind === 'splitter') {   // a filter per way: matching items go only that way, the rest round the unfiltered ways
     h += `<h4>Filters</h4>` + ['front', 'left', 'right'].map((w, k) => { const f = e.sf?.[k]; return `<div class="row">${w}: ${f ? `${iconHTML(f)} ${itemName(f)} only <span class="x" data-act="sfilter:${k}:"${tipAttr('clear')}>✕</span>` : '<span class="dim">anything else</span>'} <button data-act="bpick:sf${k}">${beltPick === 'sf' + k ? 'cancel' : 'set'}</button></div>` + pickGrid('sf' + k); }).join('');

@@ -322,7 +322,7 @@ function unlockText(u) {
   if (ITEMS[u]) return itemLink(u);
   if (RECIPE[u]) return `${img(recipeIcon(RECIPE[u]), 'px ic')} ${esc(recipeName(RECIPE[u]))} (recipe)`;
   const special = { 'layer -1': '[[Depth|Layer −1]]', 'layer -2': '[[Depth|Layer −2]]', clarity: '[[The Signal#Clarity|Clearer translation]] of the Signal', factories: '[[Factories|Founding new factories]]',
-    'cables from poles to machines': '[[Electricity#Direct wiring|Power cables from poles straight to machines]]', shovel: '[[Tools#Shovel|The shovel]]' };
+    'cables from poles to machines': '[[Electricity#Direct wiring|Power cables from poles straight to machines]]', shovel: '[[Tools#Shovel|The shovel]]', 'angled belts': '[[Belt logistics#Angled belts|Angling belts]] up or down a layer' };
   return special[u] ?? esc(cap(u));
 }
 function techCostAll(id) {   // every pack needed, from nothing, prerequisites included

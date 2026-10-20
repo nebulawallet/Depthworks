@@ -731,7 +731,7 @@ export const TECHS = [
   T('steel', 'Steel processing', [r], 25, 5, [], ['steel']),
   T('logistic_science', 'Logistic science', [r], 40, 5, ['automation'], ['green_pack']),
   T('fast_inserter', 'Fast inserter', [r], 30, 15, ['automation'], ['fast_inserter']),
-  T('lifts', 'Lifts', [r, g], 40, 15, ['logistics', 'logistic_science'], ['lift']),
+  T('lifts', 'Lifts', [r, g], 40, 15, ['logistics', 'logistic_science'], ['lift', 'angled belts']),
   T('logistics2', 'Logistics 2', [r, g], 50, 15, ['logistics', 'logistic_science'], ['fast_belt']),
   T('electric_distribution', 'Electric distribution', [r, g], 40, 10, ['steel', 'logistic_science'], ['medium_pole']),
   T('high_voltage', 'High voltage', [r, g], 60, 15, ['electric_distribution'], ['power_line', 'transformer', 'transformer_cable']),

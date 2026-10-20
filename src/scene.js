@@ -5,8 +5,8 @@ import * as THREE from 'three';
 import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE, DAY, DITHER, ROAD_POWER, recipeIcon } from './data.js';
 import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, nightDepth, lodAt, tilesOf } from './state.js';
 import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown, oreChanged } from './terrain.js';
-import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat } from './models.js';
-import { canPlace, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
+import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, treadMat, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat } from './models.js';
+import { canPlace, canSlope, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
 import { portEdges } from './fluids.js';
 import { bpAt } from './blueprint.js';
 import { REACTOR } from './plants.js';
@@ -262,32 +262,55 @@ export function beltItemPos(b, p, out, o = 0) {
   } else if (b.kind === 'underground' && b.role === 'in') lz = .5 - Math.min(p, .5);
   else if (b.kind === 'underground') lz = .5 - (p - (b.len - 1));
   else if (b.kind === 'lift') ly = p * b.dy + .04;
+  else if (b.dy && b.kind === 'belt') ly = p * b.dy;   // an angled belt
   const [fx, fz] = DIRS[b.dir];
   out.set(b.x + .5 + lx * -fz - lz * fx, b.y + .11 + ly, b.z + .5 + lx * fx - lz * fz);
   return out;
 }
 const _p = new THREE.Vector3(), _q0 = new THREE.Quaternion(), _sc = new THREE.Vector3();
-// Depth mode, looking below an underground belt's layer: what travels through its tunnel shows, under the ground.
-const TUNNEL_Y = .42;
+// Depth mode, looking below an underground belt's layer: its tunnel shows as a real belt in a channel dug through the
+// earth, diving from the entrance and climbing to the exit, and what travels through it rides along.
+const TUNNEL_D = .55;   // how far under its layer's floor the tunnel's belt runs
 const tunnelShown = b => b.kind === 'underground' && S.mode === 'depth' && S.layer < b.y;
+// How deep an item is: it dives over the entrance's front half and climbs over the exit's back half.
 function tunnelPos(b, p, out, o) {
-  const [fx, fz] = DIRS[b.dir], along = b.role === 'in' ? p - .5 : p - (b.len - .5);   // from the tile's middle, forward
-  out.set(b.x + .5 + o * -fz + fx * along, b.y - TUNNEL_Y, b.z + .5 + o * fx + fz * along);
+  const [fx, fz] = DIRS[b.dir], inn = b.role === 'in', along = inn ? p - .5 : p - (b.len - .5);
+  const k = inn ? Math.min(1, (p - .5) / .5) : Math.min(1, Math.max(0, (b.len - .5 - p) / .5));
+  out.set(b.x + .5 + o * -fz + fx * along, b.y + .11 - k * TUNNEL_D, b.z + .5 + o * fx + fz * along);
   return out;
 }
-const tunnelMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(.78, .26, 1), ditherMat({ color: 0x6a7080 }, DITHER.tunnel), 512);
-tunnelMesh.layers.set(1); tunnelMesh.frustumCulled = false; tunnelMesh.count = 0; scene.add(tunnelMesh);
+const TUN_MAX = 768, TUN_TREAD = { underground: 'belt', fast_underground: 'fast_belt', express_underground: 'express_belt', bus_underground: 'bus_belt' };
+const tunIM = (geo, mat) => { const m = new THREE.InstancedMesh(geo, mat, TUN_MAX); m.layers.set(1); m.frustumCulled = false; m.count = 0; scene.add(m); return m; };
+const tun = {
+  base: tunIM(new THREE.BoxGeometry(.9, .07, 1), new THREE.MeshToonMaterial({ color: 0x30343c, gradientMap: toonRamp })),
+  rail: tunIM(new THREE.BoxGeometry(.08, .14, 1), new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp })),   // tinted per belt tier
+  floor: tunIM(new THREE.BoxGeometry(1.04, .08, 1), new THREE.MeshToonMaterial({ color: 0x4a3a2a, gradientMap: toonRamp })),
+  wall: tunIM(new THREE.BoxGeometry(.08, .46, 1), new THREE.MeshToonMaterial({ color: 0x5e4a34, gradientMap: toonRamp })),
+  tread: {},
+};
+const treadIM = t => tun.tread[t] ||= tunIM(new THREE.PlaneGeometry(.78, 1).rotateX(-Math.PI / 2), treadMat(t));
+const _tm = new THREE.Matrix4(), _po = new THREE.Matrix4(), _tc = new THREE.Color(), _te = new THREE.Euler(0, 0, 0, 'YXZ');   // its own Euler: tilt first, then turn
+function tunPart(im, ox, oy) { if (im.count >= TUN_MAX) return; _po.makeTranslation(ox, oy, 0); im.setMatrixAt(im.count++, _po.premultiply(_tm)); }
+// One stretch of tunnel: its middle, how it tilts (positive climbs forward) and how long it is.
+function tunSeg(e, x, y, z, pitch, len) {
+  _tm.compose(V(x, y, z), _q.setFromEuler(_te.set(pitch, -e.dir * Math.PI / 2, 0)), V(1, 1, len));
+  tunPart(tun.floor, 0, -.04); tunPart(tun.wall, -.52, .2); tunPart(tun.wall, .52, .2);
+  tunPart(tun.base, 0, .06); tunPart(treadIM(TUN_TREAD[e.type] ?? 'belt'), 0, .1);
+  for (const sx of [-.44, .44]) { const n = tun.rail.count; tunPart(tun.rail, sx, .09); if (tun.rail.count > n) tun.rail.setColorAt(n, _tc.setHex(ENTITIES[e.type].color)); }
+}
 function updateTunnels() {
-  let n = 0;
+  for (const im of [tun.base, tun.rail, tun.floor, tun.wall, ...Object.values(tun.tread)]) im.count = 0;
   if (S.started && S.mode === 'depth') {
-    const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75;
+    const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .75, dive = Math.atan2(TUNNEL_D, .5), slope = Math.hypot(.5, TUNNEL_D);
     for (const e of world.ents.values()) {
-      if (n >= 512 || e.kind !== 'underground' || e.role !== 'in' || !e.pair || !tunnelShown(e) || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R) continue;
-      const [fx, fz] = DIRS[e.dir];
-      for (let i = 0; i <= e.len && n < 512; i++) tunnelMesh.setMatrixAt(n++, _m.compose(V(e.x + .5 + fx * i, e.y - TUNNEL_Y - .05, e.z + .5 + fz * i), _q.setFromEuler(_e.set(0, -e.dir * Math.PI / 2, 0)), V(1, 1, 1)));
+      if (e.kind !== 'underground' || e.role !== 'in' || !e.pair || !tunnelShown(e) || Math.abs(e.x - cx) > R || Math.abs(e.z - cz) > R) continue;
+      const [fx, fz] = DIRS[e.dir], x = e.x + .5, z = e.z + .5, deep = e.y - TUNNEL_D;
+      tunSeg(e, x + fx * .25, e.y - TUNNEL_D / 2, z + fz * .25, -dive, slope);   // down from the entrance
+      for (let i = 1; i < e.len; i++) tunSeg(e, x + fx * i, deep, z + fz * i, 0, 1);
+      tunSeg(e, x + fx * (e.len - .25), e.y - TUNNEL_D / 2, z + fz * (e.len - .25), dive, slope);   // up into the exit
     }
   }
-  tunnelMesh.count = n; tunnelMesh.instanceMatrix.needsUpdate = true;
+  for (const im of [tun.base, tun.rail, tun.floor, tun.wall, ...Object.values(tun.tread)]) { im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }
 }
 // Items sit on lines (belts.js): walk each lane front to back, keeping track of which tile we are on.
 function updateItems() {
@@ -780,7 +803,7 @@ function ioHints(type, x, y, z, dir, dy) {
     return t ? `Drill pushes ore into the ${ENTITIES[t.type].name.toLowerCase()} at the orange arrow` : 'Drill: ore comes out at the orange arrow. Put a belt, chest or furnace there (R rotates)';
   }
   if (kind === 'belt' || kind === 'underground' || kind === 'splitter' || kind === 'lift') {
-    const ny = kind === 'lift' ? y + dy : y, nx = x + dx, nz = z + dz, n = at(nx, ny, nz), bus = (def.lanes ?? 2) === 3, real = at(x, y, z);
+    const ny = kind === 'lift' || canSlope(type) ? y + dy : y, nx = x + dx, nz = z + dz, n = at(nx, ny, nz), bus = (def.lanes ?? 2) === 3, real = at(x, y, z);
     if (kind === 'underground') return `${def.name}: place the exit up to ${def.range - 1} tiles ahead, facing the same way`;
     if (n && !beltish(n) && n.kind !== 'inserter') { cross(nx, ny, nz); return `Belts can't load a ${ENTITIES[n.type].name.toLowerCase()} directly: put an inserter between them`; }
     arrow(nx, ny, nz, dir, COL.FLOW, .75);
@@ -1055,7 +1078,7 @@ function updateHover(hover) {
   if (VEHICLES[S.sel] || ROADS[S.sel] || ITEMS[S.sel]?.tool === 'signal' || ENTITIES[S.sel]?.drag) { updateToolHover(hover); return; }
   const sel = S.sel && ENTITIES[S.sel] ? S.sel : null;
   const kind = sel && ENTITIES[sel].kind;
-  const dy = kind === 'lift' ? (S.dy === -1 ? -1 : 1) : kind === 'inserter' && S.mode === 'depth' ? S.dy : 0;
+  const dy = kind === 'lift' ? (S.dy === -1 ? -1 : 1) : (kind === 'inserter' || canSlope(sel)) && S.mode === 'depth' ? S.dy : 0;
   const pk = [sel, S.dir, dy, S.maxTier].join();
   if (pk !== previewKey) {
     if (preview) { scene.remove(preview); preview = null; }

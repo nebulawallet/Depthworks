@@ -149,9 +149,10 @@ Layers −1 and −2 are solid rock with their own [[Mining#Ore below the ground
 
 == Moving items between layers ==
 
+* An '''[[Belt logistics#Angled belts|angled belt]]''' slopes one layer up or down: in depth mode, hold a belt and press {{k|pitch}} before placing it. Building then carries on from the layer it leads to.
 * A {{i|lift}} carries items one layer up or down; {{k|pitch}} chooses which.
 * An inserter's '''pitch''' ({{k|pitch}} in depth mode) can be level, lift (drop one layer up) or drop (one layer down).
-* [[Belt logistics#Underground belts|Underground belts]] show their traffic below the ground in depth mode.
+* [[Belt logistics#Underground belts|Underground belts]]: page down below the ground in depth mode to see their tunnel, a belt in a dug channel with its traffic on it.
 
 == See also ==
 

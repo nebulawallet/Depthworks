@@ -235,7 +235,7 @@ This table is read from the game's own defaults.
 * {{k|camLeft}} / {{k|camRight}} orbit the camera 90° at a time; {{k|camLower}} / {{k|camHigher}} tilt it.
 * Drag with the middle button to swing the camera round what it looks at; hold {{kbd|Shift}} to pan instead.
 * {{k|depthGrid}} turns the grid on or off.
-* {{k|pitch}} sets an inserter's pitch (level, lift up a layer, drop down a layer) or a lift's direction.
+* {{k|pitch}} sets an inserter's pitch (level, lift up a layer, drop down a layer), a lift's direction, or angles a belt up or down a layer.
 
 Leaving depth mode turns the camera back to face north, centred on you.
 

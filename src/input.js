@@ -13,7 +13,7 @@ export const ACTIONS = [
   ['depthMode', 'Depth mode', ['Tab']], ['layerUp', 'Layer up', ['PageUp']], ['layerDown', 'Layer down', ['PageDown']],
   ['camLeft', 'Orbit left (depth mode)', ['Semicolon']], ['camRight', 'Orbit right (depth mode)', ['Quote']],
   ['camLower', 'Tilt the camera lower (depth mode)', ['Minus']], ['camHigher', 'Tilt the camera higher (depth mode)', ['BracketLeft']],
-  ['camOrbit', 'Rotate the camera round what it looks at (depth mode, drag)', ['Mouse1']], ['camPan', 'Pan the camera (depth mode, drag)', ['Shift+Mouse1']], ['depthGrid', 'Grid in depth mode', ['KeyN']], ['pitch', 'Inserter pitch / lift direction', ['KeyV']],
+  ['camOrbit', 'Rotate the camera round what it looks at (depth mode, drag)', ['Mouse1']], ['camPan', 'Pan the camera (depth mode, drag)', ['Shift+Mouse1']], ['depthGrid', 'Grid in depth mode', ['KeyN']], ['pitch', 'Inserter pitch / lift direction / belt angle', ['KeyV']],
   ['board', 'Get in or out of a vehicle', ['KeyB']], ['logistics', 'Routes for trains, trucks and boats', ['KeyL']],
   ['factories', 'Factories', ['KeyK']], ['nextFactory', 'Next factory to build for', ['KeyJ']],
   ['copySettings', 'Copy settings', ['Shift+Mouse2']], ['pasteSettings', 'Paste settings', ['Shift+Mouse0']],

@@ -22,15 +22,28 @@ Hold a belt and drag to lay a line. A belt goes down facing where {{k|rotate}} p
 
 == Underground belts ==
 
-An underground belt carries items under anything in its way, roads included. Place the entrance, then the exit facing the same way up to its reach ahead; the two pair by themselves. Undergrounds run at their belt's speed, so belt, tunnel and belt make one line. In [[Depth|depth mode]] you can see their traffic below the ground.
+An underground belt carries items under anything in its way, roads included. Place the entrance, then the exit facing the same way up to its reach ahead; the two pair by themselves. Undergrounds run at their belt's speed, so belt, tunnel and belt make one line.
+
+In [[Depth|depth mode]], page down below the ground ({{k|layerDown}}) to see the tunnel itself: a belt in a channel dug through the earth, diving down from the entrance and climbing up into the exit, with everything travelling through it.
 
 == Splitters ==
 
 The {{i|splitter}} is a single tile that deals items in turn to the belts in front of it, to its left and to its right. Each of the three ways can have a '''filter''': a filtered way takes only its item, and the rest go to the unfiltered ways.
 
+== Angled belts ==
+
+After the {{t|lifts}} research, an ordinary belt (plain, fast or express) can be '''angled''' to carry items one layer up or down, like an incline conveyor:
+
+# Press {{k|depthMode}} for [[Depth|depth mode]] and hold a belt.
+# Press {{k|pitch}} to choose: level, slopes up, or slopes down. The hand bar shows which.
+# Place the belt. It runs one tile forward and one layer up (or down), on legs where it leaves the ground.
+# Building moves to the layer the slope leads to, and the belt in your hand goes back to level, so you can keep dragging the belt on along the new layer.
+
+Belts above the ground stand on [[Hollow frame|hollow frames]], so put frames under the tiles after an upward slope. Nothing can be built in the space a slope passes through, and slopes never curve or take items from the side. Bus belts can't be angled. Going down to layer −1 needs {{t|excavation}}, like any building there.
+
 == Lifts ==
 
-A {{i|lift}} carries items one layer up or down; {{k|pitch}} chooses which. It needs the {{t|lifts}} research and something to stand on above the ground. See [[Depth]].
+A {{i|lift}} carries items one layer up or down; {{k|pitch}} chooses which. It needs the {{t|lifts}} research and something to stand on above the ground. It works like a single angled belt. See [[Depth]].
 
 == Bus belts ==
 
