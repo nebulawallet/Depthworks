@@ -250,7 +250,7 @@ Each engine burns one fuel, from the vehicle's tank. Fill the tank by dropping f
 
 == Danger ==
 
-A moving vehicle hurts any engineer it hits, more the faster it goes. See [[Engineer#Health|health]].
+A moving vehicle hurts any engineer it hits, more the faster it goes. See [[Engineer#Health|health]]. It kills any [[Animals|animal]] it runs into, and the driver gets what the animal gives; animals run from moving vehicles, so this takes some doing.
 
 == Picking up ==
 

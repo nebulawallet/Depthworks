@@ -186,7 +186,8 @@ The sun climbs and sinks smoothly, so the light changes all day: warm and low in
 
 * [[Solar power|Solar panels]] follow the sun and give nothing at night.
 * Lamps and braziers come on by themselves once it is properly dark.
-* Working machines glow: furnaces, boilers, assemblers, labs, refineries, depots, the transmitter, the reactor and more. So do moving vehicles and every engineer.
+* Working machines glow: furnaces, boilers, assemblers, labs, refineries, depots, the transmitter, the reactor and more. So do moving vehicles, every engineer, muzzle flashes, and a few [[Animals|animals]]: ember beetles, cinder moths, glowing snails and spore moths.
+* Most animals lie down and sleep at night; a few night creatures (fennec foxes and the moths) come out instead.
 * The interface is drawn after the lighting, so it never darkens.
 
 == Lights ==

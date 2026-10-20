@@ -46,7 +46,7 @@ Roads, vehicles, railways and shipping.
 
 === Military ===
 
-Tanks. There are no enemies in the game; tanks are heavy vehicles that drive through trees.
+Firearms 1 to 3 (the [[Weapons|guns]] beyond the pistol, and their ammunition) and Tanks. There are no enemies in the game: guns are for [[Hunting|hunting]], and tanks are heavy vehicles that drive through trees.
 
 === Biology ===
 
@@ -322,7 +322,7 @@ Worlds saved before generated worlds existed stay as they were: 96 tiles a side.
 },
 {
   title: 'Biomes', desc: 'The eleven biomes and what is in them', cats: ['World'], icon: 'crystal',
-  body: `[[Depthworks]] worlds hold eleven '''biomes'''. Five are gentle and livable; six are harsh or strange, each with a [[Hazards|hazard]]. Every biome has its own ground, ores, trees, ground cover, weedy patches, crops and chance of crude oil.
+  body: `[[Depthworks]] worlds hold eleven '''biomes'''. Five are gentle and livable; six are harsh or strange, each with a [[Hazards|hazard]]. Every biome has its own ground, ores, trees, ground cover, weedy patches, crops, [[Animals|animals]] and chance of crude oil.
 
 {{gen|biomes}}
 
@@ -345,6 +345,10 @@ Hazards never kill and fade a few seconds after you leave. [[Medical research|Ad
 == Crops by biome ==
 
 {{gen|crops}}
+
+== Animals by biome ==
+
+Farm animals live in the gentle biomes; the harsh ones have creatures of their own, some of which glow at night. See [[Animals#Who lives where|Animals]] for the full list and each biome's page for its own.
 
 == See also ==
 
@@ -490,7 +494,8 @@ The host's browser runs the world, so the host keeps the tab open; the game keep
 * Each engineer builds for the [[Factories|factory]] they picked.
 * {{kbd|Enter}} opens the '''chat'''.
 * Click another engineer for their details, or to '''[[Trading|trade]]''' with them.
-* The host decides everything that matters (crafting results, research, mining, vehicles); guests see the host's world and fill in smooth motion between updates.
+* The host decides everything that matters (crafting results, research, mining, vehicles, animals and what each shot hits); guests see the host's world and fill in smooth motion between updates.
+* Everyone sees the same [[Animals|animals]] and everyone's shots. Bullets never hurt another engineer, and what an animal gives goes to whoever shot it.
 
 == Connections ==
 

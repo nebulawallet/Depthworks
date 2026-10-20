@@ -1,11 +1,13 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, FEATURE_HIT, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT, FRAMES, ROADS, TILES, TOOLS, VOLTAGES, ROAD_POWER, PIPE_HIT, WIRE_TECH, hitOf, oreStage, groupOf, ingredientMatches, wiresBuildings } from './data.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, ANIMALS, FEATURES, FEATURE_HIT, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT, FRAMES, ROADS, TILES, TOOLS, VOLTAGES, ROAD_POWER, PIPE_HIT, WIRE_TECH, hitOf, oreStage, groupOf, ingredientMatches, wiresBuildings } from './data.js';
 import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, tilesOf, DIRS, GRID, LAYER_MIN, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize, oreWear, SPAWN, daylight, removeFeat, underOf, patchAt, isResearched } from './state.js';
 import { isBeltLike, dropOnBelt, takeFromBelt, beltWants, beltsTick, touchBelts, clearSeg, segItems, beltCommand, lanesOf, outRise } from './belts.js';
 import { rebuildFluids, fluidPre, fluidPost, producerCaps, burnNet, burnRate, draw, push, avail, room, passThrough, fluidConflict, flush, sameFac, isPipeLike } from './fluids.js';
 import { roadAt, removeRoad, roadTiles, isWalkway, roadBlocks, transportTick, rebuildRails, wayNear, vehSlots, vehSlotAccept, vehSlotPut, vehSlotTake, vehicleById, vehicleTarget, removeVehicle, depotCommand, vstats } from './transport.js';
 import { bpAt, removeBlueprintsUnder, removeBlueprint } from './blueprint.js';
 import { fishTarget, catchFish, fishTick } from './fish.js';
+import { animalsTick, animalTarget, animalById, woolly, killAnimal, shearAnimal } from './animals.js';
+import { gunTick } from './weapons.js';
 import { radarSweep, exploreTick } from './explore.js';
 import { tradeTick } from './trade.js';
 import { greenhouseAccepts, greenhouseInsert, farmTick, digPatch, patchName } from './farm.js';
@@ -926,7 +928,8 @@ export function playerTick(dt, input) {
     if (f > .5 && side < .3 && p.vx * dx + p.vz * dz + (under.line?.speed ?? under.speed) > 0) p.tun = { k: key(under.x, under.y, under.z), s: f };
   }
   const sp = Math.hypot(p.vx, p.vz);
-  if (input.mx || input.mz) p.face = Math.atan2(input.mx, input.mz);
+  if (p.aimT > S.T) p.face = p.aim;   // shooting: face the aim, even walking another way
+  else if (input.mx || input.mz) p.face = Math.atan2(input.mx, input.mz);
   else if (p.mining && p.mineCell) p.face = Math.atan2(p.mineCell.x + .5 - p.x, p.mineCell.z + .5 - p.z);
   p.walk += dt * 10 * Math.min(1, sp / PLAYER.speed);
   if (p.veh) return;
@@ -978,6 +981,7 @@ export function heal(p, n) { p.hp = Math.min(maxHealth(p), p.hp + n); }
 export function mineTargetAt(c) {
   if (!c) return null;
   if (c.veh) { const v = vehicleById(c.veh); return v ? vehicleTarget(v, c) : null; }
+  if (c.animal) { const an = animalById(c.animal); return an ? animalAct(an) : null; }
   if (c.y < 0) underOf(c.x, c.z);
   const k = key(c.x, c.y, c.z), e = world.ents.get(k);
   if (e?.kind === 'rail' && e.sig !== null && e.sig !== undefined) return { kind: 'sig', k, c, time: .2, reach: reachOf(actor), name: 'Rail signal' };
@@ -986,6 +990,7 @@ export function mineTargetAt(c) {
   const bp = bpAt(c.x, c.y, c.z);
   if (bp) return { kind: 'bp', k: 'bp' + bp.id, c, time: .1, reach: reachOf(actor) + 30, name: ENTITIES[bp.type].name + ' blueprint' };
   if (world.frames.has(k)) return { kind: 'frame', k, c, time: .3, reach: reachOf(actor), name: 'Hollow frame' };
+  if (c.y === 0 && !e) { const an = animalTarget(c); if (an) return animalAct(an); }
   if (c.y === 0) { const f = world.feats.get(k); if (f) return { kind: 'feat', k, c, time: FEATURES[f.type].time, reach: reachOf(actor), name: FEATURES[f.type].name, tool: FEATURES[f.type].tool }; }
   if (c.y === 0 && isWater(c.x, c.z)) { const f = fishTarget(c); return f ? { kind: 'fish', k: 'fish' + f.id, c, fish: f.id, time: .35, reach: reachOf(actor), name: 'Fish' } : null; }
   if (c.y === 0) {
@@ -997,13 +1002,22 @@ export function mineTargetAt(c) {
   if (c.y === 0 && patchAt(c.x, c.z) && hasTool('shovel')) return { kind: 'patch', k: 'patch' + k, c, time: .8, reach: PLAYER.mineReach + 1, name: patchName(c.x, c.z), tool: 'shovel' };
   return null;
 }
+// Hands on an animal: shear a sheep whose wool has grown, or pick up a small slow one (`catch`). Anything else says why
+// not, and has to be hunted.
+function animalAct(an) {
+  const def = ANIMALS[an.t], act = def.shear && woolly(an) ? 'shear' : def.catch ? 'catch' : null, c = { x: Math.floor(an.x), y: 0, z: Math.floor(an.z) };
+  const t = { kind: 'animal', k: 'animal' + an.id, id: an.id, c, act, time: act === 'shear' ? 1.2 : .5, reach: PLAYER.mineReach, name: def.name };
+  if (!act) t.blocked = def.shear ? 'its wool is still growing back' : 'too big to catch: hunt it with a gun';
+  return t;
+}
 function mineTick(dt) {
   const p = actor, t = mineTargetAt(p.mineCell);
   if (!t) { p.mining = null; return; }
   // the sound and the swing: chopping trees, breaking ore and rock, digging, or taking buildings down
   if (!p.mining || p.mining.k !== t.k) p.mining = { k: t.k, prog: 0, name: t.name, tool: t.tool || null,
-    kind: t.kind === 'feat' ? (t.tool === 'axe' ? 'tree' : 'rock') : t.kind === 'ore' || t.kind === 'fish' || t.kind === 'patch' ? 'ore' : 'ent' };
+    kind: t.kind === 'feat' ? (t.tool === 'axe' ? 'tree' : 'rock') : t.kind === 'ore' || t.kind === 'fish' || t.kind === 'patch' ? 'ore' : t.kind === 'animal' ? 'animal' : 'ent' };
   const m = p.mining;
+  if (t.blocked) { m.blocked = t.blocked; return; }
   if (distTo(t.c.x, t.c.z) > t.reach) { m.blocked = 'out of reach'; return; }
   if (t.kind === 'ore' && invRoom(t.ore) < 1) { m.blocked = 'inventory full'; return; }
   m.blocked = null;
@@ -1013,7 +1027,12 @@ function mineTick(dt) {
   const { x, y, z } = t.c;
   // a popup per thing you dig, which counts up while you keep at it and shows how many you now have
   const gain = (list, fy) => notify('gain', list.map(([it, n]) => [it, n, invGet(it)]), x + .5, fy, z + .5);
-  if (t.kind === 'fish') { if (catchFish(t.fish)) { invGive('raw_fish'); bump('mined', 'raw_fish'); notify('mined', 'ore'); gain([['raw_fish', 1]], .4); } }
+  if (t.kind === 'animal') {
+    const an = animalById(t.id);
+    if (an && t.act === 'shear') { if (shearAnimal(an, p)) notify('sheared'); }
+    else if (an && t.act === 'catch') { killAnimal(an, p, 'caught'); notify('mined', 'ore'); }
+  }
+  else if (t.kind === 'fish') { if (catchFish(t.fish)) { invGive('raw_fish'); bump('mined', 'raw_fish'); notify('mined', 'ore'); gain([['raw_fish', 1]], .4); } }
   else if (t.kind === 'road') removeRoad(x, z, t.one);
   else if (t.kind === 'sig') { const e = world.ents.get(t.k); if (e) { e.sig = null; invGive('rail_signal'); world.railDirty = true; bus.emit('remesh', e); } }
   else if (t.kind === 'veh') { const r = removeVehicle(t.veh); if (r) notify('toast', r); }
@@ -1190,13 +1209,14 @@ export function simulate(dt, input = { mx: 0, mz: 0 }) {
   powerTick(dt);
   transportTick(dt);
   fishTick(dt);
+  animalsTick(dt);
   // If this throws, the actor must not stay a friend, or the host's own clicks would use their inventory.
   try {
     for (const p of S.players.values()) {
       setActor(p);
       if (p.local) playerTick(dt, input);
       else if (!isClient()) { mineTick(dt); pickupTick(dt); }
-      if (!isClient()) { craftQueueTick(dt); healthTick(dt); bodyTick(p, dt); }
+      if (!isClient()) { craftQueueTick(dt); healthTick(dt); bodyTick(p, dt); gunTick(p); }
     }
   } finally { setActor(S.player); }
   if ((volTimer += dt) > .5) { volTimer = 0; computeVolume(); }

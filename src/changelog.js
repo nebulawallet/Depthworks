@@ -3,6 +3,24 @@
 // CLAUDE.md for how versions are numbered and what an entry should say. Text may use <b> and <i>.
 export const CHANGELOG = [
   {
+    version: '0.6', stage: 'beta', date: '2026-10-20', title: 'Animals and weapons',
+    summary: 'Depthworks is now in beta. The world fills with animals, from cows and sheep to glowing beetles and crystal crabs, and every engineer carries a gun to hunt them.',
+    changes: [
+      '<b>Depthworks is in beta.</b> The big systems are all in. From here the work is filling the world out, balancing and polishing. Bugs still happen: tell us about them.',
+      '<b>Animals live in every biome.</b> Cows, sheep, chickens and rabbits in the meadows; pigs, deer and foxes in the old forest; goats, wild horses and marmots on the steppe; moose and snow hares in the taiga; ducks, frogs and herons in the fen. The harsh biomes have stranger creatures: lizards and night-time fennec foxes in the glass desert, musk oxen and arctic foxes on the frost waste, glowing ember beetles and cinder moths in the Ashlands, glowing snails and spore moths in the Glowcap hollows, crystal crabs and ringing chime birds on the Singing steppe, and two-headed boars in the Pripyatic wastes.',
+      '<b>They behave like animals.</b> They graze, wander, rest and keep together in small groups, and sleep at night (or by day, for the night creatures). They walk round water, buildings, frames and roads. Wild ones run when you come near; farm animals only run from someone sprinting. Everything runs from vehicles and gunfire.',
+      '<b>Factories push wildlife out.</b> Land round a busy factory slowly empties, and animals live further out. Hunted land fills up again over time.',
+      '<b>Every engineer now carries a pistol</b> and 30 pistol rounds, with the magazine loaded. Worlds started before 0.6 get no gun: craft one from 5 iron plates and 3 gears (Military tab).',
+      '<b>Guns are held like anything else.</b> Pick one from the quickbar, and left-click fires at the cursor (the cursor becomes a crosshair). Automatic guns keep firing while you hold the button. When the magazine runs dry the gun reloads itself from the ammunition you carry; R reloads early. The hand shows what is loaded and what you carry.',
+      '<b>Five guns:</b> the pistol from the start; the shotgun (a spread of pellets) with the new <b>Firearms</b> research; the bolt-action rifle (one shot drops most animals) and the SMG (fully automatic) with <b>Firearms 2</b>; and the assault rifle with <b>Firearms 3</b>. They are in a new Military section of the research tree, beside Tanks.',
+      '<b>Ammunition:</b> gunpowder is crafted from 2 coal and 1 stone (by hand or in an assembler: a furnace fed stone still makes bricks). Pistol rounds come from copper, iron and gunpowder, shotgun shells from iron, gunpowder and wood, rifle rounds from copper, steel and gunpowder in an assembler.',
+      '<b>Bullets only hit animals.</b> Buildings and trees stop them, but nothing else is hurt: there are still no enemies, and nothing attacks you.',
+      '<b>What animals give:</b> raw meat (cook it in a furnace), leather, wool, feathers, and from the strange creatures ember chitin, glow slime and crystal shell. Meat and eggs are food. The rest has no recipe yet: keep it, crafting with it comes in a later update.',
+      '<b>No gun needed for some:</b> hold right-click on a sheep to shear it (the wool grows back in a few minutes), pick up small slow animals like chickens, ducks, rabbits, frogs, snails and crabs, and collect the eggs chickens and ducks lay on the ground with F.',
+      'Vehicles running into an animal kill it, and the driver gets what it gives. In co-op everyone sees the same animals and everyone\'s shots.',
+    ],
+  },
+  {
     version: '0.5.3', stage: 'alpha', date: '2026-10-20', title: 'Simpler power, and going underground',
     summary: 'Generators now plug straight into ordinary poles, and the engineer can go below the ground: down slopes into the layers under it, and through underground belts.',
     changes: [

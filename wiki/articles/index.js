@@ -3,8 +3,9 @@ import basics from './basics.js';
 import logistics from './logistics.js';
 import power from './power.js';
 import progress, { BIOME_TEXT } from './progress.js';
+import wildlife from './wildlife.js';
 
-export const ARTICLES = [...basics, ...logistics, ...power, ...progress];
+export const ARTICLES = [...basics, ...logistics, ...power, ...progress, ...wildlife];
 export { BIOME_TEXT };
 
 // Other names people search for: alias -> 'Page' or 'Page#Section'.
@@ -39,6 +40,14 @@ export const ALIASES = {
   'Factory': 'Factories', 'Fuel value': 'Fuel', 'Science': 'Science packs', 'Packs': 'Science packs', 'Modules': 'Augments', 'Augment': 'Augments',
   'Biome': 'Biomes', 'Hazard': 'Hazards', 'Exposure': 'Hazards', 'Copy settings': 'Copy and paste', 'Paste': 'Copy and paste', 'Blueprint': 'Blueprints', 'Trade': 'Trading', 'Creative mode': 'Sandbox',
   'Change logs': 'Changelog', 'Changes': 'Changelog', 'Patch notes': 'Changelog', 'Version history': 'Changelog', 'Updates': 'Changelog', 'Version': 'Changelog',
+  'Wildlife': 'Animals', 'Animal': 'Animals', 'Fauna': 'Animals', 'Creatures': 'Animals', 'Livestock': 'Animals', 'Farm animals': 'Animals#How they behave', 'Shearing': 'Animals#By hand', 'Catching animals': 'Animals#By hand', 'Eggs': 'Egg', 'Meat': 'Raw meat', 'Steak': 'Cooked meat',
+  'Guns': 'Weapons', 'Gun': 'Weapons', 'Weapon': 'Weapons', 'Firearms': 'Weapons#Research', 'Shooting': 'Weapons#Firing', 'Firing': 'Weapons#Firing', 'Reloading': 'Weapons#Ammunition and reloading', 'Reload': 'Weapons#Ammunition and reloading',
+  'Ammo': 'Weapons#Ammunition', 'Ammunition': 'Weapons#Ammunition', 'Bullets': 'Weapons#Ammunition', 'Magazine': 'Weapons#Ammunition and reloading', 'Crosshair': 'Weapons#Firing', 'Hunt': 'Hunting', 'Hunting animals': 'Hunting',
+  'Rifle': 'Bolt-action rifle', 'Submachine gun': 'SMG', 'Pistol round': 'Pistol rounds', 'Rifle round': 'Rifle rounds', 'Shells': 'Shotgun shells', 'Shotgun shell': 'Shotgun shells', 'Gun powder': 'Gunpowder',
+  'Cows': 'Cow', 'Chickens': 'Chicken', 'Rabbits': 'Rabbit', 'Pigs': 'Pig', 'Foxes': 'Fox', 'Goats': 'Goat', 'Wild horses': 'Wild horse', 'Horse': 'Wild horse', 'Horses': 'Wild horse', 'Marmots': 'Marmot',
+  'Snow hares': 'Snow hare', 'Hare': 'Snow hare', 'Ducks': 'Duck', 'Frogs': 'Frog', 'Herons': 'Heron', 'Lizards': 'Lizard', 'Fennec': 'Fennec fox', 'Fennec foxes': 'Fennec fox', 'Musk oxen': 'Musk ox', 'Arctic foxes': 'Arctic fox',
+  'Ember beetles': 'Ember beetle', 'Beetle': 'Ember beetle', 'Cinder moths': 'Cinder moth', 'Moth': 'Cinder moth', 'Glowing snails': 'Glowing snail', 'Snail': 'Glowing snail', 'Spore moths': 'Spore moth', 'Crystal crabs': 'Crystal crab', 'Crab': 'Crystal crab',
+  'Chime birds': 'Chime bird', 'Two-headed boars': 'Two-headed boar', 'Boar': 'Two-headed boar', 'Mutant boar': 'Two-headed boar',
   'FAQ': 'Tips and tricks', 'Tips': 'Tips and tricks', 'Game': 'Depthworks',
 };
 

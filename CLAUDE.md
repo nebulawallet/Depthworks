@@ -40,8 +40,8 @@ page's recent changes and the version in the title screen's corner all come from
 
 - **Add an entry at the top** for every push players will notice. Several changes pushed together share one entry.
 - **Version numbers:** `0.minor` for a push that adds a new system or reworks one; `0.minor.patch` for fixes,
-  tweaks and small additions. The owner can always ask for a specific number: use it. `stage` stays `'alpha'` until
-  the owner says otherwise.
+  tweaks and small additions. The owner can always ask for a specific number: use it. `stage` is `'alpha'` up to 0.5.x
+  and `'beta'` from 0.6 on (the owner's call), until the owner says otherwise.
 - **The entry:** `version`, `stage`, `date` (the day it is pushed, `YYYY-MM-DD`), a short `title`, a one-sentence
   `summary`, and `changes`: one item per change, written for players, not programmers.
 - **Explain, don't just list.** Each change says what is different and, when it isn't obvious, why it changed and

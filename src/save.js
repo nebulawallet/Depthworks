@@ -8,6 +8,7 @@ import { ENTITIES, TILE, RETIRED, ITEMS, BARREL_SIZE, OLD_BARREL_SIZE, RECIPES, 
 import { segItems, setSegItems } from './belts.js';
 import { loadTransport, vehToJSON, unitToJSON } from './transport.js';
 import { stockFish, findBodies, fishToList, fishFromList, poolsToList, poolsFromList } from './fish.js';
+import { animalPoolsToList, animalPoolsFromList } from './animals.js';
 import { loadWorldGen, resetWorldMaps, editsToJSON } from './worldgen.js';
 import { medToJSON, medFromJSON } from './body.js';
 import { exploredToJSON, exploredFromJSON, exploreOldSave } from './explore.js';
@@ -142,7 +143,7 @@ function unpackTiles(s) {
 export function serialize() {
   const gen = !!world.gen;
   return JSON.stringify({
-    v: 3, T: S.T, sandbox: S.sandbox, player: { ...(S.player.tun ? tunnelExit(S.player) : { x: S.player.x, z: S.player.z, h: S.player.h || 0 }), face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed, hp: Math.round(S.player.hp) }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam,
+    v: 3, T: S.T, sandbox: S.sandbox, player: { ...(S.player.tun ? tunnelExit(S.player) : { x: S.player.x, z: S.player.z, h: S.player.h || 0 }), face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed, hp: Math.round(S.player.hp), mags: S.player.mags || {} }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam,
     seed: S.seed, med: medToJSON(), explored: exploredToJSON(), gen: world.gen, edits: gen ? editsToJSON() : undefined, barrel: BARREL_SIZE,
     tiles: gen ? undefined : packTiles(), waterGen: WATER_GEN, links: world.links, marks: world.marks,
     research: { done: [...S.research.done], current: S.research.current, queue: S.research.queue || [], progress: S.research.progress, extra: [...(S.research.extra || [])] }, bps: bpsToJSON(),
@@ -152,7 +153,7 @@ export function serialize() {
     frames: [...world.frames.values()].map(f => [f.x, f.y, f.z]), ents: [...world.ents.values()].map(entToJSON),
     feats: gen ? [] : [...world.feats].map(([k, f]) => [k, f.type, +f.v.toFixed(3)]), ground: world.ground,
     oil: gen ? [] : [...world.oil].map(([k, o]) => [k, +o.yield.toFixed(2)]), roads: [...world.roads], factories: world.factories, facNext: world.facNext,
-    vehicles: world.vehicles.map(vehToJSON), units: world.units.map(u => unitToJSON(u)), routes: world.routes, nextId: world.nextId, fish: fishToList(), fishPools: poolsToList(),
+    vehicles: world.vehicles.map(vehToJSON), units: world.units.map(u => unitToJSON(u)), routes: world.routes, nextId: world.nextId, fish: fishToList(), fishPools: poolsToList(), animals: animalPoolsToList(),
   });
 }
 
@@ -202,7 +203,7 @@ export function loadData(d, asGuest = false) {
   if (!asGuest && (d.barrel ?? OLD_BARREL_SIZE) !== BARREL_SIZE) rebarrel(d);
   S.T = d.T; S.maxTier = d.maxTier; S.sandbox = !!d.sandbox;
   if (!asGuest) {
-    Object.assign(S.player, d.player); loadBars(d.bars, d.hotbar, d.bar); if (d.roadCfg) S.roadCfg = { ...S.roadCfg, ...d.roadCfg }; S.hotbarSeen = new Set(d.hotbarSeen || []); Object.assign(S.cam, d.cam);
+    Object.assign(S.player, d.player, { mags: { ...(d.player.mags || {}) }, reload: null }); loadBars(d.bars, d.hotbar, d.bar); if (d.roadCfg) S.roadCfg = { ...S.roadCfg, ...d.roadCfg }; S.hotbarSeen = new Set(d.hotbarSeen || []); Object.assign(S.cam, d.cam);
     S.player.craft = d.craft || []; S.goalsDone = new Set(d.goalsDone || []); S.remoteInv = d.remoteInv || {};
     if (d.invSlots) inv.loadList(d.invSlots); else { inv.clear(); for (const [k, v] of d.inv || []) inv.add(k, v); }
   }
@@ -267,6 +268,7 @@ export function loadData(d, asGuest = false) {
   stockFish();
   if (d.fish) { fishFromList(d.fish); findBodies(); }
   poolsFromList(d.fishPools, true);
+  animalPoolsFromList(d.animals);   // saves from before animals: every chunk starts nearly full when someone comes near
   if (S.player.veh && !world.vehicles.some(v => v.id === S.player.veh)) S.player.veh = null;
   world.beltDirty = true; world.powerDirty = true; world.fluidDirty = true; world.railDirty = true;
   if (salvaged?.n) {   // what retired things were made of goes back to the engineer

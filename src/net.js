@@ -6,7 +6,7 @@
 // rules (as that player) and streams back world changes plus regular snapshots. Friends also simulate
 // locally between snapshots, so belts and arms keep moving smoothly.
 import { Peer } from 'peerjs';
-import { patchAt, clearPatch, removeFeat, S, world, bus, key, newPlayer, asActor, notify, inv, invGet, invAdd, invGive, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
+import { patchAt, clearPatch, removeFeat, S, world, bus, key, newPlayer, giveStarterKit, asActor, notify, inv, invGet, invAdd, invGive, actor, factoryOf, FAC_COLORS, isResearched } from './state.js';
 import { ITEMS, TECH, MED } from './data.js';
 import { placeDrag, placeOrCraft, turnPending, heal, place, rotateEntity, queueCraft, cancelCraft, fastTransfer, fastTransferMany, dropAt, entityCommand, canPlace, completeResearch, moveItems, shiftMove, linkPoles, editMarks, setFactory, researchAction } from './sim.js';
 import { placeBlueprint, buildBlueprint, removeBlueprint, bpOp, applyBpOp } from './blueprint.js';
@@ -16,7 +16,9 @@ import { applyToBuilding } from './copypaste.js';
 import { medToJSON, medFromJSON, medAction } from './body.js';
 import { roadAt, pasteRoad, placeRoad, applyRoads, placeSignal, placeVehicle, board, routeAction, vehToJSON, unitToJSON, applyVehicles, layConduit, vehicleById } from './transport.js';
 import { fishToList, fishFromList } from './fish.js';
+import { animalsToList, animalsFromList } from './animals.js';
 import { tradeAction, tradeView } from './trade.js';
+import { shoot, reloadGun } from './weapons.js';
 
 const PREFIX = 'depthworks-v1-';
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -116,6 +118,8 @@ function applyAction(op) {
     case 'link': { const msg = linkPoles(op.kind, op.from, op.to); if (msg) notify('toast', msg); break; }
     case 'mark': editMarks(op); break;
     case 'trade': tradeAction(actor, op); break;
+    case 'shoot': shoot(op); break;
+    case 'reload': reloadGun(op.gun); break;
     case 'med': medAction({ id: op.id, do: ['now', 'queue', 'remove', 'move'].includes(op.do) ? op.do : 'now', by: op.by }); break;
   }
   return null;
@@ -186,10 +190,10 @@ function onHostMessage(conn, m) {
     const used = new Set([...S.players.values()].map(p => p.color));
     const p = newPlayer(conn.peer, name, COLORS.find(col => !used.has(col)) ?? COLORS[S.players.size % COLORS.length]);
     const back = S.remoteInv?.[name];
-    if (back) { p.inv.loadAny(back.inv); p.x = back.x; p.z = back.z; if (back.hp > 0) p.hp = back.hp; }
+    if (back) { p.inv.loadAny(back.inv); p.x = back.x; p.z = back.z; if (back.hp > 0) p.hp = back.hp; p.mags = { ...(back.mags || {}) }; }
     else {   // newcomers land next to the host with the same starter kit everyone gets
       p.x = S.player.x + 1.2; p.z = S.player.z + .6;
-      for (const [k, v] of Object.entries({ iron_plate: 8, burner_drill: 1, furnace: 1 })) p.inv.add(k, v);
+      giveStarterKit(p);
     }
     S.players.set(p.id, p);
     net.conns.set(conn.peer, { conn, p, cache: new Map() });
@@ -217,14 +221,14 @@ function dropFriend(id) {
   const c = net.conns.get(id); if (!c) return;
   net.conns.delete(id);
   const p = c.p;
-  (S.remoteInv ||= {})[p.name] = { inv: invToList(p.inv), x: p.x, z: p.z, hp: p.hp };   // their stuff waits for them
+  (S.remoteInv ||= {})[p.name] = { inv: invToList(p.inv), x: p.x, z: p.z, hp: p.hp, mags: p.mags || {} };   // their stuff waits for them
   for (const q of p.craft) for (const [k, n] of Object.entries(q.give || {})) p.inv.add(k, n);
   (S.remoteInv[p.name]).inv = invToList(p.inv);
   S.players.delete(id);
   systemChat(`${p.name} left`);
   bus.emit('players');
 }
-export function rememberFriends() { for (const { p } of net.conns.values()) (S.remoteInv ||= {})[p.name] = { inv: invToList(p.inv), x: p.x, z: p.z }; }
+export function rememberFriends() { for (const { p } of net.conns.values()) (S.remoteInv ||= {})[p.name] = { inv: invToList(p.inv), x: p.x, z: p.z, hp: p.hp, mags: p.mags || {} }; }
 
 // World changes made on the host are mirrored to everyone.
 const op = o => { if (S.net.role === 'host' && net.conns.size && !net.applying) net.ops.push(o); };
@@ -244,6 +248,9 @@ bus.on('signal', kind => op({ o: 'signal', kind, sig: signalJSON() }));
 bus.on('links', () => op({ o: 'links', links: world.links }));
 bus.on('marks', () => op({ o: 'marks', marks: world.marks }));
 bus.on('roads', list => op({ o: 'roads', list }));
+// Shots and what they do to animals: everyone sees everyone's tracers and hits.
+bus.on('shot', s => op({ o: 'shot', s }));
+bus.on('animalfx', f => op({ o: 'afx', f }));
 // News for everyone (a net tearing, say): a toast here and in every friend's browser.
 bus.on('announce', text => { bus.emit('toast', text); op({ o: 'announce', text }); });
 bus.on('routes', () => op({ o: 'routes', routes: world.routes }));
@@ -271,6 +278,7 @@ function hostTick(dt) {
     stats: withStats ? S.stats : undefined, med: withStats ? medToJSON() : undefined,
     veh: world.vehicles.map(vehToJSON), units: withStats ? world.units.map(u => unitToJSON(u, false)) : undefined,
     fish: (net.fishT = (net.fishT || 0) + 1) % 3 === 0 ? fishToList() : undefined,
+    animals: net.fishT % 2 === 0 ? animalsToList() : undefined,
   };
   const states = new Map();
   for (const e of world.ents.values()) states.set(key(e.x, e.y, e.z), entState(e));
@@ -283,7 +291,7 @@ function hostTick(dt) {
     }
     for (const k of c.cache.keys()) if (!states.has(k)) c.cache.delete(k);
     const p = c.p;
-    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, hp: Math.round(p.hp), fac: p.fac, expo: p.expo || {}, pend: (p.pending || []).map(q => ({ ...q })), trade: tradeView(p.id) } });
+    send(c.conn, { ...common, ents, you: { inv: invToList(p.inv), craft: p.craft, mining: p.mining ? { ...p.mining } : null, veh: p.veh, fed: p.fed, hp: Math.round(p.hp), fac: p.fac, expo: p.expo || {}, pend: (p.pending || []).map(q => ({ ...q })), trade: tradeView(p.id), mags: p.mags || {}, reload: p.reload ? { gun: p.reload.gun, left: +(p.reload.until - S.T).toFixed(2) } : null } });
   }
 }
 
@@ -355,6 +363,8 @@ function applyOp(o) {
     case 'marks': world.marks = o.marks; bus.emit('marks'); break;
     case 'roads': applyRoads(o.list); break;
     case 'announce': bus.emit('toast', o.text); break;
+    case 'shot': if (o.s?.by !== S.player.id) bus.emit('shot', o.s); break;   // our own we drew when we fired
+    case 'afx': bus.emit('animalfx', o.f); break;
     case 'routes': world.routes = o.routes || []; bus.emit('routes'); break;
     case 'factories': world.factories = o.factories; world.facNext = o.facNext; bus.emit('factories'); break;
     case 'signal': {
@@ -385,6 +395,8 @@ function applyState(m) {
   S.player.fed = you.fed || 0;
   if (typeof you.hp === 'number') S.player.hp = you.hp;
   S.player.pending = you.pend || [];
+  S.player.mags = you.mags || {};
+  S.player.reload = you.reload ? { gun: you.reload.gun, until: S.T + you.reload.left } : null;
   if (JSON.stringify(S.tradeView ?? null) !== JSON.stringify(you.trade ?? null)) { S.tradeView = you.trade || null; bus.emit('trade'); }
   bus.emit('inv');
   // world
@@ -398,6 +410,7 @@ function applyState(m) {
   S.player.expo = you.expo || {};
   if (m.veh) applyVehicles(m.veh, m.units);
   if (m.fish) fishFromList(m.fish);
+  if (m.animals) animalsFromList(m.animals);
   net.applying = true;
   try {
     for (const o of m.ents) {

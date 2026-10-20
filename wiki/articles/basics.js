@@ -22,6 +22,8 @@ export default [
 <li>…that a [[Hydroelectric power|dam]] on a river gives 2.4 times what it gives on still water?</li>
 <li>…that [[Hazards#Radiation|radiation]] can never take you below half health?</li>
 <li>…that a [[Fishing|fishing net]] strains past one stack of fish and tears at two?</li>
+<li>…that a [[Chime bird|chime bird]]'s glassy feathers ring like bells when it takes off?</li>
+<li>…that a busy [[Animals#Where they come from|factory drives the wildlife out]] of the land round it?</li>
 <li>…that every sound in the game is synthesised in your browser, with no sound files at all?</li>
 </ul></div></div>
 <div class="mp-box"><h2>Recent changes to the game</h2><div class="in">
@@ -30,11 +32,11 @@ export default [
 </div>
 
 <div class="mp-box mp-wide"><h2>Explore by topic</h2><div class="in"><div class="portals">
-<a href="#/Mining">{{icon|drill}}Mining</a><a href="#/Smelting">{{icon|furnace}}Smelting</a><a href="#/Crafting">{{icon|assembler}}Crafting</a><a href="#/Belt_logistics">{{icon|belt}}Belts</a><a href="#/Inserters">{{icon|inserter}}Inserters</a><a href="#/Electricity">{{icon|small_pole}}Electricity</a><a href="#/Fluids">{{icon|pipe}}Fluids</a><a href="#/Oil_processing">{{icon|refinery}}Oil</a><a href="#/Research">{{icon|lab}}Research</a><a href="#/Depth">{{icon|frame}}Depth</a><a href="#/Vehicles">{{icon|truck_diesel}}Vehicles</a><a href="#/Railways">{{icon|locomotive_diesel}}Railways</a><a href="#/Agriculture">{{icon|greenhouse}}Farming</a><a href="#/Biomes">{{icon|crystal}}Biomes</a><a href="#/Multiplayer">{{icon|transmitter}}Co-op</a><a href="#/The_Signal">{{icon|resonance_pack}}The Signal</a>
+<a href="#/Mining">{{icon|drill}}Mining</a><a href="#/Smelting">{{icon|furnace}}Smelting</a><a href="#/Crafting">{{icon|assembler}}Crafting</a><a href="#/Belt_logistics">{{icon|belt}}Belts</a><a href="#/Inserters">{{icon|inserter}}Inserters</a><a href="#/Electricity">{{icon|small_pole}}Electricity</a><a href="#/Fluids">{{icon|pipe}}Fluids</a><a href="#/Oil_processing">{{icon|refinery}}Oil</a><a href="#/Research">{{icon|lab}}Research</a><a href="#/Depth">{{icon|frame}}Depth</a><a href="#/Vehicles">{{icon|truck_diesel}}Vehicles</a><a href="#/Railways">{{icon|locomotive_diesel}}Railways</a><a href="#/Agriculture">{{icon|greenhouse}}Farming</a><a href="#/Biomes">{{icon|crystal}}Biomes</a><a href="#/Animals">{{icon|cow}}Animals</a><a href="#/Weapons">{{icon|pistol}}Weapons</a><a href="#/Multiplayer">{{icon|transmitter}}Co-op</a><a href="#/The_Signal">{{icon|resonance_pack}}The Signal</a>
 </div></div></div>
 
 <div class="mp-box mp-wide"><h2>Everything, in one place</h2><div class="in">
-<p>[[List of items]] · [[List of buildings]] · [[List of recipes]] · [[List of technologies]] · [[Biomes]] · [[Special:AllPages|All pages]]</p>
+<p>[[List of items]] · [[List of buildings]] · [[List of recipes]] · [[List of technologies]] · [[Biomes]] · [[Animals]] · [[Special:AllPages|All pages]]</p>
 </div></div>`,
 },
 {
@@ -50,15 +52,17 @@ Two ideas set it apart. The first is '''[[Depth|depth]]''': the world has seven 
 
 {{main|Beginner's guide}}
 
-A game begins at the landing site with a few iron plates, a {{i|burner_drill}} and a {{i|furnace}}. The player mines coal and stone by hand, sets the drill on iron ore so it feeds the furnace, and crafts more machines from the plates it makes. From there the factory grows the way it does in other automation games: [[Smelting|furnaces]] turn ore into plates, [[Crafting|assemblers]] turn plates into parts, [[Belt logistics|belts]] and [[Inserters|inserters]] move everything between them, and [[Research|labs]] turn [[Science packs|science packs]] into new technology.
+A game begins at the landing site with a few iron plates, a {{i|burner_drill}}, a {{i|furnace}} and a {{i|pistol}}. The player mines coal and stone by hand, sets the drill on iron ore so it feeds the furnace, and crafts more machines from the plates it makes. From there the factory grows the way it does in other automation games: [[Smelting|furnaces]] turn ore into plates, [[Crafting|assemblers]] turn plates into parts, [[Belt logistics|belts]] and [[Inserters|inserters]] move everything between them, and [[Research|labs]] turn [[Science packs|science packs]] into new technology.
 
 The player's own body matters. The [[Engineer|engineer]] has health and stamina, can sprint, gets hurt by vehicles, and is slowed or weakened by the [[Hazards|hazards]] of harsher [[Biomes|biomes]]. [[Food]] and [[Medical research|medical upgrades]] make them stronger.
+
+The world is alive: [[Animals|animals]] graze, wander and sleep in every biome, and run from engineers, vehicles and gunfire. They are harmless, since the game has no enemies, and can be [[Hunting|hunted]] with [[Weapons|guns]] for meat and other materials, or sheared and caught by hand.
 
 Later systems include [[Fluids|fluids]] and [[Oil processing|oil refining]]; [[Vehicles|vehicles]] built from an engine and a frame; [[Roads|roads]], [[Railways|railways]] and [[Shipping|shipping]] run by [[Routes and depots|routes]]; [[Agriculture|farming]] in greenhouses; [[Hydroelectric power|dams]] and [[Nuclear power|uranium reactors]]; several separate [[Factories|factories]] in one world; and a [[Map|map]] that only shows what has been explored.
 
 == Setting ==
 
-The game has very little story until its end. The world is generated from a seed and made chunk by chunk as it is explored; it can be anywhere from 512 to 65,536 tiles across. It holds eleven [[Biomes|biomes]], from temperate meadows near the landing site to the glass desert, the ashlands and the Pripyatic wastes far away. Deep under the ground lie ''resonant crystal'' and ''abyssal ore'', the materials of the endgame.
+The game has very little story until its end. The world is generated from a seed and made chunk by chunk as it is explored; it can be anywhere from 512 to 65,536 tiles across. It holds eleven [[Biomes|biomes]], from temperate meadows near the landing site to the glass desert, the ashlands and the Pripyatic wastes far away, each with [[Animals|animals]] of its own. Deep under the ground lie ''resonant crystal'' and ''abyssal ore'', the materials of the endgame.
 
 At the end of the [[Research|research tree]], Signal theory lets the player build a {{i|transmitter}}. Every pulse it sends describes the working machines around it. Something answers. It speaks only in the mechanisms it has heard from you, so what it can say grows with what you show it. See [[The Signal]].
 
@@ -93,7 +97,7 @@ Depthworks is written in plain JavaScript modules with no build step, using Thre
 
 == 1. The landing site ==
 
-You land with '''8 {{i|iron_plate|iron plates}}''', a {{i|burner_drill}} and a {{i|furnace}}. Every world places the same four small starter deposits close by: '''iron ore''' to the west-north-west, '''copper ore''' to the north-east, '''coal''' just to the south and '''stone''' to the south-east. Ore barely shows on untouched ground (a few stones in the soil), so look for it on the minimap or press {{k|map}} for the [[Map|map]].
+You land with '''8 {{i|iron_plate|iron plates}}''', a {{i|burner_drill}}, a {{i|furnace}}, and a {{i|pistol}} with 30 {{i|pistol_ammo|pistol rounds}} (10 of them already loaded). Every world places the same four small starter deposits close by: '''iron ore''' to the west-north-west, '''copper ore''' to the north-east, '''coal''' just to the south and '''stone''' to the south-east. Ore barely shows on untouched ground (a few stones in the soil), so look for it on the minimap or press {{k|map}} for the [[Map|map]].
 
 Walk with {{kbd|W}}{{kbd|A}}{{kbd|S}}{{kbd|D}}. Hold {{kbd|Shift}} to sprint while your stamina lasts.
 
@@ -122,6 +126,8 @@ Hold right-click on a tree to fell it with your [[Tools|axe]]. Wood is fuel, and
 Press {{k|inventory}} to open your inventory and the crafting menu. Click a recipe to craft one, right-click for five, Shift+click for as many as you can. '''Missing parts are crafted for you''': a burner drill needs gears, and the game makes the gears from your plates first. Set up a few drill-and-furnace pairs on iron, then do the same on copper. A drill on stone feeding a furnace makes {{i|brick|stone bricks}}.
 
 Burner buildings need refuelling now and then. Keep them fed by hand at first; later a [[Belt logistics|belt]] of coal and some [[Inserters|burner inserters]] do it for you.
+
+{{tip|Animals graze round the landing site. Nothing attacks you, so you can ignore them, but a cow shot with your pistol gives 4 {{i|raw_meat}}: cook it in a furnace for [[Food|food]] that makes you walk and mine faster. Hold the pistol and left-click to fire. Hold right-click on a sheep to shear it, or on a chicken to catch it. See [[Hunting]].}}
 
 == 5. Copper ==
 
@@ -193,8 +199,8 @@ Along the way: [[Oil processing|oil]], [[Vehicles|vehicles]], [[Railways|trains]
 == Mouse ==
 
 ! Input !! What it does
-| {{kbd|LMB}} || Build what is in your hand (drag to lay belts, pipes, roads or a line of poles); open a building; click another engineer to trade with them
-| hold {{kbd|RMB}} || Mine: trees with the axe, ore and rock with the pickaxe, weedy patches with the shovel, and take buildings back
+| {{kbd|LMB}} || Build what is in your hand (drag to lay belts, pipes, roads or a line of poles); open a building; click another engineer to trade with them. With a [[Weapons|gun]] in hand: fire at the cursor (hold it down for automatic guns). With food in hand: eat
+| hold {{kbd|RMB}} || Mine: trees with the axe, ore and rock with the pickaxe, weedy patches with the shovel, and take buildings back. On an [[Animals|animal]]: shear a sheep, or catch a small one
 | {{kbd|Ctrl}} + hold {{kbd|RMB}} || Take a single tile off a greenhouse or a path
 | {{kbd|Ctrl}} + {{kbd|LMB}} || Move items: the held stack into the building (ingredients to inputs, fuel to fuel), or its output into your inventory
 | {{kbd|Shift}} + {{kbd|LMB}} || With a building in hand: plan it as a blueprint. With an empty hand: paste copied settings, or select buildings
@@ -209,7 +215,7 @@ Along the way: [[Oil processing|oil]], [[Vehicles|vehicles]], [[Railways|trains]
 * '''Drag''' a stack from one slot to another.
 * '''Right-drag''' to take half a stack.
 * {{kbd|Shift}} + click to send a stack across to the other side (your inventory ↔ the open building).
-* Click any usable item (a building, road, vehicle, cable, signal or food) to put it in your hand.
+* Click any usable item (a building, road, vehicle, cable, signal, food or gun) to put it in your hand.
 * In crafting: click for one, right-click for five, {{kbd|Shift}} + click for as many as you can.
 
 == All key bindings ==
@@ -231,6 +237,12 @@ This table is read from the game's own defaults.
 * {{k|pitch}} sets an inserter's pitch (level, lift up a layer, drop down a layer), a lift's direction, or angles a belt up or down a layer.
 
 Leaving depth mode turns the camera back to face north, centred on you.
+
+== Guns ==
+
+{{main|Weapons}}
+
+With a gun in hand the cursor is a crosshair. {{kbd|LMB}} fires at it; automatic guns keep firing while you hold it. {{k|rotate}} reloads early (an empty gun reloads by itself).
 
 == Vehicles ==
 
@@ -261,6 +273,8 @@ Leaving depth mode turns the camera back to face north, centred on you.
 : {{k|signal}} opens the log of the [[The Signal|alien conversation]] once you have a transmitter.
 ; Crafting queue
 : What you are crafting by hand, in a corner. A cancelled craft gives its materials back.
+; The hand
+: Above the quickbar, what you hold and how to use it. For a [[Weapons|gun]]: the rounds loaded, the ammunition you carry, and ''reloading…'' while it reloads.
 
 == Windows ==
 
@@ -286,6 +300,8 @@ Clicking a building opens its panel next to your inventory, with its typed slots
 : Poles show their wires and their blue supply area while you hold a pole. A flashing plug on a machine means no power (red) or too little (yellow).
 ; Placement preview
 : The building in your hand is drawn solid, tinted green where it fits and red where it doesn't. With {{kbd|Shift}} held it is drawn stippled, as a [[Blueprints|blueprint]].
+; Gunfire
+: Every shot draws a short tracer and a muzzle flash, and lights the ground for a moment at night. With a gun in hand the cursor becomes a crosshair.
 
 == The menu ==
 
@@ -351,7 +367,7 @@ At night every engineer carries a small pool of light, so you can always see wha
 
 The engineer carries 80 slots. Each slot holds one stack of one item; [[List of items|stack sizes]] differ (50 ore, 100 plates, 200 cables and circuits…). Items that don't fit when you take them out of a building spill onto the ground; press and hold {{k|pickup}} to pick up items near you, from the ground or from belts.
 
-[[Tools]] (axe, pickaxe and shovel) are not items: you always carry them, and research improves them.
+[[Tools]] (axe, pickaxe and shovel) are not items: you always carry them, and research improves them. [[Weapons|Guns]] are items: every engineer lands with a {{i|pistol}}, and holds a gun in their hand like anything else.
 
 == Details of other engineers ==
 
@@ -464,6 +480,7 @@ Each [[Biomes|biome]] has its own mix of ores, patch sizes and patterns (blobs, 
 * '''Crude oil''': dark patches on the ground, pumped by a {{i|oil_pump}}. Wells never run dry but slow down to 20%. See [[Oil processing]].
 * '''Seeds''': dug from weedy patches with the shovel. See [[Agriculture]].
 * '''Fish''': in every body of water. See [[Fishing]].
+* '''Animals''': meat, leather, wool, feathers and stranger things, from hunting, shearing and catching. See [[Animals]].
 
 == See also ==
 
@@ -597,7 +614,7 @@ The {{i|furnace|stone furnace}} burns fuel; the electric ones need power instead
 
 {{gen|smelting}}
 
-Raw fish can be cooked in any furnace, which makes it much better [[Food|food]].
+Raw fish and raw meat can be cooked in any furnace, which makes them much better [[Food|food]]. Stone in a furnace always makes bricks: {{i|gunpowder}} is crafted, not smelted.
 
 == Layouts ==
 
@@ -643,14 +660,20 @@ Vehicle engines and the {{i|fuel_generator}} burn liquid fuels from their tanks 
 ! Food !! Heals !! Well fed for !! From
 | {{i|raw_fish}} || 15 || 60 s || [[Fishing]]
 | {{i|cooked_fish}} || 40 || 180 s || raw fish in a furnace
+| {{i|raw_meat}} || 15 || 70 s || [[Hunting]]
+| {{i|cooked_meat}} || 45 || 200 s || raw meat in a furnace
+| {{i|egg}} || 8 || 30 s || laid on the ground by chickens and ducks
 | Any crop || 6 || 25 s || [[Agriculture|greenhouses]]
 
 While well fed you walk 25% faster, mine 50% faster, and heal 6 health a second instead of 2. Eating again adds to the time left.
 
+Cooked meat is the best food in the game. See [[Hunting]] and [[Animals]] for where meat and eggs come from.
+
 == See also ==
 
 * [[Engineer]]
-* [[Fishing]]`,
+* [[Fishing]]
+* [[Hunting]]`,
 },
 {
   title: 'Glossary', desc: 'The words used in the game and on this wiki', cats: ['Guides'], icon: 'lens',
@@ -680,12 +703,16 @@ While well fed you walk 25% faster, mine 50% faster, and heal 6 health a second 
 : How much of a biome's [[Hazards|hazard]] you have taken in. It builds up over 12 s and fades over 12 s.
 ; Factory
 : A separate network of buildings in one world. See [[Factories]].
+; Farm animal
+: A tame [[Animals|animal]] (cows, sheep, chickens, pigs, goats, ducks): it lets you walk up to it and only runs from someone sprinting, a vehicle or a shot.
 ; Glyph
 : A word of the alien language, one per kind of mechanism. See [[The Signal]].
 ; Hollow frame
 : A frame you can build inside and on top of. See [[Depth]].
 ; Layer
 : A building level, from −2 (deep rock) to 4 (four frames up). Not to be confused with deposit layers.
+; Magazine
+: The rounds loaded in a gun. It refills from your ammunition when it runs dry, or when you reload. See [[Weapons]].
 ; Line
 : A run of belt tiles simulated as one, with its own name, filters and augments. See [[Belt logistics#Belt lines|belt lines]].
 ; Live
@@ -696,6 +723,8 @@ While well fed you walk 25% faster, mine 50% faster, and heal 6 health a second 
 : Tiers earned by keeping machines busy; they open layers and some research. See [[Precision]].
 ; Pulse
 : One sentence sent by a transmitter, costing one resonance pack.
+; Shearing
+: Taking a sheep's wool by hand (hold right-click on it). It grows back in 4 minutes.
 ; Side-loading
 : Feeding a belt into the side of another, which puts items on the near lane.
 ; Sweep
@@ -741,6 +770,14 @@ While well fed you walk 25% faster, mine 50% faster, and heal 6 health a second 
 * Eat cooked fish before long walks: 25% faster walking for three minutes.
 * Harsh biomes never kill you; hazards only slow you down, and they fade a few seconds after you leave.
 * A radar keeps 48 tiles of the map up to date and slowly explores out to 160.
+
+== Hunting ==
+
+* Shear sheep rather than shooting them: the same sheep gives wool again 4 minutes later.
+* Catch chickens by hand: no ammunition spent, and they hold still for you.
+* The first shot scares everything within 16 tiles. Make it count, or bring a rifle.
+* Hunt away from your factory: busy land holds no animals.
+* Cook meat before you eat it: cooked meat heals three times as much.
 
 == Logistics ==
 

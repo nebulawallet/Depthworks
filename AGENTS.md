@@ -46,6 +46,8 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 | `src/fluids.js` | Fluid networks: fluid boxes per entity, pipes, underground pipes, pumps, valves, tanks, machine ports, throughput, the steam chain |
 | `src/transport.js` | Roads (tile layer), rails and signal blocks, vehicles and driving, A* over road/rail/water tiles, the shared path follower, depots, routes and schedules |
 | `src/fish.js` | Water bodies, fish and their populations, fishing nets on boats |
+| `src/animals.js` | Animals (`ANIMALS` in data.js): populations per chunk with logistic regrowth and busy-factory pressure, live animals near engineers (spawning, wandering in groups, steering round water, buildings, frames and roads, fleeing, sleeping), hunting, catching and shearing, eggs, saves (`animalPoolsToList`) and snapshots (`animalsToList`) |
+| `src/weapons.js` | Guns (`WEAPONS` in data.js): `shoot` (the host traces each bullet, stopped by buildings and trees, and hurts the first animal), magazines per engineer (`p.mags`), reloading (`gunTick`), the `trace` guests draw their own shots with |
 | `src/logistics.js` | The logistics window (L): one route editor and map for rail, road and sea, plus the belt lines tab (line editor, map, network diagram) |
 | `src/net.js` | Co-op: `doAction`, hosting/joining, op broadcast, snapshots, chat |
 | `src/save.js` | Save slots, export/import files, the entity JSON format (shared with net sync), old-save migration |
@@ -192,6 +194,15 @@ so players can rebind them. Add new actions to `ACTIONS`.
     inventories and applied in one step on the host, or not at all.
 42. **The placement preview is solid and tinted** (`setPreview(root, 'ok' | 'bad' | 'bp')`); only planning a blueprint
     (Shift, or a blueprint in hand) uses the stippled look, through the same dither path as blueprints.
+
+43. **Animals are like fish:** every chunk keeps counts (`world.animalPools`); only animals near engineers are objects
+    (`world.animals`), and only the host moves, spawns or kills them (`animalsTick`). Anything that kills or takes one goes
+    through `killAnimal` / `shearAnimal` (animals.js) so counts stay right and drops reach the right engineer. Animals never
+    stand on water, buildings, frames or roads (`free`): keep it that way when adding things they should avoid.
+44. **Guns are items with a `weapon` entry** (`WEAPONS`). Firing is the `shoot` action (`doAction`); the host decides hits.
+    Magazines live on the engineer (`p.mags`, saved and synced), never on the item stack. Bullets hit animals only.
+    Shots and animal effects are bus events (`shot`, `animalfx`) that net.js mirrors to everyone; a guest draws its own
+    shots at once and skips the host's echo of them.
 
 ## Style
 

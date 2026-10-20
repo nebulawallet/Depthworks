@@ -86,6 +86,21 @@ export const ITEMS = {
   uranium_fuel_cell: { name: 'Uranium fuel cell', color: 0x9be37a, emissive: 0x2a6a12, shape: 'cell', nuclear: 4000, desc: 'Fuel for a uranium reactor only: 4000 MJ, a thousand pieces of coal.' },
   chlorophyll:    { name: 'Chlorophyll', color: 0x3ad84a, emissive: 0x0a3a10, shape: 'vial', desc: 'Pressed from seeds. Goes into green lamps, terrestrial science packs, greenhouses and medical research.' },
   terrestrial_pack: { name: 'Terrestrial pack', color: 0xb8d84a, shape: 'pack', desc: 'Science of living things: research and the medical lab use it.' },
+  // from animals (see ANIMALS): meat and eggs are food; the rest wait for recipes of their own
+  raw_meat:       { name: 'Raw meat', color: 0xc85a5a, shape: 'meat', food: 70, heal: 15, desc: 'Food, from hunting. Hold it and click to eat: heals a little, and you walk, mine and heal faster for a while. Cook it in a furnace for more.' },
+  cooked_meat:    { name: 'Cooked meat', color: 0x9a5a32, shape: 'meat', food: 200, heal: 45, desc: 'Food. Hold it and click to eat: heals, and you walk, mine and heal faster for over three minutes.' },
+  egg:            { name: 'Egg', color: 0xf0e6d0, shape: 'egg', food: 30, heal: 8, desc: 'Food. Chickens and ducks lay them on the ground now and then: F picks them up. Hold one and click to eat it.' },
+  wool:           { name: 'Wool', color: 0xe8e4da, shape: 'wool', desc: 'Shorn from sheep (hold right-click on one) or taken from sheep and musk oxen you hunt. Nothing is made from it yet: keep it for the recipes to come.' },
+  leather:        { name: 'Leather', color: 0x9a6a3a, shape: 'hide', desc: 'From hunting cows, deer, horses, goats and other animals with a hide. Nothing is made from it yet: keep it for the recipes to come.' },
+  feathers:       { name: 'Feathers', color: 0xe8ecf0, shape: 'feather', desc: 'From birds: chickens, ducks, herons and chime birds. Nothing is made from them yet: keep them for the recipes to come.' },
+  ember_chitin:   { name: 'Ember chitin', color: 0xe8603a, emissive: 0x6a1a08, shape: 'chitin', desc: 'Shell plates of the ember beetles and cinder moths of the Ashlands, still warm. Nothing is made from it yet: keep it for the recipes to come.' },
+  glow_slime:     { name: 'Glow slime', color: 0x7ef6c8, emissive: 0x1a6a5a, shape: 'slime', desc: 'From the glowing snails and spore moths of the Glowcap hollows. Nothing is made from it yet: keep it for the recipes to come.' },
+  crystal_shell:  { name: 'Crystal shell', color: 0x9fe8f2, emissive: 0x1d6a77, shape: 'shell', desc: 'The shells of the crystal crabs of the Singing steppe. Nothing is made from it yet: keep it for the recipes to come.' },
+  // weapons (see WEAPONS) and what they fire
+  gunpowder:      { name: 'Gunpowder', color: 0x3a3a40, shape: 'powder', desc: 'Two coal and a stone make two, by hand or in an assembler (not in a furnace). Goes into every kind of ammunition.' },
+  pistol_ammo:    { name: 'Pistol rounds', color: 0xd8a84a, shape: 'ammo', desc: 'Ammunition for the pistol and the SMG.' },
+  shotgun_shells: { name: 'Shotgun shells', color: 0xc84a3a, shape: 'shell_ammo', desc: 'Ammunition for the shotgun: each shell fires a spread of pellets.' },
+  rifle_ammo:     { name: 'Rifle rounds', color: 0xc8b07a, shape: 'ammo', desc: 'Ammunition for the bolt-action rifle and the assault rifle. Only an assembler can make it.' },
 };
 for (const id of ROAD_IDS) ITEMS[id] = { name: ROADS[id].name, color: (ROADS[id].paint[0] << 16) | (ROADS[id].paint[1] << 8) | ROADS[id].paint[2], shape: 'road', road: id,
   desc: ROADS[id].desc ?? `Hold it and drag to lay road. The road panel next to your hand sets width, lanes, markings and sidewalks. Trucks drive at ${Math.round(ROADS[id].speed * 100)}% speed on it.` };
@@ -213,6 +228,121 @@ export const TOOLS = {
   shovel: { name: 'Shovel', color: 0xc8a050, tech: 'soil_science', speed: [1.5, 2.2, 3], radius: [1, 1.8, 2.6], packs: [['red_pack', 'green_pack'], ['red_pack', 'green_pack', 'blue_pack'], ['red_pack', 'green_pack', 'blue_pack', 'terrestrial_pack']],
     desc: 'Digs up weedy patches for seeds. Hold right-click on one.' },
 };
+
+// ---------------------------------------------------------------- weapons
+// Guns are items held in the hand: with one in hand, left-click fires at the cursor (holding it fires again and again
+// for `auto` guns). `rate`: shots a second; `dmg`: damage a bullet (a pellet for the shotgun); `pellets`: bullets a
+// shot; `spread`: degrees either side the bullets wander; `range` in tiles; `mag`: rounds a magazine holds; `reload`:
+// seconds to fill it again from the ammunition you carry, which happens by itself when it runs empty. Bullets only
+// ever hit animals: buildings and trees stop them.
+export const WEAPONS = {
+  pistol:        { name: 'Pistol', ammo: 'pistol_ammo', rate: 3, dmg: 12, pellets: 1, spread: 1.5, range: 14, mag: 10, reload: 1.1, color: 0x5c6470, desc: 'The gun every engineer lands with. Semi-automatic: one shot a click.' },
+  shotgun:       { name: 'Shotgun', ammo: 'shotgun_shells', rate: 1, dmg: 6, pellets: 8, spread: 9, range: 8, mag: 6, reload: 2.2, color: 0x7a5a3a, desc: 'Eight pellets in a spread: close up, it fells most animals with one shell.' },
+  rifle:         { name: 'Bolt-action rifle', ammo: 'rifle_ammo', rate: 1.25, dmg: 70, pellets: 1, spread: 0, range: 30, mag: 5, reload: 2, color: 0x6a4a2a, desc: 'Slow and dead accurate, and it reaches furthest: drops most animals in one shot.' },
+  smg:           { name: 'SMG', ammo: 'pistol_ammo', rate: 10, dmg: 7, pellets: 1, spread: 5, range: 12, mag: 30, reload: 1.6, auto: true, color: 0x3a3e46, desc: 'Fully automatic: hold the button. Eats pistol rounds fast.' },
+  assault_rifle: { name: 'Assault rifle', ammo: 'rifle_ammo', rate: 7, dmg: 14, pellets: 1, spread: 2.5, range: 22, mag: 30, reload: 2.5, auto: true, color: 0x4a5040, desc: 'Fully automatic, accurate and long-reaching: the all-rounder.' },
+};
+for (const [id, w] of Object.entries(WEAPONS)) ITEMS[id] = { name: w.name, color: w.color, shape: 'gun', weapon: id,
+  desc: `${w.desc} Hold it and left-click to fire at the cursor${w.auto ? ' (hold the button)' : ''}. Fires ${ITEMS[w.ammo].name.toLowerCase()}.` };
+// Every engineer starts with these (a new world, and anyone joining one for the first time).
+export const STARTER_KIT = { iron_plate: 8, burner_drill: 1, furnace: 1, pistol: 1, pistol_ammo: 30 };
+
+// ---------------------------------------------------------------- animals
+// Animals live on the ground in every biome (see animals.js). `biomes`: how common each is where it lives (weights, like
+// a biome's trees); a chunk holds about ANIMAL_RULES.density animals per tile per unit of weight. `group`: how many keep
+// together. `hp`: health (bullets do their gun's damage); `walk` and `run`: speeds in tiles a second; `flee`: how close
+// an engineer comes before it runs (farm animals, `tame`, only run from someone sprinting, a vehicle or a shot, and just
+// step aside otherwise); `active`: when it is up and about ('day', 'night' or 'both'); it sleeps the rest of the time.
+// `r`: how big it is to hit. `drops`: what it gives when killed (or caught by hand, when it has `catch`); `shear`: what
+// shearing it gives (it grows back in ANIMAL_RULES.regrow seconds); `eggs`: it lays these on the ground now and then.
+// `light`: it glows at night. `look` is its model (makeAnimal in models.js): a shape and its sizes and colours.
+export const ANIMALS = {
+  cow: { name: 'Cow', biomes: { meadow: 3 }, group: [2, 4], hp: 70, walk: .7, run: 4, flee: 3, tame: true, active: 'day', r: .42,
+    drops: { raw_meat: 4, leather: 2 }, desc: 'Black and white, slow and calm.',
+    look: { shape: 'quad', body: [.36, .32, .78], leg: .3, legW: .09, head: [.22, .22, .28], neck: .1, horns: 'short', tail: 'thin', ears: .07, col: 0xf0ece4, spots: 0x2a2624, hoof: 0x3a3430, accent: 0xd8d0b8 } },
+  sheep: { name: 'Sheep', biomes: { meadow: 3, steppe: 2, taiga: 1.5 }, group: [3, 6], hp: 30, walk: .6, run: 4.5, flee: 3, tame: true, active: 'day', r: .32,
+    drops: { raw_meat: 2, wool: 1 }, shear: { wool: 2 }, desc: 'Woolly. Shear it for wool (hold right-click on it); the wool grows back.',
+    look: { shape: 'quad', body: [.3, .26, .48], leg: .2, legW: .06, head: [.13, .15, .18], neck: .04, tail: 'stub', ears: .05, wool: 0xf2eee4, col: 0xd8d0c0, head2: 0x2a2624, leg2: 0x2a2624 } },
+  chicken: { name: 'Chicken', biomes: { meadow: 2 }, group: [3, 5], hp: 6, walk: .5, run: 3.5, flee: 2, tame: true, active: 'day', r: .2, catch: true,
+    drops: { raw_meat: 1, feathers: 2 }, eggs: 'egg', desc: 'Lays eggs on the ground now and then. Small and slow: catch it by hand.',
+    look: { shape: 'bird', body: [.16, .16, .22], leg: .1, neck: .08, head: [.09, .1, .1], beak: 0xe8b03a, comb: 0xd83a3a, tail: 'fan', col: 0xf4f0e6, leg2: 0xe8b03a } },
+  rabbit: { name: 'Rabbit', biomes: { meadow: 2, forest: .5 }, group: [1, 3], hp: 8, walk: .8, run: 6, flee: 6, active: 'both', r: .18, catch: true,
+    drops: { raw_meat: 1, leather: 1 }, desc: 'Quick and wary: you have to sprint to catch one.',
+    look: { shape: 'quad', hop: true, body: [.14, .14, .24], leg: .06, legW: .05, head: [.1, .1, .12], neck: .03, ears: .14, earUp: true, tail: 'puff', col: 0x9a8268, accent: 0xf0ece4 } },
+  pig: { name: 'Pig', biomes: { forest: 2.5 }, group: [2, 4], hp: 45, walk: .6, run: 4, flee: 3, tame: true, active: 'day', r: .36,
+    drops: { raw_meat: 4, leather: 1 }, desc: 'Roots about under the trees.',
+    look: { shape: 'quad', body: [.32, .28, .58], leg: .16, legW: .08, head: [.2, .19, .18], neck: 0, snout: 0xe89aa0, ears: .07, tail: 'curl', col: 0xf0b0b0, hoof: 0x8a5a5a } },
+  deer: { name: 'Deer', biomes: { forest: 2, taiga: .8 }, group: [2, 5], hp: 45, walk: .8, run: 7, flee: 9, active: 'both', r: .36,
+    drops: { raw_meat: 3, leather: 2 }, desc: 'Shy and fast: it bolts long before you get close.',
+    look: { shape: 'quad', body: [.26, .26, .62], leg: .42, legW: .06, head: [.13, .15, .24], neck: .26, antlers: 0xd8c8a8, ears: .08, tail: 'stub', col: 0xa86a3a, accent: 0xf0e6d0, spots: 0xe8d8b8 } },
+  fox: { name: 'Fox', biomes: { forest: 1, meadow: .4 }, group: [1, 1], hp: 20, walk: .9, run: 6.5, flee: 7, active: 'both', r: .22,
+    drops: { leather: 1 }, desc: 'Alone, sly, out at all hours.',
+    look: { shape: 'quad', body: [.16, .16, .4], leg: .16, legW: .05, head: [.13, .12, .2], neck: .06, ears: .09, earUp: true, tail: 'bushy', col: 0xd8682a, accent: 0xf4f0e6, leg2: 0x2a2624 } },
+  goat: { name: 'Goat', biomes: { steppe: 2.5 }, group: [2, 5], hp: 35, walk: .7, run: 5, flee: 3, tame: true, active: 'day', r: .3,
+    drops: { raw_meat: 2, leather: 1 }, desc: 'Sure-footed and stubborn, with a beard.',
+    look: { shape: 'quad', body: [.24, .24, .46], leg: .26, legW: .06, head: [.12, .15, .2], neck: .14, horns: 'curl', beard: true, ears: .06, tail: 'stub', col: 0xc8bca8, accent: 0x8a7a62 } },
+  wild_horse: { name: 'Wild horse', biomes: { steppe: 1.5, pripyat: 1.5 }, group: [3, 6], hp: 80, walk: .9, run: 7.5, flee: 8, active: 'day', r: .42,
+    drops: { raw_meat: 4, leather: 3 }, desc: 'Herds of them roam the open plains, and the wastes.',
+    look: { shape: 'quad', body: [.3, .32, .8], leg: .46, legW: .08, head: [.15, .18, .34], neck: .34, mane: 0x3a2618, ears: .07, tail: 'long', col: 0x8a5a32, hoof: 0x2a2624 } },
+  marmot: { name: 'Marmot', biomes: { steppe: 1.5 }, group: [2, 4], hp: 10, walk: .5, run: 3.5, flee: 5, active: 'day', r: .18,
+    drops: { raw_meat: 1, leather: 1 }, desc: 'Sits up to look around, then runs.',
+    look: { shape: 'quad', body: [.16, .14, .26], leg: .05, legW: .05, head: [.11, .1, .1], neck: .02, ears: .04, tail: 'stub', col: 0x9a7a52, accent: 0x6a5238 } },
+  moose: { name: 'Moose', biomes: { taiga: 1.5 }, group: [1, 2], hp: 140, walk: .7, run: 5.5, flee: 7, active: 'both', r: .5,
+    drops: { raw_meat: 6, leather: 3 }, desc: 'Huge and heavy. A rifle helps.',
+    look: { shape: 'quad', body: [.4, .4, .9], leg: .52, legW: .1, head: [.18, .2, .36], neck: .2, antlers: 0xc8b898, palm: true, ears: .08, tail: 'stub', col: 0x4a3424, leg2: 0x7a6a5a } },
+  snow_hare: { name: 'Snow hare', biomes: { taiga: 1.5, tundra: 1 }, group: [1, 2], hp: 8, walk: .8, run: 6, flee: 6, active: 'both', r: .18, catch: true,
+    drops: { raw_meat: 1, leather: 1 }, desc: 'White as snow. Quick: sprint to catch one.',
+    look: { shape: 'quad', hop: true, body: [.15, .15, .26], leg: .06, legW: .05, head: [.1, .1, .12], neck: .03, ears: .15, earUp: true, tail: 'puff', col: 0xf2f4f8, accent: 0x2a2624 } },
+  duck: { name: 'Duck', biomes: { marsh: 2.5 }, group: [3, 6], hp: 6, walk: .5, run: 3, flee: 2, tame: true, active: 'day', r: .2, catch: true,
+    drops: { raw_meat: 1, feathers: 2 }, eggs: 'egg', desc: 'Waddles round the fen. Lays eggs; easy to catch.',
+    look: { shape: 'bird', body: [.17, .14, .26], leg: .05, neck: .1, head: [.09, .09, .11], beak: 0xe8a03a, bill: true, tail: 'stub', col: 0x8a7a5a, head2: 0x2a7a4a, leg2: 0xe8a03a } },
+  frog: { name: 'Frog', biomes: { marsh: 2 }, group: [1, 3], hp: 4, walk: .4, run: 2.5, flee: 2.5, active: 'both', r: .14, catch: true,
+    drops: { raw_meat: 1 }, desc: 'Hops away from you, not very far.',
+    look: { shape: 'frog', body: [.14, .08, .16], col: 0x5a9a3a, accent: 0xe8e0a0 } },
+  heron: { name: 'Heron', biomes: { marsh: 1 }, group: [1, 1], hp: 15, walk: .4, run: 4, flee: 8, active: 'day', r: .26,
+    drops: { feathers: 3, raw_meat: 1 }, desc: 'Stands still in the shallows on long legs.',
+    look: { shape: 'bird', body: [.14, .16, .3], leg: .4, neck: .3, head: [.07, .08, .1], beak: 0xe0c03a, long: true, tail: 'stub', col: 0x9aa4b0, head2: 0xf0f0f0, leg2: 0x5a5a4a } },
+  lizard: { name: 'Lizard', biomes: { desert: 2 }, group: [1, 2], hp: 12, walk: .6, run: 5, flee: 4, active: 'day', r: .18,
+    drops: { leather: 1, raw_meat: 1 }, desc: 'Basks on the warm sand by day.',
+    look: { shape: 'lizard', body: [.12, .06, .3], col: 0xb8944a, accent: 0x6a8a4a } },
+  fennec: { name: 'Fennec fox', biomes: { desert: 1.5 }, group: [1, 2], hp: 15, walk: .9, run: 6.5, flee: 7, active: 'night', r: .18,
+    drops: { leather: 1 }, desc: 'A little sand fox with huge ears, out only at night.',
+    look: { shape: 'quad', body: [.13, .13, .3], leg: .13, legW: .045, head: [.11, .1, .14], neck: .05, ears: .13, earUp: true, wide: true, tail: 'bushy', col: 0xe8c890, accent: 0xf4f0e6 } },
+  musk_ox: { name: 'Musk ox', biomes: { tundra: 2 }, group: [3, 6], hp: 140, walk: .5, run: 4.5, flee: 5, active: 'both', r: .48,
+    drops: { raw_meat: 5, leather: 2, wool: 3 }, desc: 'Shaggy herds that stand together against the cold.',
+    look: { shape: 'quad', body: [.42, .36, .74], leg: .26, legW: .1, head: [.2, .2, .24], neck: .06, horns: 'ox', shag: 0x2e2018, ears: .04, tail: 'stub', col: 0x5a4030, head2: 0x3a2a20, accent: 0xc8b090, leg2: 0xd8c8a8 } },
+  arctic_fox: { name: 'Arctic fox', biomes: { tundra: 1 }, group: [1, 1], hp: 20, walk: .9, run: 6.5, flee: 7, active: 'both', r: .22,
+    drops: { leather: 1 }, desc: 'White, wary and alone.',
+    look: { shape: 'quad', body: [.17, .17, .38], leg: .14, legW: .05, head: [.13, .12, .18], neck: .06, ears: .07, earUp: true, tail: 'bushy', col: 0xf0f2f6, accent: 0xd8dde4 } },
+  ember_beetle: { name: 'Ember beetle', biomes: { ashlands: 2.5 }, group: [2, 5], hp: 18, walk: .4, run: 2, flee: 3, active: 'both', r: .22, light: { r: 2.2, color: 0xff6a2a },
+    drops: { ember_chitin: 2 }, desc: 'A beetle the size of a cat, its shell glowing like coals at night.',
+    look: { shape: 'bug', body: [.26, .12, .36], col: 0x2a1a16, glow: 0xff5a1a, leg2: 0x1a1210 } },
+  cinder_moth: { name: 'Cinder moth', biomes: { ashlands: 1.5 }, group: [2, 4], hp: 5, walk: 1, run: 3, flee: 3, active: 'night', r: .2, light: { r: 1.4, color: 0xffa04a },
+    drops: { ember_chitin: 1 }, desc: 'Flutters low over the ash at night, glowing faintly.',
+    look: { shape: 'moth', body: [.06, .06, .16], wing: .2, col: 0x5a4a44, glow: 0xff8a3a } },
+  glow_snail: { name: 'Glowing snail', biomes: { fungal: 2.5 }, group: [1, 3], hp: 10, walk: .12, run: .25, flee: 0, active: 'both', r: .2, catch: true, light: { r: 1.8, color: 0x7ef6c8 },
+    drops: { glow_slime: 2 }, desc: 'A slow snail with a softly glowing shell. It cannot get away: pick it up.',
+    look: { shape: 'snail', body: [.12, .06, .3], shell: .14, col: 0xc8b8a0, glow: 0x7ef6c8 } },
+  spore_moth: { name: 'Spore moth', biomes: { fungal: 1.5 }, group: [2, 4], hp: 5, walk: 1, run: 3, flee: 3, active: 'night', r: .2, light: { r: 1.4, color: 0xd8a8ff },
+    drops: { glow_slime: 1 }, desc: 'Drifts between the glowcaps at night, shedding spores.',
+    look: { shape: 'moth', body: [.06, .06, .16], wing: .22, col: 0x6a4a7a, glow: 0xd8a8ff } },
+  crystal_crab: { name: 'Crystal crab', biomes: { crystal: 2 }, group: [2, 4], hp: 20, walk: .4, run: 1.6, flee: 3, active: 'both', r: .24, catch: true,
+    drops: { crystal_shell: 2, raw_meat: 1 }, desc: 'Grows crystals on its back. Scuttles sideways, but slowly.',
+    look: { shape: 'crab', body: [.3, .1, .22], col: 0x5a7aa8, glow: 0x9fe8f2 } },
+  chime_bird: { name: 'Chime bird', biomes: { crystal: 1.5 }, group: [2, 5], hp: 10, walk: .5, run: 5, flee: 6, active: 'day', r: .2, chime: true,
+    drops: { feathers: 2 }, desc: 'Its glassy feathers ring like bells when it takes off.',
+    look: { shape: 'bird', body: [.13, .12, .2], leg: .1, neck: .06, head: [.08, .08, .08], beak: 0x9fe8f2, tail: 'long', col: 0x9fc8e8, head2: 0xd8f4ff, leg2: 0x5a6a8a, glow: 0x9fe8f2 } },
+  two_headed_boar: { name: 'Two-headed boar', biomes: { pripyat: 2 }, group: [1, 3], hp: 90, walk: .6, run: 5, flee: 4, active: 'both', r: .4,
+    drops: { raw_meat: 8, leather: 2 }, desc: 'A mutant boar with two heads: twice the meat.',
+    look: { shape: 'quad', twoHeads: true, body: [.34, .3, .62], leg: .2, legW: .08, head: [.17, .17, .2], neck: 0, tusks: 0xf0ead8, snout: 0xc89a8a, ears: .06, mane: 0x2a2018, tail: 'thin', col: 0x6a5242, head2: 0x8a6a56, accent: 0x9ab83a } },
+};
+// density: animals a land tile, per unit of a biome's weights (a meadow chunk of 1024 tiles holds about 7).
+// regrow: seconds for shorn wool to grow back; eggs: seconds between a hen's eggs, and how many may lie near her.
+// live: the most animals near engineers at once. busy: working buildings in a chunk that drive all its wildlife out.
+// growth: logistic regrowth a second; trickle: regrowth even from nothing; leave: how fast animals leave land that a
+// factory took over. alert: how far a shot scares animals; calm: seconds a scared animal keeps running.
+export const ANIMAL_RULES = { density: .0007, growth: .01, trickle: .004, leave: .04, regrow: 240, eggs: 150, eggsNear: 3, live: 120, alert: 16, busy: 24, calm: 4 };
+for (const a of Object.values(ANIMALS)) for (const b of Object.keys(a.biomes)) if (!BIOMES.some(x => x.id === b)) console.warn('ANIMALS: no biome', b);
 
 // ---------------------------------------------------------------- the medical lab
 // Upgrades for every engineer in the world, researched in medical labs with terrestrial packs and chlorophyll (and a
@@ -539,7 +669,8 @@ export const RETIRED = { generator: { brick: 10, gear: 8, iron_plate: 5 }, lift:
 
 // Stack sizes decide how many inventory / chest slots things take.
 const STACKS = { ore: 50, crystal: 50, wood: 100, plate: 100, brick: 100, lens: 100, gear: 100, cable: 200, chip: 200, coil: 100, pack: 200,
-  barrel: 50, engine: 10, vehicle: 1, part: 20, wheel: 50, hull: 10, signal: 50, net: 5, fish: 50, road: 100, aug: 50, seed: 100, crop: 50, vial: 100, pellet: 50, cell: 50 };
+  barrel: 50, engine: 10, vehicle: 1, part: 20, wheel: 50, hull: 10, signal: 50, net: 5, fish: 50, road: 100, aug: 50, seed: 100, crop: 50, vial: 100, pellet: 50, cell: 50,
+  meat: 50, egg: 50, wool: 100, hide: 50, feather: 100, chitin: 50, slime: 50, shell: 50, powder: 100, ammo: 200, shell_ammo: 100, gun: 5 };
 const MACHINE_STACKS = { lamp: 50, brazier: 50, belt: 100, fast_belt: 100, express_belt: 100, bus_belt: 100, small_pole: 50, medium_pole: 50, lab: 10, transmitter: 5, frame: 50, big_drill: 10,
   power_line: 20, transformer: 10, crafting_station: 10, water_pump: 20, steam_engine: 10, pipe: 100, rail: 100, storage_tank: 10, refinery: 10, vehicle_factory: 5,
   steel_pipe: 100, irrigation_pipe: 100, steel_irrigation_pipe: 100, green_lamp: 50, greenhouse: 10, greenhouse_panel: 100, dam: 100, reactor: 5, coolant_tower: 5, hp_pump: 10 };
@@ -654,6 +785,17 @@ export const RECIPES = [
   R('turbine_engine', { steel: 10, adv_circuit: 4, pipe: 8, gear: 10 }, 8, { tech: 'advanced_oil' }),
   R('fishing_net', { wood: 5, cable: 5 }, 1, { tech: 'shipping' }),
   { id: 'cooked_fish', cat: 'smelt', in: { raw_fish: 1 }, out: { cooked_fish: 1 }, time: 3.2 },
+  { id: 'cooked_meat', cat: 'smelt', in: { raw_meat: 1 }, out: { cooked_meat: 1 }, time: 3.2 },
+  // weapons: gunpowder is crafted, never smelted (a furnace fed stone makes bricks)
+  { ...R('gunpowder', { coal: 2, stone: 1 }, 1), out: { gunpowder: 2 } },
+  { ...R('pistol_ammo', { copper_plate: 1, iron_plate: 1, gunpowder: 1 }, 2), out: { pistol_ammo: 10 } },
+  { ...R('shotgun_shells', { iron_plate: 1, gunpowder: 1, wood: 1 }, 2, { tech: 'firearms' }), out: { shotgun_shells: 6 } },
+  { ...R('rifle_ammo', { copper_plate: 1, steel: 1, gunpowder: 2 }, 3, { tech: 'firearms_2', hand: false }), out: { rifle_ammo: 10 } },
+  R('pistol', { iron_plate: 5, gear: 3 }, 3),
+  R('shotgun', { iron_plate: 10, gear: 5, wood: 5 }, 5, { tech: 'firearms' }),
+  R('rifle', { steel: 5, gear: 5, wood: 5 }, 6, { tech: 'firearms_2' }),
+  R('smg', { steel: 5, gear: 10, circuit: 5 }, 6, { tech: 'firearms_2' }),
+  R('assault_rifle', { steel: 10, gear: 10, adv_circuit: 5 }, 8, { tech: 'firearms_3' }),
   // advanced fluids
   R('steel_pipe', { steel: 1 }, .5, { tech: 'advanced_fluids' }),
   { ...R('underground_steel_pipe', { steel_pipe: 10, steel: 5 }, 1, { tech: 'advanced_fluids' }), out: { underground_steel_pipe: 2 } },
@@ -761,6 +903,9 @@ export const TECHS = [
   T('shipping', 'Shipping', [r, g], 60, 15, ['vehicles'], ['port', 'hull', 'marine_engine', 'boat_marine', 'boat_diesel', 'fishing_net']),
   T('advanced_oil', 'Advanced oil processing', [r, g, b], 100, 15, ['oil_processing', 'precision_science'], ['advanced_refining', 'jet_blending', 'turbine_engine', 'truck_turbine', 'locomotive_turbine', 'boat_turbine']),
   T('tanks', 'Tanks', [r, g, b], 100, 20, ['vehicles', 'advanced_oil'], ['armor_plate', 'turret', 'tank_diesel', 'tank_turbine']),
+  T('firearms', 'Firearms', [r], 30, 10, ['automation'], ['shotgun', 'shotgun_shells']),
+  T('firearms_2', 'Firearms 2', [r, g], 60, 15, ['firearms', 'steel', 'logistic_science'], ['rifle', 'smg', 'rifle_ammo']),
+  T('firearms_3', 'Firearms 3', [r, g, b], 100, 20, ['firearms_2', 'advanced_electronics'], ['assault_rifle']),
   T('bus_belts', 'Bus belts', [r, g], 60, 15, ['logistics2'], ['bus_belt', 'bus_underground']),
   T('deep_drilling', 'Deep drilling', [r, g, b], 100, 20, ['advanced_electronics'], ['big_drill', augId('depth', 1)]),
   T('augments', 'Augments', [r, g], 75, 15, ['steel', 'logistic_science'], AUG3.map(a => augId(a, 1))),
@@ -793,7 +938,7 @@ const TECH_CAT = {
   power: ['electric_distribution', 'direct_wiring', 'high_voltage', 'solar', 'hydro_power', 'nuclear_power', 'road_power'],
   fluids: ['fluid_handling', 'advanced_fluids', 'oil_processing', 'advanced_oil', 'uranium_processing'],
   transport: ['roads', 'vehicles', 'railways', 'shipping'],
-  military: ['tanks'],
+  military: ['firearms', 'firearms_2', 'firearms_3', 'tanks'],
   biology: ['soil_science', 'agriculture', 'terrestrial_science'],
   science: ['logistic_science', 'precision_science', 'advanced_electronics', 'optics', 'excavation', 'deep_excavation', 'signal_theory', 'resonance'],
 };

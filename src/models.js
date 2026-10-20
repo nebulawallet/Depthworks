@@ -3,7 +3,7 @@
 // Everything is toon-shaded so the pixel-outline post pass reads cleanly.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ENTITIES, ITEMS, TIERS, FLUIDS, FRAMES, VEHICLES, ENGINES, RECIPE, CROPS, DITHER, recipeIcon } from './data.js';
+import { ENTITIES, ITEMS, TIERS, FLUIDS, FRAMES, VEHICLES, ENGINES, RECIPE, CROPS, DITHER, ANIMALS, WEAPONS, recipeIcon } from './data.js';
 import { S, DIRS, factoryOf } from './state.js';
 import { iconCanvas } from './icons.js';
 
@@ -173,6 +173,18 @@ export function itemGeo(type) {
     vial: () => new THREE.CylinderGeometry(.06, .07, .2, 6).translate(0, .1, 0),
     pellet: () => facet(new THREE.IcosahedronGeometry(.08, 0).translate(0, .08, 0)),
     cell: () => new THREE.BoxGeometry(.14, .24, .14).translate(0, .12, 0),
+    meat: () => new THREE.SphereGeometry(.1, 7, 5).scale(1.3, .6, 1).translate(0, .06, 0),
+    egg: () => new THREE.SphereGeometry(.06, 8, 6).scale(1, 1.3, 1).translate(0, .075, 0),
+    wool: () => facet(new THREE.IcosahedronGeometry(.11, 0).scale(1.2, .8, 1).translate(0, .08, 0)),
+    hide: () => new THREE.BoxGeometry(.28, .03, .22).translate(0, .015, 0),
+    feather: () => new THREE.BoxGeometry(.06, .02, .26).rotateY(.5).translate(0, .01, 0),
+    chitin: () => new THREE.SphereGeometry(.12, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, .5, 1.2),
+    slime: () => new THREE.SphereGeometry(.1, 7, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.2, .45, 1),
+    shell: () => facet(new THREE.ConeGeometry(.1, .16, 6).translate(0, .08, 0)),
+    powder: () => new THREE.CylinderGeometry(.08, .1, .14, 7).translate(0, .07, 0),
+    ammo: () => new THREE.BoxGeometry(.2, .08, .14).translate(0, .04, 0),
+    shell_ammo: () => new THREE.BoxGeometry(.2, .09, .14).translate(0, .045, 0),
+    gun: () => new THREE.BoxGeometry(.06, .06, .3).translate(0, .03, 0),
   };
   return (itemGeoCache[shape] = (G[shape] || G.ore)());
 }
@@ -1069,6 +1081,179 @@ export function fishGeo() {
   return mergeGeometries([body, tail]);
 }
 
+// ---------------------------------------------------------------- animals
+// Built facing +z like the engineer, from a few boxes per shape (ANIMALS[t].look in data.js): four-legged ('quad', with
+// ears, horns, antlers, tails, wool, manes as the look asks), 'bird', 'frog', 'lizard', 'bug', 'moth', 'snail', 'crab'.
+// Legs, heads, wings and tails hang on pivots so animateAnimal can walk, graze, lie down, gallop, hop and flap them.
+const shade = (c, k) => ((Math.min(255, (c >> 16 & 255) * k) << 16) | (Math.min(255, (c >> 8 & 255) * k) << 8) | Math.min(255, (c & 255) * k)) >>> 0;
+export function makeAnimal(type) {
+  const A = ANIMALS[type], L = A.look, g = new THREE.Group(), P = { legs: [], wings: [], heads: [] }, root = new THREE.Group(); g.add(root); P.root = root;
+  const col = M(L.col), head2 = M(L.head2 ?? L.col), leg2 = M(L.leg2 ?? shade(L.col, .8)), acc = M(L.accent ?? shade(L.col, 1.15)), dark = M(0x1a1614), eye = M(0x101014);
+  const glow = L.glow ? new THREE.MeshToonMaterial({ color: L.glow, emissive: L.glow, emissiveIntensity: .9, gradientMap: toonRamp }) : null;
+  const add = (parent, geo, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
+  const pivot = (parent, x, y, z) => { const p = new THREE.Group(); p.position.set(x, y, z); parent.add(p); return p; };
+  const leg = (parent, x, y, z, len, w, mat, ph, foot) => { const p = pivot(parent, x, y, z); add(p, box(w, len, w).translate(0, -len / 2, 0), mat); if (foot) add(p, box(w * 1.05, w * .7, w * 1.15).translate(0, -len + w * .35, w * .05), foot); P.legs.push({ p, ph }); return p; };
+  const [bw, bh, bl] = L.body;
+  switch (L.shape) {
+    case 'quad': {
+      const lh = L.leg, lw = L.legW, by = lh + bh / 2;
+      const body = pivot(root, 0, by, 0); P.body = body;
+      add(body, box(bw, bh, bl), col);
+      if (L.spots) for (const [sx, sy, sz, s] of [[1, .1, .15, .14], [-1, -.05, -.18, .12], [1, -.08, -.22, .09], [-1, .12, .2, .1]]) add(body, box(.02, s * .9, s * 1.3), M(L.spots), sx * (bw / 2 + .005), sy * bh, sz * bl);
+      if (L.wool) { P.wool = add(body, facet(new THREE.IcosahedronGeometry(.5, 1)).scale(bw * 1.3, bh * 1.35, bl * 1.12), M(L.wool), 0, .02, 0); }
+      if (L.shag) { add(body, box(bw * 1.1, bh * .55, bl * .92), M(L.shag), 0, -bh * .42, 0); add(body, box(bw * .7, .05, bl * .4), acc, 0, bh / 2 + .02, -bl * .05); }   // a long skirt of hair, a pale saddle
+      if (L.mane) add(body, box(.05, .06, bl * .3), M(L.mane), 0, bh / 2 + .02, bl * .36);
+      const legY = lh + .02, lx = bw / 2 - lw / 2 - .01, lz = bl / 2 - lw * .9;
+      const foot = L.hoof ? M(L.hoof) : null, front = L.hop ? lh * .8 : lh;
+      leg(root, -lx, legY, lz, front, lw, leg2, 0, foot); leg(root, lx, legY, lz, front, lw, leg2, Math.PI, foot);
+      leg(root, -lx, legY, -lz, lh, lw * (L.hop ? 1.4 : 1), leg2, Math.PI, foot); leg(root, lx, legY, -lz, lh, lw * (L.hop ? 1.4 : 1), leg2, 0, foot);
+      // the neck and head swing on a pivot at the front of the body: down to graze, up to look round
+      const heads = L.twoHeads ? [-.1, .1] : [0];
+      for (const hx of heads) {
+        const hp = pivot(root, hx, by + bh * .3, bl / 2 - .02); P.heads.push(hp);
+        if (hx) hp.rotation.y = Math.sign(hx) * .4;   // two heads splay apart
+        const [hw, hhh, hl] = L.head, n = L.neck;
+        if (n > .02) add(hp, box(hw * .6, n + hhh * .4, hw * .7).translate(0, n / 2, .03), L.mane ? col : head2).rotation.x = .45;
+        const hd = pivot(hp, 0, n * .9, Math.max(n * .45, .04) + hl / 2 - .02);
+        add(hd, box(hw, hhh, hl), head2);
+        for (const s of [-1, 1]) add(hd, box(.022, .022, .022), eye, s * hw / 2, hhh * .18, hl * .18);
+        if (L.snout) add(hd, box(hw * .55, hhh * .45, .05), M(L.snout), 0, -hhh * .12, hl / 2 + .02);
+        if (L.tusks) for (const s of [-1, 1]) add(hd, new THREE.ConeGeometry(.015, .07, 4).rotateX(-1.1), M(L.tusks), s * hw * .3, -hhh * .2, hl / 2);
+        if (L.beard) add(hd, box(.04, .08, .04), acc, 0, -hhh / 2 - .03, hl * .3);
+        if (L.ears) for (const s of [-1, 1]) {
+          const e = L.ears, ear = add(hd, box(L.wide ? e * .7 : e * .45, e, .025).translate(0, e / 2, 0), head2, s * hw * .32, hhh / 2, -hl * .2);
+          ear.rotation.z = L.earUp ? -s * .18 : -s * 1.2;
+        }
+        if (L.horns === 'short') for (const s of [-1, 1]) add(hd, new THREE.ConeGeometry(.025, .09, 5).rotateZ(-s * .7), M(L.accent ?? 0xd8d0b8), s * hw * .45, hhh / 2 + .02, -hl * .2);
+        if (L.horns === 'curl') for (const s of [-1, 1]) add(hd, new THREE.TorusGeometry(.05, .015, 4, 8, Math.PI * 1.3).rotateY(Math.PI / 2), acc, s * hw * .35, hhh / 2 + .02, -hl * .25);
+        if (L.horns === 'ox') for (const s of [-1, 1]) add(hd, box(.16, .04, .05).translate(s * .08, 0, 0), acc, s * hw * .2, hhh / 2, -hl * .1).rotation.z = s * .5;
+        if (L.antlers) for (const s of [-1, 1]) {
+          const ant = pivot(hd, s * hw * .3, hhh / 2, -hl * .2), m = M(L.antlers);
+          if (L.palm) { add(ant, box(.18, .03, .12).translate(s * .1, .06, 0), m).rotation.z = s * .4; }
+          else { add(ant, box(.035, .2, .035).translate(0, .1, 0), m).rotation.z = -s * .45; add(ant, box(.03, .1, .03).translate(0, .05, 0), m, -s * .07, .12, .03).rotation.x = .7; add(ant, box(.03, .08, .03).translate(0, .04, 0), m, -s * .04, .06, -.02).rotation.x = -.5; }
+        }
+      }
+      const tp = pivot(root, 0, by + bh * .3, -bl / 2); P.tail = tp;
+      if (L.tail === 'thin') add(tp, box(.025, .28, .025).translate(0, -.14, 0), col).rotation.x = .15;
+      if (L.tail === 'stub') add(tp, box(.05, .05, .06), L.wool ? M(L.wool) : col, 0, 0, -.02);
+      if (L.tail === 'puff') add(tp, new THREE.SphereGeometry(.04, 6, 4), acc, 0, 0, -.02);
+      if (L.tail === 'curl') add(tp, new THREE.TorusGeometry(.03, .01, 4, 8), col, 0, .02, -.02);
+      if (L.tail === 'bushy') { const t = add(tp, box(.07, .07, bl * .7).translate(0, 0, -bl * .35), col); t.rotation.x = .5; add(tp, box(.072, .072, .08), acc, 0, -Math.sin(.5) * bl * .62, -Math.cos(.5) * bl * .62); }
+      if (L.tail === 'long') add(tp, box(.06, .4, .05).translate(0, -.2, 0), M(L.mane ?? L.col), 0, 0, -.02).rotation.x = .25;
+      P.lie = lh * .9;
+      break;
+    }
+    case 'bird': {
+      const lh = L.leg, by = lh + bh / 2, body = pivot(root, 0, by, 0); P.body = body;
+      add(body, new THREE.SphereGeometry(.5, 8, 6).scale(bw, bh, bl), col);
+      for (const s of [-1, 1]) { const w = pivot(body, s * bw / 2, bh * .15, .02); add(w, box(.02, bh * .7, bl * .7).translate(s * .01, -bh * .2, -bl * .1), M(shade(L.col, .85))); P.wings.push({ p: w, s }); }
+      for (const s of [-1, 1]) leg(root, s * bw * .2, lh + .01, 0, lh, .02, leg2, s > 0 ? 0 : Math.PI);
+      const hp = pivot(root, 0, by + bh * .2, bl * .35); P.heads.push(hp);
+      const n = L.neck; if (n) add(hp, box(.05, n, .05).translate(0, n / 2, 0), L.long ? head2 : col).rotation.x = L.long ? .1 : .3;
+      const [hw, hh, hl] = L.head, hd = pivot(hp, 0, n * .95 + hh / 2, n * .3);
+      add(hd, box(hw, hh, hl), head2);
+      for (const s of [-1, 1]) add(hd, box(.018, .018, .018), eye, s * hw / 2, hh * .15, hl * .15);
+      add(hd, L.bill ? box(hw * .7, .025, .08).translate(0, 0, .04) : new THREE.ConeGeometry(.022, L.long ? .2 : .07, 4).rotateX(Math.PI / 2).translate(0, 0, L.long ? .1 : .035), M(L.beak), 0, -hh * .1, hl / 2);
+      if (L.comb) add(hd, box(.02, .05, .06), M(L.comb), 0, hh / 2 + .02, 0);
+      const tp = pivot(root, 0, by + bh * .1, -bl / 2); P.tail = tp;
+      if (L.tail === 'fan') add(tp, box(.12, .14, .03).translate(0, .06, -.02), col).rotation.x = -.5;
+      else add(tp, box(.06, .025, L.tail === 'long' ? .2 : .08).translate(0, 0, L.tail === 'long' ? -.1 : -.04), L.glow ? glow : col).rotation.x = -.3;
+      P.lie = lh * .85;
+      break;
+    }
+    case 'frog': {
+      const body = pivot(root, 0, bh / 2 + .02, 0); P.body = body;
+      add(body, new THREE.SphereGeometry(.5, 7, 5).scale(bw, bh * 1.6, bl), col);
+      for (const s of [-1, 1]) { add(body, new THREE.SphereGeometry(.024, 6, 4), acc, s * bw * .28, bh * .7, bl * .25); add(body, box(.012, .012, .012), eye, s * bw * .28, bh * .9, bl * .3); }
+      for (const s of [-1, 1]) { leg(root, s * bw * .45, .05, -bl * .25, .05, .05, M(shade(L.col, .85)), 0).rotation.z = s * .9; leg(root, s * bw * .35, .05, bl * .3, .05, .03, M(shade(L.col, .85)), 0).rotation.z = s * .5; }
+      P.lie = 0; P.hop = true;
+      break;
+    }
+    case 'lizard': {
+      const body = pivot(root, 0, .06, 0); P.body = body;
+      add(body, box(bw, bh, bl), col); add(body, box(bw * .5, bh * .3, bl * .9), acc, 0, bh / 2, 0);
+      const hp = pivot(body, 0, 0, bl / 2); P.heads.push(hp); add(hp, box(bw * .8, bh * .9, .1).translate(0, 0, .05), col);
+      for (const s of [-1, 1]) add(hp, box(.014, .014, .014), eye, s * bw * .4, .015, .06);
+      const tp = pivot(body, 0, 0, -bl / 2); P.tail = tp; add(tp, new THREE.ConeGeometry(bw * .35, bl * 1.1, 4).rotateX(-Math.PI / 2).translate(0, 0, -bl * .55), col);
+      for (const [s, z, ph] of [[-1, .1, 0], [1, .1, Math.PI], [-1, -.1, Math.PI], [1, -.1, 0]]) leg(root, s * bw / 2, .07, z, .07, .025, leg2, ph).rotation.z = s * .9;
+      P.lie = 0;
+      break;
+    }
+    case 'bug': {
+      const body = pivot(root, 0, .1, 0); P.body = body;
+      add(body, new THREE.SphereGeometry(.5, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(bw, bh * 1.6, bl), col, 0, -.01, 0);
+      add(body, box(.012, bh * .8, bl * .9), glow, 0, bh * .35, 0);
+      for (const [x, z] of [[-.05, .08], [.05, -.04], [-.04, -.1]]) add(body, box(.04, .01, .05), glow, x, bh * .55, z);
+      const hp = pivot(body, 0, 0, bl / 2); P.heads.push(hp); add(hp, box(bw * .45, bh * .6, .07).translate(0, 0, .02), leg2);
+      for (const s of [-1, 1]) add(hp, box(.01, .01, .1).translate(0, 0, .05), leg2, s * .03, .02, .04).rotation.y = s * .4;
+      for (const z of [-.1, 0, .1]) for (const s of [-1, 1]) leg(root, s * bw * .45, .1, z, .1, .018, leg2, (z * 30 + (s > 0 ? Math.PI : 0))).rotation.z = s * .9;
+      P.lie = 0;
+      break;
+    }
+    case 'moth': {
+      const body = pivot(root, 0, .45, 0); P.body = body; P.fly = true;
+      add(body, box(bw, bh, bl), col); add(body, box(bw * .9, bh * .9, bl * .4), glow, 0, 0, -bl * .25);
+      for (const s of [-1, 1]) { const w = pivot(body, s * bw / 2, bh / 2, 0); add(w, box(L.wing, .01, L.wing * .8).translate(s * L.wing / 2, 0, 0), M(shade(L.col, 1.2))); add(w, box(L.wing * .3, .012, L.wing * .3).translate(s * L.wing * .6, 0, 0), glow); P.wings.push({ p: w, s }); }
+      for (const s of [-1, 1]) add(body, box(.006, .006, .08).translate(0, 0, .04), col, s * .02, .02, bl / 2).rotation.set(-.5, s * .4, 0);
+      P.lie = .38;
+      break;
+    }
+    case 'snail': {
+      const body = pivot(root, 0, 0, 0); P.body = body;
+      add(body, box(bw, bh, bl).translate(0, bh / 2, 0), col);
+      const shell = add(body, new THREE.SphereGeometry(L.shell, 8, 6).scale(.8, 1, 1), M(shade(L.col, .7)), 0, bh + L.shell * .8, -bl * .12);
+      add(shell, new THREE.TorusGeometry(L.shell * .55, L.shell * .14, 4, 10).rotateY(Math.PI / 2), glow, L.shell * .78, 0, 0);
+      add(shell, new THREE.TorusGeometry(L.shell * .55, L.shell * .14, 4, 10).rotateY(Math.PI / 2), glow, -L.shell * .78, 0, 0);
+      const hp = pivot(body, 0, bh, bl / 2 - .03); P.heads.push(hp);
+      for (const s of [-1, 1]) { add(hp, box(.01, .08, .01).translate(0, .04, 0), col, s * .025, 0, 0).rotation.z = -s * .25; add(hp, new THREE.SphereGeometry(.013, 5, 3), glow, s * .045, .075, 0); }
+      P.lie = 0;
+      break;
+    }
+    case 'crab': {
+      const body = pivot(root, 0, .1, 0); P.body = body;
+      add(body, new THREE.SphereGeometry(.5, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(bw, bh * 2, bl), col);
+      for (const [x, z, h] of [[0, 0, .12], [-.07, -.03, .08], [.07, .02, .09], [.02, -.06, .07]]) add(body, facet(new THREE.OctahedronGeometry(.03, 0).scale(.8, h / .03 * .5, .8)), glow, x, bh * .8 + h * .25, z);
+      for (const s of [-1, 1]) { add(body, box(.012, .03, .012), eye, s * .04, bh * .6, bl * .45); const cl = pivot(body, s * bw * .45, 0, bl * .45); add(cl, box(.06, .05, .08).translate(s * .02, 0, .04), M(shade(L.col, 1.15))); P.wings.push({ p: cl, s, claw: true }); }
+      for (const z of [-.06, 0, .06]) for (const s of [-1, 1]) leg(root, s * bw * .45, .1, z, .11, .016, M(shade(L.col, .8)), z * 40 + (s > 0 ? Math.PI : 0)).rotation.z = s * 1.1;
+      P.lie = 0; P.sideways = true;
+      break;
+    }
+  }
+  root.scale.setScalar(1.2);   // a little bigger than life, so they read next to the engineer
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  g.userData.P = P; g.userData.type = type;
+  return g;
+}
+// Moves an animal's model for its state: legs swing as it walks (a gallop when it flees), the head drops to graze, it
+// lies down to rest and sleep, small ones hop, birds flap, moths flutter. `sp` is how fast it is going, tiles a second.
+export function animateAnimal(g, an, T, dt, sp, shorn) {
+  const P = g.userData.P, A = ANIMALS[an.t], L = A.look, st = an.st, moving = sp > .05, fast = st === 'flee';
+  g.userData.ph = (g.userData.ph || an.id) + dt * (moving ? 4 + sp * (L.hop || P.hop ? 1.6 : 2.4) : 0);
+  const ph = g.userData.ph, down = st === 'rest' || st === 'sleep';
+  const k = 1 - Math.pow(.002, dt), ease = (o, prop, v) => { o[prop] += (v - o[prop]) * k; };
+  for (const l of P.legs) {
+    const swing = moving ? Math.sin(ph + (L.hop || P.hop ? 0 : l.ph)) * (fast ? .8 : .45) : 0;
+    ease(l.p.rotation, 'x', down && P.lie ? (l.p.position.z > 0 ? -1.3 : 1.3) : swing);
+    ease(l.p.scale, 'y', down && P.lie ? .4 : 1);   // folded under the body
+  }
+  // lying down sinks the whole animal; hopping lifts it
+  const hopY = (L.hop || P.hop) && moving ? Math.abs(Math.sin(ph)) * (P.hop ? .1 : .12) : 0;
+  const bob = moving && !L.hop && !P.hop ? Math.abs(Math.sin(ph)) * (fast ? .03 : .012) : 0;
+  P.root.userData.y = (P.root.userData.y ?? 0) + ((down ? -(P.lie || 0) * .9 * P.root.scale.y : 0) - (P.root.userData.y ?? 0)) * k;
+  P.root.position.y = P.root.userData.y + hopY + bob + (P.fly ? Math.sin(T * 3 + an.id) * .05 + (down ? 0 : .05) : 0);
+  if (P.body) ease(P.body.rotation, 'x', fast && !P.fly ? Math.sin(ph * 2) * .06 : 0);
+  for (const h of P.heads) ease(h.rotation, 'x', st === 'graze' ? .95 + Math.sin(T * 5 + an.id) * .08 : st === 'sleep' ? .5 : fast ? -.2 : moving ? .1 : Math.sin(T * .7 + an.id) * .15);
+  if (P.tail) P.tail.rotation.y = Math.sin(T * (fast ? 9 : 2.5) + an.id) * (L.tail === 'bushy' || L.tail === 'long' ? .3 : .2);
+  for (const w of P.wings) {
+    if (w.claw) { w.p.rotation.y = Math.sin(T * 2 + an.id) * .25 * w.s; continue; }
+    const flap = P.fly ? (down ? .1 : Math.sin(T * 22 + an.id) * .9) : fast ? Math.sin(T * 30) * .9 : 0;
+    w.p.rotation.z = w.s * (P.fly ? flap : -Math.abs(flap));
+  }
+  if (P.wool) P.wool.visible = !shorn;
+  // crabs walk sideways: the body turns across its heading
+  g.rotation.y = an.ra + (P.sideways && moving ? Math.PI / 2 : 0);
+}
+
 export function disposeMesh(root) {
   root.traverse(o => { if (o.isMesh && o.geometry && !Object.values(itemGeoCache).includes(o.geometry)) o.geometry.dispose(); });
 }
@@ -1111,8 +1296,24 @@ export function makePlayer(color = 0xe07a2e) {
   shovel.add(new THREE.Mesh(box(.03, .03, .4).translate(0, 0, .2), M(C.wood)));
   shovel.add(new THREE.Mesh(box(.11, .015, .13).translate(0, 0, .44), M(C.steel)));
   shovel.visible = false;
+  // a gun held out at arm's length: built pointing along +z, turned to point down the arm (forward, once it is raised)
+  P.gun = new THREE.Group(); P.gun.position.set(0, -.3, .02); P.gun.rotation.x = Math.PI / 2; P.armR.add(P.gun);
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   g.userData.P = P; g.userData.color = color;
+  return g;
+}
+// Guns as the engineer holds them, pointing along +z from the grip (WEAPONS in data.js).
+function gunModel(id) {
+  const g = new THREE.Group(), metal = M(0x34383f), hi = M(0x8a929c), wood = M(C.wood), olive = M(0x4a5040);
+  const add = (w, h, d, mat, x, y, z) => { const m = new THREE.Mesh(box(w, h, d), mat); m.position.set(x, y, z); g.add(m); };
+  switch (id) {
+    case 'pistol': add(.035, .05, .17, metal, 0, .03, .06); add(.03, .08, .04, metal, 0, -.02, -.01); add(.036, .012, .17, hi, 0, .058, .06); break;
+    case 'shotgun': add(.035, .035, .52, metal, 0, .03, .2); add(.045, .045, .12, wood, 0, -.005, .22); add(.045, .07, .2, wood, 0, -.01, -.1); break;
+    case 'rifle': add(.028, .028, .5, metal, 0, .04, .24); add(.045, .06, .42, wood, 0, .005, 0); add(.03, .03, .14, metal, 0, .08, .06); add(.01, .03, .02, hi, .025, .04, .02); break;
+    case 'smg': add(.04, .07, .26, metal, 0, .02, .07); add(.02, .02, .1, metal, 0, .04, .24); add(.026, .11, .045, metal, 0, -.07, .1); add(.03, .08, .04, metal, 0, -.03, -.02); break;
+    default: add(.04, .07, .38, olive, 0, .02, .08); add(.022, .022, .16, metal, 0, .04, .33); add(.028, .12, .05, metal, 0, -.08, .12); add(.04, .06, .14, olive, 0, 0, -.16); add(.03, .03, .1, metal, 0, .075, .1);
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }
 export function animatePlayer(g, p, T, dt = .016) {
@@ -1123,7 +1324,15 @@ export function animatePlayer(g, p, T, dt = .016) {
   const mining = p.mining && !p.mining.blocked;
   const tool = mining ? p.mining.tool || 'pickaxe' : null;
   P.pick.visible = tool === 'pickaxe'; P.axe.visible = tool === 'axe'; P.shovel.visible = tool === 'shovel';
-  P.armR.rotation.x = mining ? -1.7 + Math.sin(T * 14) * .95 : sw * .8;
+  // a gun in hand: held out to the front (both hands on a long gun), kicking back a little as it fires
+  const gun = !mining && !p.veh && WEAPONS[p.sel] ? p.sel : null;
+  if (P.gun.userData.type !== gun) { P.gun.clear(); if (gun) P.gun.add(gunModel(gun)); P.gun.userData.type = gun; }
+  if (gun) {
+    const kick = Math.max(0, .1 - (T - ((p.aimT ?? -9) - .6))) * 3, long = gun !== 'pistol';
+    P.armR.rotation.x = -1.5 - kick; P.armR.rotation.z = 0;
+    P.armL.rotation.x = long ? -1.3 - kick : -sw * .8; P.armL.rotation.z = long ? -.45 : 0;
+  } else P.armL.rotation.z = 0;
+  if (!gun) P.armR.rotation.x = mining ? -1.7 + Math.sin(T * 14) * .95 : sw * .8;
   P.body.rotation.x = mining ? .12 + Math.sin(T * 14) * .05 : walkAmt * .1;
   g.position.set(p.x, (p.h || 0) + Math.abs(Math.sin(p.walk)) * .035 * walkAmt, p.z);
   let d = p.face - g.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));

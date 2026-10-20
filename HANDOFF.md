@@ -15,37 +15,64 @@ glyphs, and something answers using only the mechanisms it has heard.
 
 ## Where the last session left off
 
-Everything is committed and pushed (`main` at "Add map exploration, radars, big drills, trading and a medical research
-tree"). The owner has not played any of it by hand: start with "Not verified" below, then their feedback.
+The game is at **0.6 beta** (`src/changelog.js`), the first beta: animals and weapons, built from [PLAN.md](PLAN.md) and
+pushed to `main`. Read [CLAUDE.md](CLAUDE.md) too: every change players notice comes with wiki updates and a change log
+entry.
 
-This session worked through another long list from the owner. In short:
+- **Animals** (`src/animals.js`, `ANIMALS` / `ANIMAL_RULES` in data.js): all 26 from the plan, in every biome. Chunk
+  populations like fish, logistic regrowth, a live cap of 120 near engineers, groups, graze / walk / rest / sleep by their
+  hours, steering round water, buildings, frames and roads (never path-finding), fleeing (wild ones from engineers within
+  `flee` tiles, farm animals only from sprinters), from vehicles and from shots. Busy chunks (`busy` working buildings)
+  lose their animals. Vehicles kill what they hit. Glowing ones light the ground at night. Models in models.js
+  (`makeAnimal`, `animateAnimal`, eight body shapes), pixel icons (`drawAnimal` in icons.js).
+- **By hand** (through `mineTargetAt` / `mineTick`): shear sheep (wool regrows in 240 s), catch the `catch` ones, eggs
+  laid on the ground (F picks them up). Farm animals and snails hold still while handled.
+- **Guns** (`src/weapons.js`, `WEAPONS` in data.js): pistol (starter kit, `STARTER_KIT`), shotgun, bolt-action rifle,
+  SMG, assault rifle; Firearms 1–3 in the Military section; gunpowder, three ammunitions. Left-click fires (`fire` in
+  main.js), R reloads, crosshair cursor, gun held in the engineer's hands, tracers / flashes on UI_LAYER, synthesised
+  shots. Magazines per engineer (`p.mags`), saved and synced.
+- **The owner's calls:** wool, leather, feathers, ember chitin, glow slime and crystal shell exist as drops with **no
+  recipes yet** (the owner wants crafting with them later, not in 0.6); old worlds get **no** pistol gift.
+- **Wiki:** generated animal pages (kind `animal`), `GEN.animals` / `weapons` / `kills`, an Animals section and infobox
+  row on every biome page, item groups Weapons / Ammunition / Animal products; articles Animals, Weapons, Hunting
+  (`wiki/articles/wildlife.js`) and updates across the others; redirects for every animal and gun word.
 
-- **Fixes:** chlorophyll can be hand-crafted from seeds again (hand crafting never understood the `'#seed'` group;
-  cancelling gives back the very seeds it took). Pipes are available from the start (the recipe itself was locked
-  behind Fluid handling, not just shown that way). Multi-tile buildings give back one item (a boiler gave 2, a steam
-  engine 4); only `perTile` kinds (greenhouses, dams) give back by the tile.
-- **Building:** dams go down two tiles wide. Big mining drills are 2×2 (4× an electric drill over full ore, power by
-  coverage, bedrock, 3 augment slots). Every pole's supply area is 2 tiles wider; Direct wiring (research) runs power
-  cables from electric poles straight to machines. The placement preview is a solid ghost tinted green / red, stippled
-  only while planning a blueprint (Shift, or a blueprint in hand).
-- **Looks:** new icons for everything that had none (dam, reactor, coolant tower, greenhouse and panel, medical lab,
-  centrifuge, leaching drill, big drill, radar) and distinct ones for steel and irrigation pipes, the high pressure pump
-  and uranium; no more blank or magenta fallbacks. New or reworked models: dam (deck, gates, turbine houses, lit spill),
-  reactor (warning beacon: green, amber, flashing red, dark when broken; scorched when broken), coolant tower (basin
-  light, blinks short of water, cracked when broken), high pressure pump, steel and irrigation pipe bands, greenhouse
-  doorways, medical lab, radar, big drill.
-- **Map:** the map shows only what has been seen, keeps only live tiles up to date (near engineers and working radars),
-  and dims the rest. Radars (from the start, 300 kW) keep 48 tiles live and explore out to 160. Explored tiles save per
-  chunk. The minimap zooms from ½ to 32 pixels a tile; zoomed in, its whole frame is the close-up with nothing over it.
-- **Research:** one tree engine for technologies and medical upgrades (medical now has a tree a level a node, and a
-  queue like research). Lines are right-angled with rounded corners, one trunk out of each node and one bus into each.
-- **Camera:** free camera mode is gone. Depth mode orbits (`;` `'`), tilts (`-` `[`), pans (middle drag), and the grid
-  can be turned off (`N`); leaving depth mode tweens back to the default view.
-- **Hands and co-op:** Shift + click builds a selection of many; transfer modes and Ctrl + click share a stack over it,
-  "paste to all" pastes settings onto it. Clicking another engineer opens a trade.
-- **Collision:** smaller shapes for small things, machine squares a little inside their tile, and sliding round corners.
+Checked in the browser (port 5174): spawning only in the right biomes, nothing on water / roads / buildings over a long
+walk, flee rules, every gun killing and dropping into the inventory, reloads, catching, shearing, eggs, a car killing an
+animal, a busy factory emptying its chunk, save and load keeping the counts and magazines, and co-op with two tabs (a
+guest's shot killing on the host, the guest getting the meat, the guest seeing the host's shots, a guest shearing). Not
+felt by hand with a real mouse for long: aim feel, the gun rate limits under lag, and the balance of drops and health.
 
-### The session before
+### The session before (0.5.x)
+
+The session (2026-10-20) went, in order:
+
+- **The wiki** (`wiki/`, `/wiki/` live): a Wikipedia-style site with hand-written articles in `wiki/articles/*.js` and a
+  generated page for every item, building, fluid, technology and biome, built in the browser from `src/data.js`. Search,
+  redirects (`ALIASES`), sortable tables, dark and light, phone layout, the game's own icons and glyph animations. It
+  opens in game in a window (F2, the Wiki button on the title screen, the menu); a solo game pauses while it is open.
+- **Angled belts** replace lifts (retired, with the Lifts research): any plain, fast or express belt, V cycles level /
+  up / down, in flat or depth mode, from the start. A slope stands on the **lower** of the two layers it joins: going up
+  it takes items on its own layer and hands them one layer up; going down it takes them from the layer above. Pointing
+  past the end of a belt on your own layer takes that belt down a layer (`slopeLayer` in sim.js). Placing a slope up
+  moves building to the next layer. Old lifts become angled belts; old down slopes move down a layer on load (`low`).
+- **Underground belts** reach 6 / 8 / 10 tiles (bus 8). Their tunnels show in depth mode below the ground as a belt in
+  a dug channel (`updateTunnels` in scene.js), with items diving and climbing.
+- **The engineer has a height** (`p.h`, `footing` in sim.js): they walk or ride up slopes onto frames, walk on top of
+  frames (colliding with that layer's buildings), drop off edges, walk down slopes into layers −1 and −2 (a slope down
+  opens the ground over it), and ride through underground belts (`p.tun`, `tunnelTick`). Movement runs in short
+  sub-steps so slopes work at any frame rate. Going underground on foot switches the view to depth mode on that layer
+  (`followUnderground` in main.js). Height saves and syncs.
+- **Extra-low voltage is gone:** generators feed ordinary poles. Generator poles and step-up stations in old saves
+  become small poles, step-up cables power cables (`retireItems` in save.js).
+- **Looks:** angled belts' tread sits on top (it was inside the base), the grey roller bars between belt tiles are gone.
+- **Change logs:** `src/changelog.js`, newest first, read by the title screen's Change logs view, the wiki's Changelog
+  page and recent changes, and the version in the title screen's corner.
+
+Not felt by hand: everything above was driven from the console and checked with screenshots. Co-op for the new
+movement (a guest climbing, riding tunnels, walking underground) was not tried with two tabs.
+
+### Three sessions ago
 
 A long list from the owner (research, power, interaction, visuals, map, camera, crafting stations, belt outputs):
 
@@ -77,6 +104,9 @@ A long list from the owner (research, power, interaction, visuals, map, camera, 
 - **Collision:** smaller shapes for small things (`hitOf`), a smaller engineer (radius .22), and pipe lines that only
   block along their straight runs, so rows of anything small can be walked between.
 
+The sections below come from earlier sessions. Where they mention lifts, the Lifts research, generator poles, step-up
+stations or extra-low voltage, those are retired (see above).
+
 ## Status
 
 | Area | State |
@@ -85,12 +115,12 @@ A long list from the owner (research, power, interaction, visuals, map, camera, 
 | Engineer, Factorio controls, reach, collision | Done. Hand mining shows one counting popup per haul ("+3 Iron ore (47)") |
 | Inventories | Real slots (80 for the player, 16/32 for chests), drag and drop, typed machine slots. Clicking any usable item (building, road, vehicle, cable, signal, food) in the inventory puts it in the hand |
 | Building | Placing something you've run out of crafts it (and its parts) if you have the materials; the spot waits as a pale square and builds itself when the craft lands, so belt drags keep going. Blueprints (Shift + place, Q on what you can't build, click to build). Belts keep the direction R gives them |
-| Logistics | Two-lane belts in 3 tiers (4 items per lane per tile, side-loads onto the near lane, curves keep lanes), undergrounds, splitters with per-way filters, lifts. Simulated as lines (`belts.js`). Three-lane bus belts with filtered side channels and a bus underground. Belt lines tab in the logistics window: names, filters, speed augments, network diagram |
+| Logistics | Two-lane belts in 3 tiers (4 items per lane per tile, side-loads onto the near lane, curves keep lanes), undergrounds, splitters with per-way filters, angled belts (slopes, one layer up or down). Undergrounds reach 6 / 8 / 10 tiles. Simulated as lines (`belts.js`). Three-lane bus belts with filtered side channels and a bus underground. Belt lines tab in the logistics window: names, filters, speed augments, network diagram |
 | Augments | Speed / efficiency / productivity in 5 tiers (10/15/25/35/50%), depth (2 tiers) for drills. 2 slots by default, 3 on assembler II, refinery, big drill, 4 on the vehicle factory |
 | Deposits | Never run out: surface (4× the old amount), depth (10×, slower, 1 in 6 cycles gives two), endless bedrock. Burner drill reaches surface, electric drill depth, big drill bedrock |
 | Sandbox | Title screen: everything researched, crafting free and instant, an Everything tab handing out any item |
 | Health and stamina | 100 health: moving vehicles hurt (9 per tile/s of speed), it regenerates after 5 s (faster well fed), food heals, death respawns you at the landing site with your inventory. Hold Shift to sprint (x1.55) on stamina |
-| Power | Three voltages: extra-low (generators, generator poles), low (machines), high (power lines). Steam chain (water pump → 2×1 boilers → 2×2 steam engines, Factorio's 1:20:40, load-based) into generator poles, a step-up station and step-up cable into low voltage, transformer stations into high voltage. Powered roads (conduits). Pole lines dragged out by coverage. Brownouts, flashing plugs on unpowered machines |
+| Power | Two voltages: low (machines and generators), high (power lines). Steam chain (water pump → 2×1 boilers → 2×2 steam engines, Factorio's 1:20:40, load-based) into any pole beside the engines, transformer stations into high voltage. Powered roads (conduits). Pole lines dragged out by coverage. Brownouts, flashing plugs on unpowered machines |
 | World | Generated from a seed, 500 to 65536 tiles a side (2048 by default), in 32×32 chunks made when first needed (worldgen.js). World options on the new game screen: size, seed, biome size, water, ore. Saves keep only the seed, options and edits. Worlds from before chunks load as they were (96 tiles) and gain weedy patches |
 | Rendering | Chunks around the camera only (terrain.js): a coarse picture at once, full detail painted a few tiles a frame, texture detail by zoom (16/8/4 texels a tile), flora hidden zoomed out, models only for buildings in shown chunks |
 | Biomes | 11, defined in data (BIOMES): climate, ground, ores and patterns, trees, flora, weedy patches, oil, three crops. Biomes are large (climate scale 520 tiles by default) and ore patches big (starter patches 1.7× the old size). The landing site has livable biomes all around. Borders wander in a smooth warp, and each tile's ground colour is a 13-tile blur of the biomes actually around it (groundColors), on the ground and the map alike. Hazards in six (heat, cold, fumes, spores, resonance, radiation): exposure builds and fades, never kills, adaptations cut it |
@@ -106,11 +136,13 @@ A long list from the owner (research, power, interaction, visuals, map, camera, 
 | Transport | Roads as a painted tile layer: 4 surfaces, width 1–4, 1–4 lanes, centre markings, edge lines, sidewalks, rounded corners, junctions with zebra crossings or stop lines. Paths speed walking. Rails join neighbours (curves, junctions), rail signals make blocks. Train stations, truck depots and ports store goods and fuel |
 | Routes | One logistics window (L) for rail lines, truck routes and sea lanes: depot or waypoint stops, load / unload / both / pass, cargo filters, leave conditions (full, empty, time, idle, cargo has, depot has, next stop has room) joined by and/or, loops. Depots by name, priority, vehicle limit, import/export rules |
 | Factories | Several factories in one world (after Factory planning research). Belts, inserters, drills, power, pipes and underground pairs never cross factories. Shown in alt mode tags, panels, hover info and a map view; reassigned per building or with the map's Assign tool |
+| Animals | 26 animals in every biome (animals.js), chunk populations with regrowth, groups, sleep, fleeing, busy factories push them out. Shear, catch, eggs; hunting drops (meat food; wool, leather, feathers, chitin, slime, shell have no recipes yet) |
+| Weapons | Pistol from the start, shotgun, rifle, SMG, assault rifle (Firearms 1–3). Left-click fires at the cursor, auto reload, R reloads, magazines per engineer. Bullets hit animals only |
 | Fish | Fish swim near engineers; every chunk's water keeps a population with logistic regrowth (caught up when someone returns). Catch by hand (hold right-click), eat for a speed buff, cook in furnaces. Boat nets catch past a stack and tear at two |
 | Map | Minimap, big map (M) with zoom/pan, markers, labelled areas, terrain/resources/production/power views. Only explored tiles are drawn; only live ones (near engineers and working radars) are kept up to date, the rest dimmed as last seen. Radars. The minimap's close-up fills it |
-| Interface | One compact quickbar row with a 1/2/3 switch (X cycles), health and stamina bars beside it, Hide UI (H). Pause menu (F1, or Esc once nothing else is open): resume, settings (volume, building icons, goals list, minimap), controls and key rebinding, how to play, save, export, save and quit. It pauses solo games. Rendering is fixed at the normal pixel size |
+| Interface | One compact quickbar row with a 1/2/3 switch (X cycles), health and stamina bars beside it, Hide UI (H). Pause menu (F1, or Esc once nothing else is open): resume, settings (volume, building icons, goals list, minimap), controls and key rebinding, how to play, save, export, save and quit. It pauses solo games. Rendering is fixed at the normal pixel size. The wiki in a window (F2). Change logs and the version on the title screen |
 | Research | 49 techs plus 18 tool upgrades in 9 sections, 4 science pack tiers, gated by precision for depth. A queue (saved, synced), and a left-to-right tree window with search. The medical tab is the same tree, with a queue of its own |
-| Depth | Layers −2..4, hollow frames, ghosting, lazily painted underground floors |
+| Depth | Layers −2..4, hollow frames, ghosting, lazily painted underground floors. The engineer climbs slopes onto frames, walks underground through slopes, and rides underground belts |
 | Alien conversation | 9 scripted exchanges plus ambient replies, glyph animations, clarity that grows |
 | Look | Pixel-snapped camera, toon shading, outline post pass, ore piles, trees/rocks, particles |
 | Sound | All synthesised (Web Audio), proximity machine loops, volume slider. A high-shelf cut above 5 kHz on everything; labs and transmitters hum low instead of the old high beating tones |
@@ -451,6 +483,8 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 
 ## Suggested next steps (in rough priority)
 
+0. **Recipes for animal products** (wool, leather, feathers, chitin, slime, shell): the owner wants them, not yet designed. PLAN.md's out-of-scope list (ranching, dangerous animals, weapon upgrades, the tank turret, birds overhead, creatures underground) is the rest of the queue.
+
 1. **Play the big-world systems by hand** (see "Not verified"): dam drags, copy/paste in the logistics window,
    greenhouse doors and roof, a long drive across a huge world (memory), and balance of everything new.
 2. **Test co-op with a friend on another network** on a generated world. Two local tabs agree chunk for chunk.
@@ -468,6 +502,8 @@ Most checks used the `window.depthworks` console hooks plus screenshots in a hea
 10. Richer alien grammar (glyph parameters carrying meaning) and music.
 
 ## How the owner likes to work
+
+- **Every change players notice comes with the wiki and a change log entry** ([CLAUDE.md](CLAUDE.md)).
 
 - They want it to play and feel like Factorio, with real systems behind it, not mock-ups.
 - They are blunt about jank: smoothness, readability and polish matter as much as features.

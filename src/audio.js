@@ -37,10 +37,11 @@ addEventListener('keydown', initAudio, true);
 
 // ---------------------------------------------------------------- building blocks
 const rnd = (a, b) => a + Math.random() * (b - a);
+let level = 1;   // how loud this one-shot plays: far-off gunfire is quieter (see sfx)
 function envGain(t, peak, attack, dur, dest) {
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.linearRampToValueAtTime(peak, t + attack);
+  g.gain.linearRampToValueAtTime(Math.max(.0002, peak * level), t + attack);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   g.connect(dest);
   return g;
@@ -63,12 +64,16 @@ function tone(freq, dur, { type = 'sine', gain = .2, attack = .004, at = 0, f2, 
 
 // ---------------------------------------------------------------- one-shots
 const last = {};
-export function sfx(name, minGap = 0) {
-  if (!ctx || ctx.state !== 'running') return;
+export function sfx(name, minGap = 0, loud = 1) {
+  if (!ctx || ctx.state !== 'running' || loud < .02) return;
   const now = ctx.currentTime;
   if (minGap && now - (last[name] || 0) < minGap) return;
   last[name] = now;
   const p = rnd(.92, 1.08);
+  level = loud;
+  try { play(name, p); } finally { level = 1; }
+}
+function play(name, p) {
   switch (name) {
     case 'step': noise(.08, { type: 'lowpass', f: rnd(500, 800), gain: .12 }); tone(70 * p, .05, { gain: .05 }); break;
     case 'stepMetal': noise(.06, { type: 'bandpass', f: 2400, q: 3, gain: .08 }); tone(320 * p, .06, { type: 'triangle', gain: .03 }); break;
@@ -100,6 +105,19 @@ export function sfx(name, minGap = 0) {
     case 'servo': tone(300 * p, .2, { type: 'triangle', gain: .02, f2: 520 }); break;
     case 'crackle': noise(.03, { type: 'highpass', f: 3000, gain: rnd(.03, .09) }); break;
     case 'spill': tone(300, .08, { type: 'square', gain: .04 }); tone(240, .1, { type: 'square', gain: .04, at: .07 }); break;
+    // guns: a crack of filtered noise for the report, a falling square for the punch, a little tail for the big ones
+    case 'gun_pistol': noise(.13, { type: 'bandpass', f: 1900 * p, q: .7, gain: .45 }); tone(150 * p, .09, { type: 'square', gain: .1, f2: 55 }); break;
+    case 'gun_shotgun': noise(.32, { type: 'lowpass', f: 3000, f2: 380, gain: .6 }); tone(95 * p, .22, { type: 'square', gain: .16, f2: 38 }); noise(.4, { type: 'lowpass', f: 600, gain: .12, at: .08 }); break;
+    case 'gun_rifle': noise(.22, { type: 'bandpass', f: 2300 * p, q: .6, gain: .55 }); tone(120 * p, .22, { type: 'sawtooth', gain: .12, f2: 45 }); noise(.5, { type: 'lowpass', f: 700, gain: .1, at: .12 }); tone(900, .03, { type: 'triangle', gain: .03, at: .45 }); break;
+    case 'gun_smg': noise(.06, { type: 'bandpass', f: 2700 * p, q: .8, gain: .32 }); tone(190 * p, .05, { type: 'square', gain: .07, f2: 90 }); break;
+    case 'gun_assault_rifle': noise(.09, { type: 'bandpass', f: 2100 * p, q: .7, gain: .42 }); tone(150 * p, .07, { type: 'square', gain: .09, f2: 65 }); break;
+    case 'dry': tone(1900, .02, { type: 'triangle', gain: .05 }); noise(.025, { type: 'highpass', f: 4000, gain: .06 }); break;
+    case 'reload': noise(.05, { type: 'bandpass', f: 1300, q: 2, gain: .12 }); tone(420, .04, { type: 'square', gain: .03, at: .02 }); noise(.05, { type: 'bandpass', f: 2200, q: 2, gain: .1, at: .28 }); break;
+    case 'reloaded': noise(.04, { type: 'bandpass', f: 1800, q: 3, gain: .12 }); tone(620, .05, { type: 'square', gain: .035, at: .03 }); break;
+    case 'snip': for (const at of [0, .16, .32]) noise(.04, { type: 'highpass', f: 3200, gain: .09, at }); break;
+    case 'hit_animal': noise(.1, { type: 'lowpass', f: 700 * p, gain: .1 }); break;
+    case 'animal_hit': noise(.07, { type: 'lowpass', f: 900, gain: .14 }); tone(220 * p, .05, { type: 'triangle', gain: .03, f2: 150 }); break;
+    case 'chime': [1568, 2093, 2637, 3136].forEach((f, i) => tone(f * p, .5, { type: 'triangle', gain: .04, at: i * .05 + Math.random() * .03 })); break;
   }
 }
 
@@ -210,3 +228,11 @@ bus.on('signal', kind => { if (kind !== 'out') sfx('alien'); });
 bus.on('spill', () => sfx('spill', 1));
 bus.on('goal', () => sfx('goal'));
 bus.on('uiclick', () => sfx('click', .03));
+// Gunfire is loud near you and fades with distance; your own shots always at full. Hits, chimes and dry clicks too.
+const near = (x, z, r) => Math.max(0, 1 - Math.hypot(x - S.player.x, z - S.player.z) / r);
+bus.on('shot', s => sfx('gun_' + s.gun, 0, s.by === S.player.id ? 1 : near(s.x, s.z, 70) ** 1.5 * .8));
+bus.on('animalfx', f => { if (f.kind === 'chime') sfx('chime', .3, near(f.x, f.z, 30)); else if (f.kind === 'hit') sfx('animal_hit', .03, near(f.x, f.z, 40)); });
+bus.on('dry', () => sfx('dry', .1));
+bus.on('reload', () => sfx('reload'));
+bus.on('reloaded', () => sfx('reloaded'));
+bus.on('sheared', () => sfx('snip'));

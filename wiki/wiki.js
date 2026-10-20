@@ -10,7 +10,7 @@ import { ARTICLES, ALIASES, NOTES, BIOME_TEXT } from './articles/index.js';
 import { CHANGELOG, VERSION } from '../src/changelog.js';
 
 const { ITEMS, ENTITIES, RECIPES, RECIPE, TECHS, TECH, FLUIDS, BIOMES, FEATURES, HAZARDS, MEDICAL, MED, MED_RULES, TOOLS, AUGMENTS, AUG_RULES,
-  DEPOSIT, TIERS, VOLTAGES, ROADS, FRAMES, ENGINES, VEHICLES, CROPS, TECH_CATS, CONVERSATION, AMBIENT, PLAYER, DAY, BARREL_SIZE, STRAY_ORES } = D;
+  DEPOSIT, TIERS, VOLTAGES, ROADS, FRAMES, ENGINES, VEHICLES, CROPS, TECH_CATS, CONVERSATION, AMBIENT, PLAYER, DAY, BARREL_SIZE, STRAY_ORES, ANIMALS, ANIMAL_RULES, WEAPONS, STARTER_KIT } = D;
 
 // ---------------------------------------------------------------- small helpers
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -62,6 +62,7 @@ export function itemLink(id, label) {
   return `<a class="il" href="${href(itemTitle(id))}" title="${esc(itemTitle(id))}">${img(id)}${label ?? esc(itemTitle(id))}</a>`;
 }
 const iconLink = id => `<a href="${href(itemTitle(id))}" title="${esc(itemTitle(id))}">${img(id, 'px ic')}</a>`;
+const iconLinkAnimal = t => `<a href="${href(ANIMALS[t].name)}" title="${esc(ANIMALS[t].name)}">${img(t, 'px ic')}</a>`;
 export const techLink = (id, label) => TECH[id] ? `<a href="${href(techTitle(id))}" title="${esc(techTitle(id))}">${label ?? esc(TECH[id].name)}</a>` : esc(id);
 function amounts(obj, fl) {
   const parts = [];
@@ -115,6 +116,13 @@ const ID_GROUP = { refinery: ['Oil and chemistry', 'Oil processing'], chem_plant
   bus_belt: ['Belts', 'Belt logistics'], bus_underground: ['Belts', 'Belt logistics'], big_drill: ['Mining', 'Mining'] };
 const RAW = new Set(['iron_ore', 'copper_ore', 'coal', 'stone', 'wood', 'crystal', 'abyssal_ore', 'uranium_ore']);
 const PARTS = new Set(['chassis', 'wheel', 'hull', 'armor_plate', 'turret', 'fishing_net']);
+// Animals: a generated page each (below), and the words for more than one.
+const ANIMAL_IDS = Object.keys(ANIMALS);
+export const animalTitle = t => ANIMALS[t].name;
+const animalLink = (t, label) => link(animalTitle(t), label);
+const animalPlural = t => { const n = ANIMALS[t].name.toLowerCase(); return n.endsWith(' ox') ? n + 'en' : /(sheep|moose)$/.test(n) ? n : /(x|sh|ch)$/.test(n) ? n + 'es' : n + 's'; };
+const AMMO = new Set(['gunpowder', ...Object.values(WEAPONS).map(w => w.ammo)]);
+const FROM_ANIMALS = new Set(Object.values(ANIMALS).flatMap(a => [...Object.keys(a.drops), ...Object.keys(a.shear || {}), ...(a.eggs ? [a.eggs] : [])]));
 export function classOf(id) {
   if (isFluid(id)) return { label: 'fluid', group: 'Fluids', topic: 'Fluids', cat: 'Fluids' };
   const it = ITEMS[id], e = ENTITIES[id];
@@ -131,6 +139,10 @@ export function classOf(id) {
   if (it.seed) return { label: 'seed', group: 'Seeds', topic: 'Agriculture', cat: 'Seeds' };
   if (it.crop) return { label: 'crop', group: 'Crops', topic: 'Agriculture', cat: 'Crops' };
   if (it.shape === 'fish') return { label: 'food', group: 'Food', topic: 'Fishing', cat: 'Food' };
+  if (it.food) return { label: 'food', group: 'Food', topic: 'Food', cat: 'Food' };
+  if (it.weapon) return { label: 'weapon', group: 'Weapons', topic: 'Weapons', cat: 'Weapons' };
+  if (AMMO.has(id)) return { label: id === 'gunpowder' ? 'intermediate product' : 'ammunition', group: 'Ammunition', topic: 'Weapons', cat: 'Ammunition' };
+  if (FROM_ANIMALS.has(id)) return { label: 'animal product', group: 'Animal products', topic: 'Animals', cat: 'Animal products' };
   if (it.fuel || it.nuclear) return { label: 'fuel', group: 'Intermediate products', topic: 'Fuel', cat: 'Intermediate products' };
   return { label: 'intermediate product', group: 'Intermediate products', topic: 'Crafting', cat: 'Intermediate products' };
 }
@@ -198,6 +210,12 @@ function sources(id) {
   }
   if (ITEMS[id]?.crop) out.push(`Grown in a [[Agriculture#Greenhouses|greenhouse]] from ${itemLink(D.seedId(id))}.`);
   if (id === 'raw_fish') out.push('Caught by hand (hold right-click on a fish) or with a [[Fishing net]] on a cargo boat. See [[Fishing]].');
+  const hunted = ANIMAL_IDS.filter(t => ANIMALS[t].drops[id]);
+  if (hunted.length) out.push(`[[Hunting]] ${listing(hunted.map(t => `${animalLink(t, esc(animalPlural(t)))} (${ANIMALS[t].drops[id]})`))}.` + (hunted.some(t => ANIMALS[t].catch) ? ` The small ones (${listing(hunted.filter(t => ANIMALS[t].catch).map(t => esc(animalPlural(t))))}) can be caught by hand instead, for the same.` : ''));
+  const shorn = ANIMAL_IDS.filter(t => ANIMALS[t].shear?.[id]);
+  if (shorn.length) out.push(`Shearing ${listing(shorn.map(t => `${animalLink(t, esc(ANIMALS[t].name.toLowerCase()))} (${ANIMALS[t].shear[id]} a time)`))}: hold right-click on one. The wool grows back in ${Math.round(ANIMAL_RULES.regrow / 60)} minutes.`);
+  const layers = ANIMAL_IDS.filter(t => ANIMALS[t].eggs === id);
+  if (layers.length) out.push(`Laid on the ground by ${listing(layers.map(t => animalLink(t, esc(animalPlural(t)))))} every few minutes (no more than ${ANIMAL_RULES.eggsNear} lie round one at a time). Walk over them holding ${'{{k|pickup}}'} to pick them up.`);
   if (id === 'water') out.push(`Pumped by a ${itemLink('water_pump')} (${ENTITIES.water_pump.rate}/s) or a ${itemLink('hp_pump')} (${ENTITIES.hp_pump.rate}/s) placed on water.`);
   if (id === 'steam') out.push(`Boiled from water by a ${itemLink('boiler')} (${ENTITIES.boiler.steam}/s) or a ${itemLink('reactor')} (${ENTITIES.reactor.steam}/s).`);
   if (id === 'crude_oil') out.push(`Pumped from crude oil wells by a ${itemLink('oil_pump')}. Wells never run dry but slow down to 20% yield.`);
@@ -214,6 +232,8 @@ function itemInfobox(id) {
   if (it?.nuclear) r('Fuel value', `${it.nuclear} MJ (reactors only)`);
   if (fl?.fuel) r('Fuel value', `${fl.fuel} MJ a unit`);
   if (it?.food) { r('Well fed', `${it.food} s`); r('Heals', `${it.heal} health`); }
+  if (it?.weapon) { const w = WEAPONS[id]; r('Fires', itemLink(w.ammo)); r('Damage', w.pellets > 1 ? `${w.dmg} × ${w.pellets} pellets` : w.dmg); r('Rate', `${fmt(w.rate, 2)} shots/s${w.auto ? ', automatic' : ''}`); r('Range', `${w.range} tiles`); r('Spread', w.spread ? `${w.spread}° either side` : 'none'); r('Magazine', `${w.mag} rounds`); r('Reload', `${w.reload} s`); }
+  if (AMMO.has(id) && id !== 'gunpowder') r('Fired by', listing(Object.keys(WEAPONS).filter(g => WEAPONS[g].ammo === id).map(g => itemLink(g))));
   if (it?.barrel) r('Holds', `${BARREL_SIZE} ${itemLink(it.barrel)}`);
   if (it?.aug) { const a = AUGMENTS[it.aug]; r('Effect', it.desc.split('.')[0]); r('Tier', `${it.tier} of ${a.tiers.length}`); }
   if (it?.engine) { const en = ENGINES[id]; r('Power', kw(en.power)); r('Burns', itemLink(en.fuel)); }
@@ -248,6 +268,8 @@ function itemBody(id) {
   }
   const use = consumers(id), packTechs = it?.shape === 'pack' ? TECHS.filter(t => t.cost[id]) : [], meds = MEDICAL.filter(m => m.crop === id);
   const isFuel = it?.fuel || FLUIDS[id]?.fuel;
+  if (!use.length && classOf(id).group === 'Animal products') parts.push('== Usage ==', 'Nothing is made from it yet: recipes that use it come in a later update. Keep it until then (it stacks to ' + it.stack + ').');
+  if (it?.weapon) parts.push('== Using it ==', `Hold it (pick it from the [[Interface#The HUD|quickbar]]) and left-click: it fires at the cursor${WEAPONS[id].auto ? ', again and again while you hold the button' : ', one shot a click'}. See [[Weapons]] and [[Hunting]].`, `{{gen|kills|${id}}}`);
   if (use.length || packTechs.length || meds.length || isFuel || it?.food) {
     parts.push('== Usage ==');
     const notes = [];
@@ -298,6 +320,7 @@ function biomeBox(b) {
     ['Underground', [...new Set([...Object.keys(b.under || {}), ...Object.keys(b.deep || {})])].map(o => iconLink(o)).join(' ')],
     ['Trees', Object.keys(b.trees).map(t => FEATURES[t].name).join(', ')],
     ['Crops', b.seeds.map(s => iconLink(s)).join(' ')],
+    ['Animals', ANIMAL_IDS.filter(t => ANIMALS[t].biomes[b.id]).map(t => animalLink(t)).join(', ')],
     ['Crude oil', b.oil >= .6 ? 'common' : b.oil >= .35 ? 'some' : 'rare']] };
 }
 function biomeBody(b) {
@@ -310,11 +333,40 @@ function biomeBody(b) {
   const trees = Object.keys(b.trees), rock = FEATURES[b.rockKind || 'rock'];
   parts.push('== Trees and rocks ==', trees.map(t => `* '''${FEATURES[t].name}''': ${amountsText(FEATURES[t].gives)}`).join('\n') + `\n* '''${rock.name}''': ${amountsText(rock.gives)}`);
   parts.push('== Crops ==', `Weedy patches here give seeds of ${listing(b.seeds.map(s => itemLink(D.seedId(s))))}.` + (b.seeds.some(s => CROPS[s].irr) ? ' These seeds are irradiated: finding one opens the mutations in the [[Medical research|medical lab]].' : ''));
+  const fauna = ANIMAL_IDS.filter(t => ANIMALS[t].biomes[b.id]);
+  parts.push('== Animals ==', `Living here: ${listing(fauna.map(t => animalLink(t, esc(animalPlural(t)))))}.` + (fauna.some(t => ANIMALS[t].light) ? ' Some of them glow at night.' : '') + ' See [[Animals]] and [[Hunting]].', `{{gen|animals|${b.id}}}`);
   if (h) parts.push('== Hazard ==', `Staying here builds up ${esc(h.name.toLowerCase())} exposure over 12 seconds; leaving lets it fade. At full exposure: ${esc(lcFirst(h.desc))} It never kills. The '''${esc(adapt.name)}''' upgrade in the [[Medical research|medical lab]] halves it a level, and needs ${itemLink(adapt.crop)}.`);
   parts.push('== See also ==', '* [[Biomes]]\n* [[World generation]]' + (h ? '\n* [[Hazards]]' : ''));
   return parts.join('\n\n');
 }
 for (const b of BIOMES) addPage({ title: b.name, kind: 'biome', id: b.id, icon: Object.keys(b.ores)[0], desc: 'Biome' + (b.hazard ? ` · ${HAZARDS[b.hazard].name}` : ''), cats: ['Biomes'], box: () => biomeBox(b), src: () => biomeBody(b) });
+
+// ---------------------------------------------------------------- generated animal pages
+const ACTIVE = { day: 'by day (it sleeps at night)', night: 'at night (it sleeps by day)', both: 'day and night' };
+// shots to kill with a gun; most of a shotgun's pellets land, close up
+const killsWith = (t, g) => { const w = WEAPONS[g]; return Math.ceil(ANIMALS[t].hp / (w.dmg * (w.pellets > 1 ? w.pellets * .75 : 1))); };
+const runsFrom = a => !a.flee ? 'nothing: too slow to get away' : a.tame ? `engineers sprinting within ${a.flee * 2} tiles, vehicles, gunshots` : `engineers within ${a.flee} tiles, vehicles, gunshots`;
+const hands = a => [a.shear ? `shear it for ${amountsText(a.shear)}` : '', a.catch ? 'catch it by hand' : '', a.eggs ? `collect the ${itemLink(a.eggs, 'eggs')} it lays` : ''].filter(Boolean);
+function animalBox(t) {
+  const a = ANIMALS[t], h = hands(a);
+  return { title: a.name, img: t, caption: esc(a.desc), rows: [
+    ['Lives in', BIOMES.filter(b => a.biomes[b.id]).map(b => link(b.name)).join(', ')], ['Groups of', a.group[1] === 1 ? 'one: it lives alone' : `${a.group[0]} to ${a.group[1]}`],
+    ['Out and about', ACTIVE[a.active]], ['Health', a.hp], ['Speed', `walks ${a.walk}, runs ${a.run} tiles/s`], ['Runs from', runsFrom(a)],
+    ['Hunting gives', amounts(a.drops)], ...(h.length ? [['By hand', cap(listing(h))]] : []), ...(a.light ? [['Glows', 'at night']] : []),
+    ['Pistol shots', killsWith(t, 'pistol')], ['Rifle shots', killsWith(t, 'rifle')]] };
+}
+function animalBody(t) {
+  const a = ANIMALS[t], h = hands(a), where = BIOMES.filter(b => a.biomes[b.id]);
+  const parts = [`The '''${esc(a.name.toLowerCase())}''' is an [[Animals|animal]] in [[Depthworks]]. ${esc(a.desc)} It lives in ${listing(where.map(b => link(b.name)))}, ${a.group[1] > 1 ? `in groups of ${a.group[0]} to ${a.group[1]}` : 'on its own'}, and is out ${ACTIVE[a.active]}.`];
+  parts.push('== Behaviour ==', (a.tame ? 'A farm animal: it lets you walk right up to it and only steps aside, but runs from anyone sprinting at it, from vehicles and from gunfire.'
+    : !a.flee ? 'It is far too slow to run from anything.' : `Wild and wary: it runs when an engineer comes within ${a.flee} tiles, and from vehicles and gunfire, and calms down a few seconds after it gets away.`)
+    + ` It walks ${a.walk} tiles a second and runs at ${a.run}${a.run > PLAYER.speed ? ', faster than you walk' : a.run > PLAYER.speed * .8 ? ', about as fast as you walk: sprint to keep up' : ''}.` + (a.light ? ' At night it glows, lighting the ground round it.' : '') + (a.chime ? ' Its glassy feathers ring like bells when it takes off.' : ''));
+  const ways = h.map(x => `\n* ${cap(x)}${x.startsWith('shear') ? ` (hold right-click on it; the wool grows back in ${Math.round(ANIMAL_RULES.regrow / 60)} minutes)` : x.startsWith('catch') ? ': hold right-click on it. You get the same as hunting it' : ': they lie on the ground near it, and holding {{k|pickup}} picks them up'}.`).join('');
+  parts.push('== What it gives ==', `* Hunting it: ${amountsText(a.drops)}. It has ${a.hp} health: ${killsWith(t, 'pistol')} pistol shot${killsWith(t, 'pistol') > 1 ? 's' : ''}, or ${killsWith(t, 'rifle')} with the bolt-action rifle. See [[Hunting]].` + ways);
+  parts.push('== See also ==', '* [[Animals]]\n* [[Hunting]]\n* [[Weapons]]\n' + where.map(b => `* [[${b.name}]]`).join('\n'));
+  return parts.join('\n\n');
+}
+for (const t of ANIMAL_IDS) addPage({ title: animalTitle(t), kind: 'animal', id: t, icon: t, desc: 'Animal · ' + BIOMES.filter(b => ANIMALS[t].biomes[b.id]).map(b => b.name).join(', '), cats: ['Animals'], box: () => animalBox(t), src: () => animalBody(t) });
 
 // ---------------------------------------------------------------- generated technology pages
 const catName = c => TECH_CATS.find(x => x.id === c)?.name ?? c;
@@ -453,6 +505,11 @@ const GEN = {
     const pretty = ks => ks.map(k => `<kbd>${esc(codeName(k).replace(/^Shift\+/, 'Shift + ').replace(/^Ctrl\+/, 'Ctrl + '))}</kbd>`).join(' or ');
     return table(th('Action', 'Default key'), ACTIONS.map(([id, name, keys]) => `<tr><td>${esc(name)}</td><td>${pretty(keys)}</td></tr>`), 'wikitable');
   },
+  animals: biome => table(th('Animal', 'Lives in', 'Health', 'Runs at', 'Out', 'By hand', 'Hunting gives'), ANIMAL_IDS.filter(t => !biome || ANIMALS[t].biomes[biome]).map(t => { const a = ANIMALS[t];
+    return `<tr><td>${iconLinkAnimal(t)} ${animalLink(t)}</td><td>${BIOMES.filter(b => a.biomes[b.id]).map(b => link(b.name)).join(', ')}</td>${num(a.hp)}${num(a.run, a.run + ' tiles/s')}<td>${{ day: 'day', night: 'night', both: 'both' }[a.active]}</td><td>${[a.shear ? 'shear' : '', a.catch ? 'catch' : '', a.eggs ? 'eggs' : ''].filter(Boolean).join(', ') || '—'}</td><td>${amounts(a.drops)}</td></tr>`; })),
+  weapons: () => table(th('Gun', 'Fires', 'Damage', 'Shots/s', 'Range', 'Spread', 'Magazine', 'Reload', 'Research'), Object.keys(WEAPONS).map(g => { const w = WEAPONS[g];
+    return `<tr><td>${itemLink(g)}</td><td>${itemLink(w.ammo)}</td>${num(w.dmg * w.pellets, w.pellets > 1 ? `${w.dmg} × ${w.pellets}` : w.dmg)}${num(w.rate, fmt(w.rate, 2) + (w.auto ? ' (auto)' : ''))}${num(w.range, w.range + ' tiles')}${num(w.spread, w.spread ? w.spread + '°' : '—')}${num(w.mag)}${num(w.reload, w.reload + ' s')}<td>${techOf(g)}</td></tr>`; })),
+  kills: gun => table(th('Animal', 'Health', `Shots with the ${esc(WEAPONS[gun].name.toLowerCase())}`), ANIMAL_IDS.map(t => `<tr><td>${iconLinkAnimal(t)} ${animalLink(t)}</td>${num(ANIMALS[t].hp)}${num(killsWith(t, gun))}</tr>`)),
   stats: () => table(th('', 'Base value'), [['Walking speed', `${PLAYER.speed} tiles/s`], ['Sprint', `×${PLAYER.sprint}, ${PLAYER.sprintCost} stamina/s`], ['Reach (building)', `${PLAYER.reach} tiles`], ['Reach (hand mining ore)', `${PLAYER.mineReach} tiles`],
     ['Inventory', `${PLAYER.inventory} slots`], ['Health', PLAYER.health], ['Health regeneration', `${PLAYER.regen}/s after ${PLAYER.regenDelay} s unhurt (${PLAYER.fedRegen}/s well fed)`], ['Stamina', `${PLAYER.stamina}, refills ${PLAYER.staminaRegen}/s`],
     ['Exhausted', `sprinting stops until stamina is back to ${PLAYER.rested}`], ['Vehicle hits', `${PLAYER.hitDamage} damage per tile/s of the vehicle's speed`]].map(([a, b]) => `<tr><th style="text-align:left">${a}</th><td>${b}</td></tr>`), 'wikitable'),
@@ -464,7 +521,7 @@ const GEN = {
     return table(th('Building', 'Size', 'Power', 'What it does', 'Research'), ids.map(id => { const d = ENTITIES[id];
       return `<tr><td>${itemLink(id)}</td><td class="c">${d.size ? d.size.join('×') : d.drag ? 'dragged' : '1×1'}</td>${num(d.power || 0, d.power ? kw(d.power) : d.burner ? 'fuel' : '—')}<td>${esc((d.desc || '').split('. ')[0].replace(/\.$/, ''))}.</td><td>${techOf(id)}</td></tr>`; })); },
 };
-const ITEM_GROUPS = ['Raw resources', 'Intermediate products', 'Science packs', 'Tools and cables', 'Barrels', 'Vehicle parts', 'Vehicles', 'Augments', 'Road surfaces', 'Food', 'Seeds', 'Crops'];
+const ITEM_GROUPS = ['Raw resources', 'Intermediate products', 'Science packs', 'Tools and cables', 'Barrels', 'Vehicle parts', 'Vehicles', 'Augments', 'Road surfaces', 'Weapons', 'Ammunition', 'Food', 'Animal products', 'Seeds', 'Crops'];
 const BUILD_GROUPS = ['Belts', 'Inserters', 'Storage', 'Mining', 'Smelting', 'Crafting machines', 'Research', 'Electric network', 'Power generation', 'Fluid handling', 'Oil and chemistry', 'Transport', 'Agriculture', 'Lighting', 'Map', 'Depth', 'The Signal'];
 
 // ---------------------------------------------------------------- list pages
@@ -618,7 +675,7 @@ function alphaColumns(pages) {
 const SPECIAL = {
   allpages: () => ({ title: 'Special:AllPages', kind: 'special', desc: 'Every page', src: () => `All ${PAGES.size} pages of the wiki. Articles first, then the generated pages for every item, building and technology.\n\n== Articles ==\n\n` +
     alphaColumns(allPages().filter(p => p.kind === 'article')) + '\n\n== Lists ==\n\n' + alphaColumns(allPages().filter(p => p.kind === 'list')) +
-    '\n\n== Items, buildings and fluids ==\n\n' + alphaColumns(allPages().filter(p => p.kind === 'item')) + '\n\n== Technologies ==\n\n' + alphaColumns(allPages().filter(p => p.kind === 'tech')) }),
+    '\n\n== Items, buildings and fluids ==\n\n' + alphaColumns(allPages().filter(p => p.kind === 'item')) + '\n\n== Biomes and animals ==\n\n' + alphaColumns(allPages().filter(p => p.kind === 'biome' || p.kind === 'animal')) + '\n\n== Technologies ==\n\n' + alphaColumns(allPages().filter(p => p.kind === 'tech')) }),
   search: q => ({ title: 'Search results', kind: 'special', desc: '', src: () => searchResults(q) }),
 };
 

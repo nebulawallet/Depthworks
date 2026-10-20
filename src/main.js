@@ -1,8 +1,9 @@
-import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE, TECH, WIRE_TECH } from './data.js';
+import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE, TECH, WIRE_TECH, WEAPONS } from './data.js';
 import { CHANGELOG, VERSION } from './changelog.js';
 import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID, recipeUnlocked, isResearched } from './state.js';
 import { newWorld, ensureChunks } from './worldgen.js';
 import { stockFish } from './fish.js';
+import { stockAnimals } from './animals.js';
 import { simulate, place, removeAt, canPlace, canSlope, slopeLayer, computeVolume, completeResearch, distTo, mineTargetAt, planCraft, depositLayer, machineStats } from './sim.js';
 import { bpAt } from './blueprint.js';
 import { sizeOf } from './multi.js';
@@ -20,6 +21,7 @@ import { setClip } from './copypaste.js';
 import { updateMap, resetMap } from './map.js';
 import { exploredFromJSON } from './explore.js';
 import { myTrade } from './trade.js';
+import { trace, ammoName } from './weapons.js';
 
 const $ = id => document.getElementById(id);
 $('version').textContent = VERSION;
@@ -56,7 +58,7 @@ function begin(fresh, sandbox = false, slot = S.slot, opts = {}) {
     newWorld(opts);   // its own seed: biomes, coastlines, lakes and rivers of its own
     exploredFromJSON([]);   // a new world: nothing seen yet (the engineer sees round them as soon as it starts)
     Object.assign(S.player, { x: SPAWN.x, z: SPAWN.z, face: 0, fac: 1, veh: null, hp: PLAYER.health, sta: PLAYER.stamina, tired: false });
-    startingInventory(); stockFish();
+    startingInventory(); stockFish(); stockAnimals();
     freshBars();
   } else {
     if (!load(slot)) { toast('save could not be read, starting fresh'); return begin(true, false, slot); }
@@ -311,6 +313,7 @@ addEventListener('keydown', e => {
   if (is('pasteSettings', c) && S.clip) { pasteAt(hover); return; }
   if (is('drop', c)) { drop(); renderHotbar(); return; }
   if (is('altMode', c)) { e.preventDefault(); S.altMode = !S.altMode; return; }
+  if (is('rotate', c) && WEAPONS[S.sel]) { doAction({ a: 'reload', gun: S.sel }); return; }   // R with a gun in hand reloads
   if (is('rotate', c)) {
     const ent = hover && world.ents.get(key(hover.x, hover.y, hover.z));
     if (!S.sel && ent) doAction({ a: 'rotate', x: ent.x, y: ent.y, z: ent.z, by: e.shiftKey ? -1 : 1 });
@@ -339,7 +342,7 @@ addEventListener('keydown', e => {
   }
 });
 addEventListener('keyup', e => { keys.delete(e.code); if (is('pickup', e.code)) S.player.pickup = false; });
-addEventListener('blur', () => { keys.clear(); S.player.pickup = false; rmb = false; building = false; });
+addEventListener('blur', () => { keys.clear(); S.player.pickup = false; rmb = false; building = false; firing = false; });
 
 // Q: copy what is under the cursor into the hand (with its direction), or empty the hand. A building you have none of
 // (and can't craft) goes into the hand as a blueprint, to plan with. Over ore with nothing built on it, it picks the best
@@ -426,6 +429,7 @@ view.addEventListener('pointerdown', e => {
   const hv = hover.veh && world.vehicles.find(x => x.id === hover.veh);
   if (hv && e.ctrlKey && (S.sel || isPicked(hv))) { fastClick(hv); return; }
   if (hover.veh && !S.sel) { const v = world.vehicles.find(x => x.id === hover.veh); if (v) { if (Math.hypot(v.x - S.player.x, v.z - S.player.z) > PLAYER.reach + 1) toast('out of reach'); else { openEntity(v); sfx('open'); } } return; }
+  if (WEAPONS[S.sel] && !e.ctrlKey) { firing = true; fire(true); return; }
   if (ITEMS[S.sel]?.food) { doAction({ a: 'eat', it: S.sel }); sfx('craft'); renderHotbar(); return; }
   const ent = world.ents.get(key(hover.x, hover.y, hover.z));
   if (ITEMS[S.sel]?.tool === 'link') { linkClick(ent); return; }
@@ -441,6 +445,7 @@ view.addEventListener('pointerdown', e => {
 });
 addEventListener('pointerup', e => {
   if (e.button === 2) { rmb = false; return; }
+  if (e.button === 0) firing = false;
   if (rot && e.button === rot.button) { const r = rot; rot = null; if (!r.moved) pipette(); return; }
   building = false;
   if (S.dragTiles) { if (S.dragTiles.length) doAction({ a: 'drag', type: S.sel, tiles: S.dragTiles, fac: S.player.fac }); S.dragTiles = null; renderHotbar(); }
@@ -604,10 +609,39 @@ function paintRoad(c, first) {
   renderHotbar();
 }
 
-// The cursor shows the tool that works on what it points at: axe on trees, pickaxe on ore and rock, shovel on weeds.
+// Firing: a click fires once; holding the button keeps an automatic gun firing at its rate. An empty magazine reloads
+// (when there is ammunition) instead of firing. The host decides what each shot hits; a guest draws its own shots at
+// once, from the same trace, so firing never waits on the network.
+let firing = false, lastFire = -9;
+function fire(first) {
+  const gun = S.sel, w = WEAPONS[gun], p = S.player;
+  if (!w || !hover || S.modal) { firing = false; return; }
+  if (!first && !w.auto) return;
+  const now = performance.now() / 1000;
+  if (now - lastFire < 1 / w.rate) return;
+  if (p.veh) { if (first) toast("you can't shoot from a vehicle"); firing = false; return; }
+  if (p.reload) return;
+  if (!((p.mags?.[gun] || 0) > 0)) {
+    if (first) { if (invGet(w.ammo)) doAction({ a: 'reload', gun }); else { toast(`no ${ammoName(gun)} left: craft some (${keyName('inventory')})`); sfx('dry'); } }
+    firing = false; return;
+  }
+  lastFire = now;
+  const x = hover.px ?? hover.x + .5, z = hover.pz ?? hover.z + .5;
+  if (S.net.role === 'client') {
+    p.mags[gun]--;
+    const ang = Math.atan2(x - p.x, z - p.z), shots = [];
+    p.aim = ang; p.aimT = S.T + .6;
+    for (let i = 0; i < w.pellets; i++) { const r = trace(p.x, p.z, ang + (Math.random() - .5) * 2 * w.spread * Math.PI / 180, w.range); shots.push([r.ex, r.ez, r.hit ? 1 : 0]); }
+    bus.emit('shot', { by: p.id, gun, x: p.x, z: p.z, h: p.h || 0, shots });
+  }
+  doAction({ a: 'shoot', gun, x, z });
+  renderHotbar();
+}
+// The cursor shows the tool that works on what it points at: axe on trees, pickaxe on ore and rock, shovel on weeds,
+// and a crosshair while a gun is in hand.
 let shownCursor = '';
 function setToolCursor() {
-  const t = !S.sel && hover && !S.modal ? mineTargetAt(hover) : null, c = t?.tool && toolCursor(t.tool) || '';
+  const t = !S.sel && hover && !S.modal ? mineTargetAt(hover) : null, c = WEAPONS[S.sel] && !S.modal ? toolCursor('crosshair') : t?.tool && toolCursor(t.tool) || '';
   if (c !== shownCursor) { shownCursor = c; view.style.cursor = c; }
 }
 // ---------------------------------------------------------------- loop
@@ -638,6 +672,7 @@ function frame() {
       simulate(dt, S.modal || typing ? { mx: 0, mz: 0 } : moveInput());
       followUnderground();
       netTick(dt);
+      if (firing) fire(false);
       if (building && hover && (!lastPaint || key(hover.x, hover.y, hover.z) !== key(lastPaint.x, lastPaint.y, lastPaint.z))) paintAt(hover, false);
       updateUI(dt, hover);
       updateMap(dt);

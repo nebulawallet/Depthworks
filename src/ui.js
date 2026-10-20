@@ -10,6 +10,8 @@ import { bpAt } from './blueprint.js';
 import { segItems, lanesOf, laneName, lineName, lineItems, lineWarn, lineAugs } from './belts.js';
 import { vstats, unitOf, routeById, driverOf, roadAt, dockTiles, vehicleById } from './transport.js';
 import { fishTarget } from './fish.js';
+import { animalTarget, woolly } from './animals.js';
+import { ammoName } from './weapons.js';
 import { openLogistics, renderLogistics, drawLogistics, showBeltLine, lineEndHTML } from './logistics.js';
 import { iconHTML, iconURL, fmtN, toolCursor } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
@@ -20,7 +22,7 @@ import { ACTIONS, keyName, keyNames, rebind, resetKeys, MOUSE_ACTIONS, combo, is
 import { CLIP_UI, clipFromPanel, pasteToPanel, copyBuilding, setClip } from './copypaste.js';
 import { renderSide, openMapView } from './map.js';
 import { myTrade, offerList } from './trade.js';
-import { TRADE } from './data.js';
+import { TRADE, WEAPONS, ANIMALS } from './data.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -168,7 +170,7 @@ addEventListener('keydown', e => {
 // ---------------------------------------------------------------- hand / hotbar
 // Things you use from your hand: buildings, roads, vehicles, cables and signals, food. Clicking one in the inventory
 // holds it, just like picking it from the quickbar.
-const holdable = it => !!(ENTITIES[it] || ITEMS[it]?.road || ITEMS[it]?.vehicle || ITEMS[it]?.tool || ITEMS[it]?.food);
+const holdable = it => !!(ENTITIES[it] || ITEMS[it]?.road || ITEMS[it]?.vehicle || ITEMS[it]?.tool || ITEMS[it]?.food || ITEMS[it]?.weapon);
 export function selectItem(it) {
   S.sel = it || null; S.linkFrom = null; S.bpHand = false; renderHotbar();
 }
@@ -206,7 +208,7 @@ export function renderHotbar() {
     : it?.tool === 'conduit' ? ' · drag over road tiles to lay power in them'
     : tool ? (S.linkFrom ? ` · now click the other pole${it.toBuilding && isResearched(WIRE_TECH) ? ' or a machine' : ''} · Esc cancels` : ` · click a pole, then another${it.toBuilding && isResearched(WIRE_TECH) ? ' (or a machine)' : ''}, to string a cable`)
     : it?.road ? ` · drag to lay · R turns it (${S.dir % 2 ? 'east-west' : 'north-south'})` : it?.vehicle ? ` · click to put it down · R turns it · facing ${DIR_NAMES[S.dir]}`
-    : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : ` · Ctrl+click a machine to put it in${S.picks.length && S.pickMode ? ` (${TRANSFER_MODES[S.pickMode].name.toLowerCase()} mode on the selection)` : ''}${S.picks.length > 1 ? ` · Ctrl+click a selected one: shared over all ${S.picks.length}` : ''} · Z drops one`)
+    : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : it?.weapon ? gunLine(S.sel) : ` · Ctrl+click a machine to put it in${S.picks.length && S.pickMode ? ` (${TRANSFER_MODES[S.pickMode].name.toLowerCase()} mode on the selection)` : ''}${S.picks.length > 1 ? ` · Ctrl+click a selected one: shared over all ${S.picks.length}` : ''} · Z drops one`)
     + (ent?.kind === 'inserter' && S.mode === 'depth' ? ` · ${['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]}` : '')
     + (ent?.kind === 'belt' && !ent.lanes ? ` · ${['level', 'slopes up ↑', 'slopes down ↓'][[0, 1, -1].indexOf(S.dy)]} (${keyName('pitch')} angles it)` : '')
     : '';
@@ -214,6 +216,15 @@ export function renderHotbar() {
   $('hand').style.display = hand ? '' : 'none';
   renderRoadCfg();
 }
+// A gun in hand: what is loaded, what is carried, how to fire it.
+function gunLine(gun) {
+  const w = WEAPONS[gun], p = S.player, n = p.mags?.[gun] || 0, carried = invGet(w.ammo);
+  const state = p.reload?.gun === gun ? '<span class="warn">reloading…</span>' : `<b>${n}</b>/${w.mag} loaded`;
+  return ` · ${state} · ${iconHTML(w.ammo, carried)} ${ammoName(gun)}${carried ? '' : ' <span class="warn">(none: craft some)</span>'} · left-click fires at the cursor${w.auto ? ' (hold it down)' : ''} · ${keyName('rotate')} reloads`;
+}
+bus.on('reload', () => renderHotbar());
+bus.on('reloaded', () => renderHotbar());
+bus.on('dry', gun => { toast(`no ${ammoName(gun)} left: craft some (${keyName('inventory')})`); renderHotbar(); });
 // The road panel above your hand: how the road you hold gets laid.
 function renderRoadCfg() {
   const el = $('roadcfg'), r = ROADS[S.sel];
@@ -295,15 +306,16 @@ addEventListener('pointerup', ev => {
 });
 // Your inventory as a grid of real slots.
 function invGridHTML() {
-  return `<div class="slots">${inv.slots.map((sl, i) => slotHTML('p:' + i, sl?.it, sl?.n || 0, null, sl && holdable(sl.it) && !panelEnt ? (ITEMS[sl.it].food ? 'click: hold it to eat' : 'click: hold it to build') : '')).join('')}</div>`;
+  return `<div class="slots">${inv.slots.map((sl, i) => slotHTML('p:' + i, sl?.it, sl?.n || 0, null, sl && holdable(sl.it) && !panelEnt ? (ITEMS[sl.it].food ? 'click: hold it to eat' : ITEMS[sl.it].weapon ? 'click: hold it to shoot' : 'click: hold it to build') : '')).join('')}</div>`;
 }
 
 // ---------------------------------------------------------------- inventory + crafting
-const TABS = ['Logistics', 'Production', 'Fluids', 'Transport', 'Agriculture', 'Intermediates', 'Science'];
+const TABS = ['Logistics', 'Production', 'Fluids', 'Transport', 'Agriculture', 'Military', 'Intermediates', 'Science'];
 const SANDBOX_TAB = 'Everything';   // sandbox only: every item in the game, a stack a click
 S.craftTab = 'Logistics';
 function recipeTab(r) {
   const ent = ENTITIES[recipeIcon(r)], it = ITEMS[recipeIcon(r)];
+  if (it?.weapon || ['gunpowder', 'pistol_ammo', 'shotgun_shells', 'rifle_ammo'].includes(r.id)) return 'Military';
   if (['greenhouse', 'medlab'].includes(ent?.kind) || ent?.irrigation || ['chlorophyll', 'green_lamp'].includes(r.id) || it?.seed || it?.crop) return 'Agriculture';
   if (it?.road || it?.tool === 'signal' || it?.shape === 'engine' || ['chassis', 'wheel', 'hull', 'armor_plate', 'turret', 'fishing_net'].includes(r.id) || ['depot', 'rail'].includes(ent?.kind) || ent?.cats?.includes('vehicle')) return 'Transport';
   if (['pipe', 'upipe', 'fpump', 'valve', 'tank', 'oilpump', 'fgen'].includes(ent?.kind) || ent?.ports || it?.shape === 'barrel') return 'Fluids';
@@ -947,6 +959,11 @@ export function describeCell(c) {
   const rd = c.y === 0 && roadAt(c.x, c.z);
   if (rd) out.push(`<b>${ROADS[rd.s].name}</b> <span class="dim">${rd.w ? `${rd.w} wide, ${rd.l} lane${rd.l > 1 ? 's' : ''}` : 'faster walking'}</span>${rd.p ? ` · <span style="color:#ffc83a">power conduit</span>${(g => g ? ` <span class="dim">${g.net ? `network ${g.net.id + 1}, ${Math.round(g.demand)} / ${ROAD_POWER.capacity} kW` : 'no pole feeds it'}</span>` : '')(world.roadGrids?.find(g => g.tiles.some(([x, z]) => x === c.x && z === c.z)))}` : ''}`);
   if (c.y === 0 && TILES[tileAt(c.x, c.z)]?.liquid && fishTarget(c)) out.push('<b>Fish</b> <span class="dim">hold right-click to catch it</span>');
+  const an = c.y === 0 && (c.animal || !e) && animalTarget(c);
+  if (an) {   // what it is, what your hands can do with it, what hunting it gives
+    const A = ANIMALS[an.t], hands = A.shear ? (S.net.role === 'client' ? !an.shorn : woolly(an)) ? 'hold right-click to shear it' : 'shorn: its wool is growing back' : A.catch ? 'hold right-click to catch it' : '';
+    out.push(`<b>${A.name}</b> <span class="dim">${[an.st === 'sleep' ? 'asleep' : an.st === 'flee' ? 'running away' : '', hands, `hunting gives ${Object.entries(A.drops).map(([it, n]) => `${n} ${itemName(it).toLowerCase()}`).join(', ')}`].filter(Boolean).join(' · ')}</span>`);
+  }
   const t = c.y === 0 && TILES[tileAt(c.x, c.z)];
   if (t?.liquid) out.push(`<b>${t.name}</b> <span class="dim">${flowAt(c.x, c.z) >= 0 ? `flows ${DIR_NAMES[flowAt(c.x, c.z)]} · ` : ''}no walking or building, except water pumps</span>`);
   if (c.y === 0 && patchAt(c.x, c.z)) out.push(`<b>${patchName(c.x, c.z)}</b> <span class="dim">${hasTool('shovel') ? 'hold right-click to dig it up for seeds' : 'research Soil science for a shovel to dig it up for seeds'}</span>`);

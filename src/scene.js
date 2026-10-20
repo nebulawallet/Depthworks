@@ -2,10 +2,10 @@
 // sub-pixel offset is applied by sliding the canvas, so motion stays smooth without shimmering), then a
 // post pass draws pixel outlines from depth and normal edges and upscales with hard pixels.
 import * as THREE from 'three';
-import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE, DAY, DITHER, ROAD_POWER, recipeIcon } from './data.js';
+import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECIPE, DAY, DITHER, ROAD_POWER, ANIMALS, WEAPONS, recipeIcon } from './data.js';
 import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, nightDepth, lodAt, tilesOf } from './state.js';
 import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown, oreChanged } from './terrain.js';
-import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, treadMat, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat } from './models.js';
+import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, treadMat, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat, makeAnimal, animateAnimal } from './models.js';
 import { canPlace, canSlope, slopeLayer, TUNNEL_D, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
 import { portEdges } from './fluids.js';
 import { bpAt } from './blueprint.js';
@@ -15,6 +15,7 @@ import { playerMods } from './body.js';
 import { visibleOnBelt, laneOffset, lineWarn, lanesOf } from './belts.js';
 import { roadAt, roadCells, roadTiles, signalRed, vehicleById, onWay, dockTiles, vstats } from './transport.js';
 import { isDown } from './input.js';
+import { isShorn } from './animals.js';
 
 export const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(1);
@@ -478,6 +479,61 @@ function animateFish() {
   }
   fishMesh.count = n; fishMesh.instanceMatrix.needsUpdate = true; if (fishMesh.instanceColor) fishMesh.instanceColor.needsUpdate = true;
 }
+// ---------------------------------------------------------------- animals
+// A model each, only while near the camera. On the host they follow the simulation; in a guest's browser they glide
+// toward each snapshot. Their speed on screen drives the walk.
+const animalMeshes = new Map(), liveIds = new Set();
+function animateAnimals(dt) {
+  const guest = S.net.role === 'client', k = guest ? 1 - Math.pow(.003, dt) : 1, under = S.mode === 'depth' && S.layer < 0;
+  const cx = S.cam.x, cz = S.cam.z, R = Math.max(lowW, lowH) / S.cam.ppu * .8 + 6;
+  liveIds.clear();
+  for (const an of world.animals) {
+    liveIds.add(an.id);
+    let m = animalMeshes.get(an.id);
+    if (!m || m.userData.type !== an.t) { if (m) { scene.remove(m); disposeMesh(m); } m = makeAnimal(an.t); m.userData.animal = an.id; scene.add(m); animalMeshes.set(an.id, m); an.rx = an.x; an.rz = an.z; an.ra = an.a; }
+    if (an.rx === undefined || Math.hypot(an.x - an.rx, an.z - an.rz) > 4) { an.rx = an.x; an.rz = an.z; an.ra = an.a; }
+    const px = an.rx, pz = an.rz;
+    an.rx += (an.x - an.rx) * k; an.rz += (an.z - an.rz) * k; an.ra = lerpAng(an.ra, an.a, Math.min(1, dt * 9));
+    an.rsp = (an.rsp || 0) + ((dt > 0 ? Math.hypot(an.rx - px, an.rz - pz) / dt : 0) - (an.rsp || 0)) * Math.min(1, dt * 8);
+    m.visible = !!S.started && Math.abs(an.rx - cx) < R && Math.abs(an.rz - cz) < R;
+    if (!m.visible) continue;
+    m.position.set(an.rx, 0, an.rz);
+    animateAnimal(m, an, S.T, dt, an.rsp, isShorn(an));
+    if (m.userData.ghost !== under) { m.userData.ghost = under; setGhost(m, under); }
+  }
+  for (const [id, m] of animalMeshes) if (!liveIds.has(id)) { scene.remove(m); disposeMesh(m); animalMeshes.delete(id); }
+}
+// A shot animal puffs; a dead one leaves a burst of fur, feathers or shell.
+bus.on('animalfx', f => {
+  if (f.kind === 'hit') burst(f.x, .3, f.z, 5, 0x8a2a24, 1.1, .045);
+  if (f.kind === 'die') { const L = ANIMALS[f.t]?.look; burst(f.x, .25, f.z, 12, L?.wool ?? L?.col ?? 0x8a6a4a, 1.6, .055); burst(f.x, .2, f.z, 6, 0x6a1a18, 1, .05); }
+});
+
+// ---------------------------------------------------------------- gunfire
+// Every shot anyone fires: a tracer from the muzzle to where each bullet stopped, a muzzle flash, a puff of dust where a
+// bullet that hit nothing landed, and a moment of light on the ground at night. Tracers and flashes are interface
+// overlays (UI_LAYER), so night never hides them.
+const tracers = [], flashes = [];
+const flashGeo = new THREE.OctahedronGeometry(.09, 0), flashMat = new THREE.MeshBasicMaterial({ color: 0xfff0b0 });
+bus.on('shot', s => {
+  if (!WEAPONS[s.gun] || Math.hypot(s.x - S.cam.x, s.z - S.cam.z) > 70) return;
+  const y = (s.h || 0) + .6;
+  let mx = s.x, mz = s.z;
+  for (const [ex, ez, hit] of s.shots) {
+    const a = Math.atan2(ex - s.x, ez - s.z); mx = s.x + Math.sin(a) * .5; mz = s.z + Math.cos(a) * .5;
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(mx, y, mz), V(ex, hit ? .32 : .1, ez)]), new THREE.LineBasicMaterial({ color: 0xffe6a0, transparent: true }));
+    line.layers.set(UI_LAYER); line.renderOrder = 30; line.frustumCulled = false; scene.add(line); tracers.push({ m: line, age: 0 });
+    if (!hit) burst(ex, .06, ez, 3, 0x9a8a6a, .7, .04);
+  }
+  const f = new THREE.Mesh(flashGeo, flashMat); f.position.set(mx, y, mz); f.scale.setScalar(.8 + Math.random() * .6 * (WEAPONS[s.gun].pellets > 1 ? 1.8 : 1)); f.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+  f.layers.set(UI_LAYER); f.renderOrder = 31; scene.add(f);
+  flashes.push({ m: f, x: mx, z: mz, age: 0 });
+});
+function updateGunfire(dt) {
+  for (let i = tracers.length - 1; i >= 0; i--) { const t = tracers[i]; t.age += dt; t.m.material.opacity = Math.max(0, 1 - t.age / .1); if (t.age > .1) { scene.remove(t.m); t.m.geometry.dispose(); t.m.material.dispose(); tracers.splice(i, 1); } }
+  for (let i = flashes.length - 1; i >= 0; i--) { const f = flashes[i]; f.age += dt; f.m.visible = f.age < .05; if (f.age > .12) { scene.remove(f.m); flashes.splice(i, 1); } }
+}
+
 // ---------------------------------------------------------------- factory tags
 // With more than one factory, alt mode marks every building with its factory's colour.
 const tagTex = (() => {
@@ -595,7 +651,7 @@ function animate(dt) {
   }
   // mining chips in time with the pickaxe
   const pm = S.player.mining;
-  if (pm && !pm.blocked && S.player.mineCell) {
+  if (pm && !pm.blocked && S.player.mineCell && pm.kind !== 'animal') {
     if ((chipT += dt) > .45) {
       chipT = 0; const c = S.player.mineCell;
       const ore = world.ores.get(key(c.x, c.y, c.z));
@@ -617,6 +673,8 @@ function animate(dt) {
   }
   animateVehicles(dt);
   animateFish();
+  animateAnimals(dt);
+  updateGunfire(dt);
   updateGoods(dt);
   updateParticles(dt);
 }
@@ -689,12 +747,13 @@ export function pickTarget() {
   ray.setFromCamera(mouse, camera);
   const y = S.mode === 'depth' ? S.layer : 0, list = [];
   for (const e of world.ents.values()) if (e.mesh && e.y === y) list.push(e.mesh);
-  if (y === 0) list.push(...featPickList(), ...vehMeshes.values());
+  if (y === 0) list.push(...featPickList(), ...vehMeshes.values(), ...[...animalMeshes.values()].filter(m => m.visible));
   if (S.mode !== 'depth' || S.layer === 0) { list.push(playerMesh); for (const m of others.values()) list.push(m); }
   const hits = ray.intersectObjects(list, true);
   for (const h of hits) {
     if (h.instanceId !== undefined) { const k = featKeyAt(h.object.uuid, h.instanceId); if (k && world.feats.has(k)) { const [x, , z] = k.split(',').map(Number); return { x, y: 0, z }; } continue; }
-    let o = h.object; while (o && !o.userData.ent && !o.userData.veh && !o.userData.player) o = o.parent;
+    let o = h.object; while (o && !o.userData.ent && !o.userData.veh && !o.userData.player && o.userData.animal === undefined) o = o.parent;
+    if (o?.userData.animal !== undefined) { const an = world.animals.find(a => a.id === o.userData.animal); if (an) return { x: Math.floor(an.x), y: 0, z: Math.floor(an.z), animal: an.id, px: an.x, pz: an.z }; continue; }
     if (o?.userData.player) { const p = S.players.get(o.userData.player); if (p) return { x: Math.floor(p.local ? p.x : p.rx ?? p.x), y: 0, z: Math.floor(p.local ? p.z : p.rz ?? p.z), player: p.id }; continue; }
     if (o?.userData.veh) { const v = vehicleById(o.userData.veh); if (v) return { x: Math.floor(v.x), y: 0, z: Math.floor(v.z), veh: v.id }; continue; }
     if (o) { const e = o.userData.ent; return { x: e.x, y: e.y, z: e.z }; }
@@ -1230,6 +1289,8 @@ function updateLights() {
   // engineers carry a small light of their own, so you can always see what you are doing
   for (const p of S.players.values()) add(p.local ? p.x : p.rx ?? p.x, 0, p.local ? p.z : p.rz ?? p.z, 4.5 * (1 + playerMods(p).light), 0xcfe0ff, .5);   // night eyes reach further
   for (const v of world.vehicles) if (Math.abs(v.v || 0) > .1 || S.player.veh === v.id) add(v.rx ?? v.x, 0, v.rz ?? v.z, 3.5, 0xfff0c0, .6);   // headlights
+  for (const f of flashes) if (f.age < .1) add(f.x, 0, f.z, 3.2, 0xffd890, 1.3);   // muzzle flashes light the ground
+  for (const an of world.animals) { const L = ANIMALS[an.t].light; if (L && Math.abs(an.x - cx) < R && Math.abs(an.z - cz) < R) add(an.rx ?? an.x, 0, an.rz ?? an.z, L.r * (.9 + .1 * Math.sin(S.T * 2 + an.id)), L.color, .55); }   // glowing animals
   lightMesh.count = n; lightMesh.instanceMatrix.needsUpdate = true; if (lightMesh.instanceColor) lightMesh.instanceColor.needsUpdate = true;
   return true;
 }

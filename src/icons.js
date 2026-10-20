@@ -1,5 +1,5 @@
 // Procedural 16x16 pixel icons for every item, drawn once and cached.
-import { ITEMS, ENTITIES, FLUIDS, VEHICLES } from './data.js';
+import { ITEMS, ENTITIES, FLUIDS, VEHICLES, ANIMALS } from './data.js';
 import { hash01 } from './state.js';
 
 const cache = {};
@@ -11,7 +11,7 @@ const hex = (c, k = 1) => {
 export function iconCanvas(id) {
   if (cache[id]) return cache[id];
   const c = document.createElement('canvas'); c.width = c.height = 16;
-  const g = c.getContext('2d', { willReadFrequently: true }), it = ITEMS[id] || (FLUIDS[id] ? { color: FLUIDS[id].color, shape: 'fluid' } : { color: 0x7d8796, shape: 'crate' }), col = it.color;   // unknown ids get a plain crate, not a glaring placeholder
+  const g = c.getContext('2d', { willReadFrequently: true }), it = ITEMS[id] || (FLUIDS[id] ? { color: FLUIDS[id].color, shape: 'fluid' } : ANIMALS[id] ? { color: ANIMALS[id].look.wool ?? ANIMALS[id].look.col, shape: 'animal' } : { color: 0x7d8796, shape: 'crate' }), col = it.color;   // unknown ids get a plain crate, not a glaring placeholder
   const px = (x, y, k = 1, w = 1, h = 1, cc = col) => { g.fillStyle = typeof k === 'string' ? k : hex(cc, k); g.fillRect(x, y, w, h); };
   switch (it.shape) {
     case 'ore': {
@@ -75,6 +75,23 @@ export function iconCanvas(id) {
     case 'vial': px(6, 1, '#c8d0da', 4, 2); px(7, 3, '#c8d0da', 2, 2); for (let y = 5; y < 15; y++) { const w = y < 7 ? 6 : 8; px(8 - w / 2, y, '#8a96a6', w, 1); px(9 - w / 2, y, y < 8 ? .7 : 1, w - 2, 1); } px(5, 8, '#ffffff', 1, 4); break;
     case 'pellet': for (const [x, y] of [[3, 3], [9, 4], [5, 9], [10, 10]]) for (let a = 0; a < 4; a++) for (let b = 0; b < 4; b++) if (Math.hypot(a - 1.5, b - 1.5) < 2) px(x + a, y + b, a + b < 2 ? '#f0ffe0' : a + b < 4 ? 1.35 : .9); break;
     case 'cell': px(4, 1, '#5c6470', 8, 14); px(5, 2, '#2c3038', 6, 12); for (let y = 3; y < 13; y += 3) px(6, y, 1, 4, 2); px(6, 3, 1.4, 4, 1); px(4, 1, '#939ca8', 8, 1); break;
+    case 'meat': {   // a cut on the bone: red (or browned) flesh, a fat rim, a white bone end
+      for (let y = 3; y < 13; y++) for (let x = 2; x < 12; x++) { const d = Math.hypot((x - 6.5) / 1.15, y - 8); if (d < 4.6) px(x, y, d > 3.7 ? 1.3 : y < 7 ? 1.12 : 1); }
+      px(11, 5, '#f0ece4', 3, 2); px(13, 4, '#f0ece4', 2, 1); px(13, 7, '#f0ece4', 2, 1); px(5, 7, .8, 2, 1); px(7, 10, .8, 2, 1);
+      break;
+    }
+    case 'egg': for (let y = 2; y < 15; y++) for (let x = 3; x < 13; x++) { const d = Math.hypot((x - 7.5) / 1, (y - 9) / (y < 9 ? 1.35 : 1.05)); if (d < 4.6) px(x, y, d < 2 && y < 9 ? 1.08 : y > 11 ? .86 : 1); } px(5, 5, '#ffffff', 2, 2); break;
+    case 'wool': for (const [x, y, r] of [[5, 7, 3], [10, 6, 3], [8, 10, 3.4], [4, 11, 2.4], [12, 10, 2.4]]) for (let a = -4; a <= 4; a++) for (let b = -4; b <= 4; b++) if (Math.hypot(a, b) < r && x + a >= 0 && x + a < 16 && y + b >= 0 && y + b < 16) px(x + a, y + b, Math.hypot(a + 1, b + 1) < r * .6 ? 1.06 : .86); break;
+    case 'hide': for (let y = 2; y < 14; y++) { const w = 10 + Math.round(Math.sin(y * 1.3) * 1.5) - (y < 4 || y > 11 ? 3 : 0); px(8 - w / 2, y, y % 3 ? 1 : .85, w, 1); } px(2, 5, 1, 1, 2); px(13, 9, 1, 1, 2); px(6, 6, 1.25, 4, 1); break;
+    case 'feather': for (let i = 0; i < 11; i++) { const x = 3 + i, y = 13 - i, w = Math.round(Math.sin(i / 10 * Math.PI) * 3); for (let k = -w; k <= w; k++) px(x + k * .5 | 0, y + (k > 0 ? 1 : 0), k ? .92 : .75); } px(2, 14, '#8a8f96', 2, 1); break;
+    case 'chitin': for (let y = 3; y < 14; y++) { const w = 12 - Math.abs(y - 8) * 1.2; px(8 - w / 2, y, y % 3 ? 1 : .55, w, 1); } px(8, 3, '#1a0c06', 1, 11); px(5, 6, 1.5, 2, 1); px(10, 9, 1.5, 2, 1); break;
+    case 'slime': for (let y = 4; y < 14; y++) for (let x = 2; x < 14; x++) { const d = Math.hypot(x - 7.5, (y - 10) * (y < 10 ? .8 : 1.6)); if (d < 5.6 - Math.sin(x * 1.7) * .6) px(x, y, y < 8 ? 1.3 : 1); } px(5, 7, '#ffffff', 2, 1); px(10, 2, 1, 1, 2); break;
+    case 'shell': for (let y = 3; y < 14; y++) for (let x = 2; x < 14; x++) { const d = Math.hypot(x - 7.5, y - 9.5); if (d < 5.6 && y < 13) px(x, y, Math.floor(Math.atan2(y - 13, x - 7.5) * 3) % 2 ? 1.2 : .9); } px(4, 2, '#e8fcff', 1, 3); px(10, 2, '#e8fcff', 1, 3); px(7, 1, '#ffffff', 2, 3); break;
+    case 'powder': px(3, 12, '#5c6470', 10, 2); for (let y = 6; y < 12; y++) { const w = 4 + (y - 6) * 1.5; px(8 - w / 2, y, y < 8 ? 1.5 : 1, w, 1); } px(6, 4, '#c3cad3', 4, 2); px(7, 5, 2.4, 1, 1); break;
+    case 'ammo': for (const x of [3, 7, 11]) { px(x, 6, 1, 3, 8); px(x, 6, 1.3, 1, 8); px(x, 3, '#c87a3a', 3, 3); px(x + 1, 2, '#c87a3a', 1, 1); px(x, 13, .7, 3, 1); } break;
+    case 'shell_ammo': for (const x of [3, 9]) { px(x, 2, 1, 4, 9); px(x, 2, 1.3, 1, 9); px(x, 11, '#c8a04a', 4, 3); px(x, 11, '#e8d08a', 1, 3); } break;
+    case 'gun': drawGun(px, id, col); break;
+    case 'animal': drawAnimal(px, ANIMALS[id].look, col); break;
     case 'road': {
       const r = col >> 16 & 255;
       px(1, 3, 1, 14, 10);
@@ -96,6 +113,54 @@ export function iconCanvas(id) {
   cache[id] = c; return c;
 }
 
+// Animals in profile, facing right, by their model's shape (ANIMALS[t].look): for the wiki's pages and links.
+function drawAnimal(px, L, col) {
+  const head = L.head2 ?? L.col, leg = L.leg2 ?? L.col, glow = L.glow ?? L.accent ?? 0xffffff;
+  switch (L.shape) {
+    case 'quad': {
+      const tall = L.leg > .35, small = L.body[2] < .3, y0 = tall ? 4 : small ? 8 : 6, h = small ? 4 : 5, x0 = small ? 4 : 2, w = small ? 7 : 10;
+      px(x0, y0, 1, w, h); px(x0, y0, 1.2, w, 1);
+      if (L.spots) { px(x0 + 2, y0 + 1, 1, 2, 2, L.spots); px(x0 + 6, y0 + 2, 1, 2, 2, L.spots); }
+      for (const x of [x0, x0 + 2, x0 + w - 3, x0 + w - 1]) px(x, y0 + h, 1, 1, 15 - y0 - h, leg);
+      const hx = x0 + w - 1, hy = tall ? 1 : y0 - 2;
+      if (tall) px(hx, y0 - 3, 1, 2, 4, L.mane ?? L.col);
+      px(hx, hy, 1, 4, 3, head); px(hx + 3, hy + 1, .6, 1, 1, head);
+      if (L.ears) px(hx, hy - (L.earUp ? 3 : 1), 1, 1, L.earUp ? 3 : 1, head);
+      if (L.horns || L.antlers) { px(hx + 1, hy - 2, 1, 1, 2, L.antlers ?? L.accent ?? 0xd8d0b8); px(hx - 1, hy - 3, 1, 2, 1, L.antlers ?? L.accent ?? 0xd8d0b8); }
+      if (L.twoHeads) px(hx + 1, hy + 3, 1, 3, 2, head);
+      if (L.tail === 'bushy' || L.tail === 'long') px(x0 - 2, y0 + 1, 1, 2, 3, L.mane ?? L.accent ?? L.col);
+      else px(x0 - 1, y0, 1, 1, 2);
+      px(hx + 2, hy + 1, '#101014');
+      break;
+    }
+    case 'bird': {
+      const tall = L.leg > .3;
+      for (let y = 0; y < 5; y++) px(3 + (y === 0 || y === 4 ? 1 : 0), (tall ? 5 : 7) + y, 1, y === 0 || y === 4 ? 6 : 8, 1);
+      px(9, tall ? 1 : 4, 1, 1, tall ? 5 : 3, head); px(9, tall ? 1 : 3, 1, 3, 2, head); px(12, tall ? 2 : 4, 1, tall ? 3 : 2, 1, L.beak);
+      if (L.comb) px(9, 2, 1, 2, 1, L.comb);
+      px(5, tall ? 6 : 8, .8, 4, 2); px(5, tall ? 10 : 12, 1, 1, tall ? 6 : 3, leg); px(8, tall ? 10 : 12, 1, 1, tall ? 6 : 3, leg);
+      px(1, tall ? 6 : 6, 1, 2, 2); px(10, tall ? 2 : 4, '#101014');
+      break;
+    }
+    case 'frog': px(3, 8, 1, 10, 5); px(3, 8, 1.2, 10, 1); px(9, 6, 1, 3, 2); px(10, 6, '#f0f0d0'); px(2, 12, .8, 4, 2); px(11, 13, .8, 3, 1); break;
+    case 'lizard': px(3, 9, 1, 8, 3); px(11, 9, 1, 3, 2); px(13, 10, '#101014'); px(0, 10, 1, 3, 1); px(1, 11, 1, 2, 1); for (const x of [4, 9]) px(x, 12, .8, 1, 2); px(4, 9, 1.25, 6, 1, L.accent); break;
+    case 'bug': for (let y = 5; y < 12; y++) { const w = 12 - Math.abs(y - 8) * 2; px(8 - w / 2, y, y < 7 ? 1.3 : 1, w, 1); } px(8, 5, 1, 1, 7, glow); px(13, 7, 1, 2, 3, leg); for (const x of [4, 7, 10]) px(x, 12, 1, 1, 2, leg); break;
+    case 'moth': px(2, 3, 1.15, 5, 8); px(9, 3, 1.15, 5, 8); px(7, 4, 1, 2, 9); px(3, 5, 1, 2, 2, glow); px(10, 5, 1, 2, 2, glow); px(6, 2, 1, 1, 2); px(9, 2, 1, 1, 2); break;
+    case 'snail': px(1, 11, 1, 13, 3); for (let y = 2; y < 11; y++) for (let x = 3; x < 12; x++) { const d = Math.hypot(x - 7, y - 6.5); if (d < 4.6) px(x, y, d < 1.5 || (d > 2.6 && d < 3.3) ? 1 : .75, 1, 1, d < 1.5 || (d > 2.6 && d < 3.3) ? glow : 0x8a7a6a); } px(13, 8, 1, 1, 3); px(13, 7, glow); break;
+    case 'crab': px(3, 8, 1, 10, 4); px(3, 8, 1.2, 10, 1); for (const x of [5, 8, 10]) px(x, 5, 1, 1, 3, glow); px(1, 6, 1.2, 3, 2); px(12, 6, 1.2, 3, 2); for (const x of [3, 6, 9, 12]) px(x, 12, .8, 1, 3); break;
+  }
+}
+// Guns, pointing right: a barrel, a body, a grip, and wood where the gun has it.
+function drawGun(px, id, col) {
+  const metal = '#3a3e46', hi = '#8a929c', wood = '#8a5a2c';
+  switch (id) {
+    case 'pistol': px(3, 5, metal, 10, 3); px(3, 5, hi, 10, 1); px(4, 8, metal, 3, 6); px(5, 8, '#5c6470', 1, 5); px(7, 8, metal, 2, 1); px(12, 4, hi, 1, 1); break;
+    case 'shotgun': px(0, 6, metal, 16, 2); px(0, 6, hi, 16, 1); px(1, 8, wood, 6, 2); px(0, 9, wood, 3, 3); px(8, 8, wood, 5, 1); px(7, 8, metal, 1, 2); break;
+    case 'rifle': px(0, 7, wood, 7, 2); px(0, 9, wood, 2, 3); px(5, 6, metal, 11, 2); px(5, 6, hi, 11, 1); px(7, 4, metal, 4, 2); px(8, 3, '#9fe8f2', 2, 1); px(9, 8, hi, 1, 2); break;
+    case 'smg': px(2, 5, metal, 11, 4); px(2, 5, hi, 11, 1); px(13, 6, metal, 3, 1); px(5, 9, metal, 2, 5); px(9, 9, '#5c6470', 2, 4); px(0, 6, '#5c6470', 2, 2); break;
+    default: px(0, 7, '#4a5040', 4, 3); px(0, 10, '#4a5040', 2, 2); px(3, 6, metal, 11, 3); px(3, 6, hi, 11, 1); px(14, 7, metal, 2, 1); px(6, 9, metal, 2, 4); px(9, 9, '#4a5040', 2, 4); px(6, 4, metal, 4, 2);
+  }
+}
 function drawVehicle(px, frame, col) {
   switch (frame) {
     case 'car': px(2, 7, 1, 12, 4); px(4, 4, '#9fe8f2', 7, 3); px(4, 4, 1.2, 7, 1); for (const x of [3, 10]) px(x, 11, '#22252b', 3, 3); break;
@@ -215,7 +280,11 @@ export function toolCursor(tool) {
   const c = document.createElement('canvas'); c.width = c.height = 32;
   const g = c.getContext('2d'), px = (x, y, col, w = 1, h = 1) => { g.fillStyle = col; g.fillRect(x * 2, y * 2, w * 2, h * 2); };
   const handle = (x0, y0, n) => { for (let i = 0; i < n; i++) { px(x0 + i, y0 + i, '#8a5a2c'); px(x0 + i + 1, y0 + i, '#5e3b1a'); } };
-  if (tool === 'axe') { handle(5, 5, 10); for (let y = 0; y < 6; y++) px(1 + Math.floor(y / 2), y + 1, '#c3cad3', 5 - Math.floor(y / 2), 1); px(1, 1, '#ffffff', 2, 1); px(6, 2, '#5c6470', 1, 4); }
+  if (tool === 'crosshair') {   // a gun in hand: a ring with four ticks and a centre dot, hot spot in the middle
+    for (let a = 0; a < 32; a++) { const t = a / 32 * Math.PI * 2, x = Math.round(7.5 + Math.cos(t) * 4.5), y = Math.round(7.5 + Math.sin(t) * 4.5); px(x, y, '#ffffff'); }
+    for (const [x, y, w, h] of [[7, 0, 2, 3], [7, 13, 2, 3], [0, 7, 3, 2], [13, 7, 3, 2]]) px(x, y, '#ffffff', w, h);
+    px(7, 7, '#ff5a4a', 2, 2);
+  } else if (tool === 'axe') { handle(5, 5, 10); for (let y = 0; y < 6; y++) px(1 + Math.floor(y / 2), y + 1, '#c3cad3', 5 - Math.floor(y / 2), 1); px(1, 1, '#ffffff', 2, 1); px(6, 2, '#5c6470', 1, 4); }
   else if (tool === 'pickaxe') { handle(5, 5, 10); for (let i = 0; i < 8; i++) { px(i, 7 - i, '#c3cad3'); px(i + 1, 7 - i, '#939ca8'); } px(0, 7, '#ffffff'); px(7, 0, '#ffffff'); }
   else { handle(7, 7, 8); px(1, 1, '#939ca8', 5, 5); px(2, 2, '#c3cad3', 3, 3); px(1, 1, '#ffffff', 2, 1); px(5, 5, '#5c6470', 2, 2); }
   // dark rim
@@ -225,7 +294,7 @@ export function toolCursor(tool) {
     if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => { const X = x + a, Y = y + b; return X >= 0 && Y >= 0 && X < 32 && Y < 32 && d[(Y * 32 + X) * 4 + 3]; })) { o[i] = 12; o[i + 1] = 14; o[i + 2] = 19; o[i + 3] = 230; }
   }
   g.putImageData(new ImageData(o, 32, 32), 0, 0);
-  return (cursorCache[tool] = `url(${c.toDataURL()}) 4 4, crosshair`);
+  return (cursorCache[tool] = `url(${c.toDataURL()}) ${tool === 'crosshair' ? '16 16' : '4 4'}, crosshair`);
 }
 export function iconURL(id) { const c = iconCanvas(id); return c._url ||= c.toDataURL(); }
 export function iconHTML(id, n, cls = '') {

@@ -1,5 +1,5 @@
 // Shared mutable game state.
-import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE, DEPOSIT, DAY, LOD } from './data.js';
+import { ITEMS, TECH, RECIPE, TIERS, PLAYER, TILES, TILE, HOTBARS, HOTBAR_SIZE, DEPOSIT, DAY, LOD, STARTER_KIT, WEAPONS } from './data.js';
 
 // Tiles per side of the world. Worlds made before chunks are 96; new ones are 500 to 65536 (see worldgen.js).
 export let GRID = 96;
@@ -40,7 +40,8 @@ export function newPlayer(id, name = 'Engineer', color = 0xe07a2e, local = false
   return { id, name, color, local, x: SPAWN.x, z: SPAWN.z, h: 0, vx: 0, vz: 0, face: 0, walk: 0, moving: false,
     mining: null, mineCell: null, pickup: false, inv: local ? null : new Inventory(PLAYER.inventory), craft: [],
     fac: 1, veh: null, drive: null, fed: 0,   // fac: the factory they build for; veh: the vehicle they drive; fed: well fed until
-    hp: PLAYER.health, hurtT: -99, sta: PLAYER.stamina, staT: -99, tired: false };   // health, stamina, and when each was last used
+    hp: PLAYER.health, hurtT: -99, sta: PLAYER.stamina, staT: -99, tired: false,   // health, stamina, and when each was last used
+    mags: {}, reload: null };   // rounds loaded in each kind of gun, and a reload under way: { gun, until }
 }
 
 // ---------------------------------------------------------------- inventories
@@ -445,10 +446,15 @@ export function loadBars(bars, hotbar, bar = 0) {
   S.bar = bar >= 0 && bar < S.bars.length ? bar : 0; S.hotbar = S.bars[0];
 }
 
-// The Factorio start: a handful of plates, one burner drill, one furnace. Everything else you make.
+// The Factorio start: a handful of plates, one burner drill, one furnace, and a pistol with its magazine loaded.
+// Everything else you make.
 export function startingInventory() {
   inv.clear(); world.ground.length = 0;
-  for (const [k, v] of Object.entries({ iron_plate: 8, burner_drill: 1, furnace: 1 })) inv.add(k, v);
+  giveStarterKit(S.player);
+}
+export function giveStarterKit(p) {
+  for (const [k, v] of Object.entries(STARTER_KIT)) p.inv.add(k, v);
+  p.mags = { pistol: WEAPONS.pistol.mag };
 }
 
 export function recipeFor(item) { return RECIPE[item]; }
