@@ -170,7 +170,7 @@ Set an assembler to make automation packs, feed it copper plates and gears with 
 The remaining goals lead through the rest of the game:
 
 # Research {{t|logistic_science}} and make green packs.
-# Research {{t|lifts}} and run machinery on top of [[Hollow frame|hollow frames]] ([[Depth|depth mode]], {{k|depthMode}}).
+# Run machinery on top of [[Hollow frame|hollow frames]] ([[Depth|depth mode]], {{k|depthMode}}), and carry belts up to it with [[Belt logistics#Angled belts|angled belts]].
 # Research {{t|excavation}} and build on layer −1 (depth mode, then {{k|layerDown}}).
 # Smelt [[Resonant crystal|resonant crystal]] from layer −1 into [[Lens|lenses]].
 # Reach precision 2, research {{t|deep_excavation}} and mine [[Abyssal ore|abyssal ore]] on layer −2.

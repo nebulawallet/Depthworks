@@ -2,7 +2,7 @@ import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RE
 import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID, recipeUnlocked, isResearched } from './state.js';
 import { newWorld, ensureChunks } from './worldgen.js';
 import { stockFish } from './fish.js';
-import { simulate, place, removeAt, canPlace, canSlope, computeVolume, completeResearch, distTo, mineTargetAt, planCraft, depositLayer, machineStats } from './sim.js';
+import { simulate, place, removeAt, canPlace, canSlope, slopeLayer, computeVolume, completeResearch, distTo, mineTargetAt, planCraft, depositLayer, machineStats } from './sim.js';
 import { bpAt } from './blueprint.js';
 import { sizeOf } from './multi.js';
 import { toolCursor } from './icons.js';
@@ -248,9 +248,9 @@ function setLayer(l) {
   if (l < lo || l > hi) { toast(layerLockReason(l)); return; }
   S.layer = l; applyGhostAll();
 }
-// Lifts go up or down; inserters only pitch in depth mode.
+// Inserters only pitch in depth mode; belts angle in either.
 // Belts can be angled up or down a layer, in depth mode like inserter pitch.
-const effDy = type => { const k = ENTITIES[type]?.kind; return k === 'lift' ? (S.dy === -1 ? -1 : 1) : (k === 'inserter' || canSlope(type)) && S.mode === 'depth' ? S.dy : 0; };
+const effDy = type => (ENTITIES[type]?.kind === 'inserter' && S.mode === 'depth') || canSlope(type) ? S.dy : 0;
 
 // ---------------------------------------------------------------- keyboard (Factorio layout)
 const held = c => keys.has(c);
@@ -301,9 +301,8 @@ addEventListener('keydown', e => {
   }
   if (is('pitch', c)) {
     const kind = S.sel && ENTITIES[S.sel]?.kind;
-    if (kind === 'lift') { S.dy = S.dy === -1 ? 1 : -1; toast('lift goes ' + (S.dy > 0 ? 'up' : 'down')); }
-    else if (S.mode !== 'depth') toast(canSlope(S.sel) ? 'angling belts is a depth control: press Tab' : 'inserter pitch is a depth control: press Tab');
-    else if (canSlope(S.sel)) { S.dy = S.dy === 0 ? 1 : S.dy === 1 ? -1 : 0; toast('belt: ' + ['level', 'slopes up ↑', 'slopes down ↓'][[0, 1, -1].indexOf(S.dy)] + (S.dy ? ' one layer. Place it, and you carry on building on that layer' : '')); }
+    if (canSlope(S.sel)) { S.dy = S.dy === 0 ? 1 : S.dy === 1 ? -1 : 0; toast('belt: ' + ['level', 'slopes up ↑', 'slopes down ↓'][[0, 1, -1].indexOf(S.dy)] + (S.dy > 0 ? ': it goes up from where you place it, and you carry on one layer up' : S.dy < 0 ? ': place it on the lower layer, past the end of the belt coming down (or just past the end of a belt to take it down a layer)' : '')); }
+    else if (S.mode !== 'depth') toast('inserter pitch is a depth control: press Tab');
     else { S.dy = S.dy === 0 ? 1 : S.dy === 1 ? -1 : 0; toast('inserter pitch: ' + ['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]); }
     renderHotbar(); return;
   }
@@ -493,6 +492,7 @@ function paintAt(c, first) {
   }
   // Belts keep the direction R gave them while you drag (walking with WASD moves the cursor, never turns them).
   const dy = effDy(S.sel);
+  c = { ...c, y: slopeLayer(S.sel, c.x, c.y, c.z, S.dir, dy) };   // a slope down may belong a layer lower
   if (planOn()) {   // a blueprint: planned, anywhere you can see, built later
     if (canPlace(S.sel, c.x, c.y, c.z, S.dir, dy, { noInv: true, bp: true }) === 'occupied' && ent && first && !planning) { if (distTo(c.x, c.z) <= PLAYER.reach) { openEntity(ent); sfx('open'); } building = false; return; }
     doAction({ a: 'bp', type: S.sel, x: c.x, y: c.y, z: c.z, dir: S.dir, dy, fac: S.player.fac, quiet: !first });
@@ -509,11 +509,14 @@ function paintAt(c, first) {
   }
   doAction({ a: 'place', type: S.sel, x: c.x, y: c.y, z: c.z, dir: S.dir, dy, fac: S.player.fac });
   lastPlacedCell = { ...c, kind: def.kind };
-  if (canSlope(S.sel) && dy) {   // a slope leads onto the next layer: build there next, level again, so a drag carries on up (or down) the slope
-    S.dy = 0; setLayer(c.y + dy);
-    toast(`now building on layer ${S.layer}${S.layer > 0 ? ': belts up here stand on hollow frames' : ''}`);
-  }
   lastPaint = c;
+  if (canSlope(S.sel) && dy) {   // carry on where the slope leads, level again, so a drag goes on along that layer
+    const ny = c.y + (dy > 0 ? 1 : 0);
+    S.dy = 0;
+    if (ny !== S.layer) { if (S.mode !== 'depth') toggleMode(); setLayer(ny); }
+    lastPaint = { x: c.x, y: ny, z: c.z };   // the cell over the slope is not the next one along: wait for the cursor to move on
+    toast(ny !== c.y || ny !== 0 ? `now building on layer ${S.layer}${S.layer > 0 ? ': belts up here stand on hollow frames' : ''}` : 'belt angled down onto the ground');
+  }
   renderHotbar();
 }
 

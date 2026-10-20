@@ -4,7 +4,7 @@ import { S, world, inv, bus, key, GRID, generateWater, generateOil, generateOres
 import { place, placeMulti, placeCompact, nextResearch } from './sim.js';
 import { bpsToJSON, bpsFromJSON } from './blueprint.js';
 import { rekey, setFoot } from './multi.js';
-import { ENTITIES, TILE, RETIRED, ITEMS, BARREL_SIZE, OLD_BARREL_SIZE, RECIPES } from './data.js';
+import { ENTITIES, TILE, RETIRED, ITEMS, BARREL_SIZE, OLD_BARREL_SIZE, RECIPES, TECH } from './data.js';
 import { segItems, setSegItems } from './belts.js';
 import { loadTransport, vehToJSON, unitToJSON } from './transport.js';
 import { stockFish, findBodies, fishToList, fishFromList, poolsToList, poolsFromList } from './fish.js';
@@ -49,6 +49,7 @@ const worldName = () => (S.sandbox ? 'Sandbox' : 'World') + (world.gen ? ` ${GRI
 export function entToJSON(e) {
   if (e.kind === 'frame') return { t: 'frame', x: e.x, y: e.y, z: e.z };
   const o = { t: e.type, x: e.x, y: e.y, z: e.z, d: e.dir, dy: e.dy };
+  if (e.kind === 'belt' && e.dy < 0) o.low = 1;   // a slope down that stands on its lower layer (see below)
   for (const f of FIELDS) if (e[f] !== undefined) o[f] = e[f];
   if (e.fa) o.fa = Array.from(e.fa, v => Math.round(v || 0));
   if (e.belt) {   // items per tile as [type, p, lane]; line settings ride on the line's first tile
@@ -94,6 +95,9 @@ export function applyEntJSON(e, o, forceRemesh = false) {
 }
 export function entFromJSON(o) {
   if (o.t === 'frame') return place('frame', o.x, o.y, o.z, 0, 0, true);
+  // Slopes (and the lifts they replaced) going down used to stand on their upper layer and dig into the one below. They stand on the lower one
+  // now: moving an old one down a layer keeps exactly what feeds it and what it feeds.
+  if (o.dy < 0 && !o.low && ENTITIES[o.t]?.kind === 'belt' && !world.ents.has(key(o.x, o.y - 1, o.z))) o = { ...o, y: o.y - 1, low: 1 };
   // boilers and steam engines saved before they were big (no footprint) stay one tile: nothing overlaps or moves
   const def = ENTITIES[o.t];
   const e = def?.big && !o.foot ? placeCompact(o.t, o.x, o.y, o.z, o.d, o.fac) : def?.multi && o.foot ? placeMulti(o.t, o.foot, o.y, o.d, true, o.fac) : place(o.t, o.x, o.y, o.z, o.d, o.dy, true);
@@ -200,7 +204,7 @@ export function loadData(d, asGuest = false) {
     S.player.craft = d.craft || []; S.goalsDone = new Set(d.goalsDone || []); S.remoteInv = d.remoteInv || {};
     if (d.invSlots) inv.loadList(d.invSlots); else { inv.clear(); for (const [k, v] of d.inv || []) inv.add(k, v); }
   }
-  S.research.done = new Set(d.research.done); S.research.current = d.research.current; S.research.progress = d.research.progress;
+  S.research.done = new Set(d.research.done.filter(id => TECH[id]));   // retired technologies (Lifts) drop out S.research.current = d.research.current; S.research.progress = d.research.progress;
   // saves from before the queue had one current tech: it becomes the queue
   S.research.queue = Array.isArray(d.research.queue) ? d.research.queue : d.research.current ? [d.research.current] : [];
   nextResearch();
@@ -296,6 +300,8 @@ function retireItems(d) {
   const back = (it, n = 1) => { out.n += n; for (const [p, k] of Object.entries(RETIRED[it])) give(p, k * n); };
   const slots = list => Array.isArray(list) ? list.map(s => { if (Array.isArray(s) && gone(s[0])) { back(s[0], s[1]); return 0; } return s; }) : list;
   const counts = o => { for (const it of Object.keys(o || {})) if (gone(it)) { back(it, o[it]); delete o[it]; } };
+  // lifts standing in the world become the angled belts that replaced them, on the same tile, going the same way
+  for (const o of d.ents || []) if (o.t === 'lift') { o.t = 'belt'; o.dy = o.dy < 0 ? -1 : 1; }
   d.ents = (d.ents || []).filter(o => {
     if (!gone(o.t)) return true;
     back(o.t); if (o.fuel && o.fuelType) give(o.fuelType, o.fuel);

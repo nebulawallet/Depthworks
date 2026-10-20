@@ -30,7 +30,7 @@ Assemblers, steel, electric furnaces, crafting stations, the big drill, augments
 
 === Logistics ===
 
-Undergrounds and splitters, faster belts, bus belts, long, fast and filter inserters, and lifts.
+Undergrounds and splitters, faster belts, bus belts, and long, fast and filter inserters.
 
 === Power ===
 
@@ -121,7 +121,7 @@ Some research needs a tier as well as packs: {{t|excavation}} needs tier 1, {{t|
 * [[Research]]`,
 },
 {
-  title: 'Depth', desc: 'Layers, hollow frames, lifts and depth mode', cats: ['Progression'], icon: 'frame',
+  title: 'Depth', desc: 'Layers, hollow frames, angled belts and depth mode', cats: ['Progression'], icon: 'frame',
   body: `'''Depth''' is the idea that gives [[Depthworks]] its name. The world has seven buildable '''layers''', from −2 (deep rock) to 4 (four frames up), and you can build on all of them. The ground is layer 0.
 
 == Depth mode ==
@@ -149,8 +149,7 @@ Layers −1 and −2 are solid rock with their own [[Mining#Ore below the ground
 
 == Moving items between layers ==
 
-* An '''[[Belt logistics#Angled belts|angled belt]]''' slopes one layer up or down: in depth mode, hold a belt and press {{k|pitch}} before placing it. Building then carries on from the layer it leads to.
-* A {{i|lift}} carries items one layer up or down; {{k|pitch}} chooses which.
+* An '''[[Belt logistics#Angled belts|angled belt]]''' slopes one layer up or down: hold a belt and press {{k|pitch}} before placing it. It always stands on the lower of its two layers, so a slope down onto the ground goes on the ground tile just past the end of the raised belt.
 * An inserter's '''pitch''' ({{k|pitch}} in depth mode) can be level, lift (drop one layer up) or drop (one layer down).
 * [[Belt logistics#Underground belts|Underground belts]]: page down below the ground in depth mode to see their tunnel, a belt in a dug channel with its traffic on it.
 

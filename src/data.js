@@ -324,7 +324,6 @@ export const ENTITIES = {
   bus_belt:         { name: 'Bus belt', kind: 'belt', lanes: 3, speed: 3, color: 0x8a5ad8, vol: .4, glyph: 'flow', desc: 'Three lanes, fed only from behind. Click a tile to send its left or right lane off to the side, with a filter. The middle lane goes straight.' },
   bus_underground:  { name: 'Bus underground', kind: 'underground', lanes: 3, speed: 3, color: 0x8a5ad8, range: 7, vol: .7, glyph: 'tunnel', desc: 'Takes a bus belt under anything, up to 6 tiles.' },
   splitter:         { name: 'Splitter', kind: 'splitter', speed: 3, color: 0xc9a227, vol: .8, glyph: 'split', desc: 'Deals items in turn to the belts in front, left and right of it. Each way can have a filter.' },
-  lift:             { name: 'Lift', kind: 'lift', speed: 2, color: 0x58c8d8, vol: 1, glyph: 'rise', desc: 'Carries items one layer up or down. Press V to choose.' },
   burner_inserter:  { name: 'Burner inserter', kind: 'inserter', swing: .9, reach: 1, burner: true, color: 0x9a6a3a, vol: .4, glyph: 'swing', desc: 'Slow, needs no power. Burns fuel, and keeps fuel it carries when it runs dry.' },
   inserter:         { name: 'Inserter', kind: 'inserter', swing: .6, reach: 1, power: 13, color: 0xe0a92e, vol: .5, glyph: 'swing', desc: 'Moves items from behind it to in front of it.' },
   long_inserter:    { name: 'Long arm', kind: 'inserter', swing: .8, reach: 2, power: 20, color: 0xc8483a, vol: .75, glyph: 'swing', desc: 'Reaches two tiles.' },
@@ -458,7 +457,7 @@ for (const id of ['water_pump', 'boiler', 'steam_engine']) ENTITIES[id].cap = 20
 // solid right across, walls and water too.
 export const SOLID = .43;
 export const HIT_BY_KIND = { pipe: 'pipe', upipe: { sq: .16 }, fpump: { sq: .16 }, valve: { sq: .13 }, inserter: { r: .13 }, chest: { sq: .19 }, pole: { r: .08 },
-  lamp: { r: .09 }, rail: null, belt: null, underground: null, splitter: null, lift: null, dam: null };
+  lamp: { r: .09 }, rail: null, belt: null, underground: null, splitter: null, dam: null };
 export const HIT_BY_TYPE = { transformer: { sq: .26 }, step_up: { sq: .22 }, power_line: { sq: .16 }, brazier: { r: .15 }, wooden_chest: { sq: .18 }, chest: { sq: .19 }, burner_inserter: { r: .13 } };
 // Trees and rocks: a circle each.
 export const FEATURE_HIT = { tree: .17, rock: .38 };
@@ -539,7 +538,8 @@ export const ORE_STAGES = [
 export const oreStage = wear => { let s = 0; for (let k = 0; k < ORE_STAGES.length; k++) if (wear >= ORE_STAGES[k].at - 1e-6) s = k; return s; };
 
 // Things that no longer exist, and the parts a save gets back for each one it still holds.
-export const RETIRED = { generator: { brick: 10, gear: 8, iron_plate: 5 } };
+// Lifts: angled belts do what they did, from the start. Lifts standing in a save become angled belts (save.js).
+export const RETIRED = { generator: { brick: 10, gear: 8, iron_plate: 5 }, lift: { belt: 4, steel: 2, frame: 1 } };
 
 // Stack sizes decide how many inventory / chest slots things take.
 const STACKS = { ore: 50, crystal: 50, wood: 100, plate: 100, brick: 100, lens: 100, gear: 100, cable: 200, chip: 200, coil: 100, pack: 200,
@@ -561,7 +561,7 @@ export const PLAYER = { speed: 6.5, reach: 10, mineReach: 3, inventory: 80, radi
 // trade is called off when the two are more than `reach` tiles apart.
 // A guest whose input hasn't arrived for `quiet` seconds counts as gone (a closed tab can take a while to be noticed).
 export const TRADE = { wait: 3, reach: 16, quiet: 5 };
-export const BELT_KINDS = new Set(['belt', 'underground', 'splitter', 'lift']);
+export const BELT_KINDS = new Set(['belt', 'underground', 'splitter']);
 
 const R = (id, inp, time, extra = {}) => ({ id, in: inp, out: { [id]: 1 }, time, cat: 'craft', hand: true, ...extra });
 export const RECIPES = [
@@ -588,7 +588,6 @@ export const RECIPES = [
   R('express_belt', { fast_belt: 1, steel: 2, circuit: 1 }, .5, { tech: 'logistics3' }),
   { ...R('underground', { belt: 5, iron_plate: 10 }, 1, { tech: 'logistics' }), out: { underground: 2 } },
   R('splitter', { belt: 4, circuit: 5, iron_plate: 5 }, 1, { tech: 'logistics' }),
-  R('lift', { belt: 4, steel: 2, frame: 1 }, 2, { tech: 'lifts' }),
   R('burner_inserter', { gear: 1, iron_plate: 1 }, .5),
   R('inserter', { circuit: 1, gear: 1, iron_plate: 1 }, .5),
   R('long_inserter', { inserter: 1, gear: 1, iron_plate: 1 }, .5, { tech: 'long_arms' }),
@@ -731,7 +730,6 @@ export const TECHS = [
   T('steel', 'Steel processing', [r], 25, 5, [], ['steel']),
   T('logistic_science', 'Logistic science', [r], 40, 5, ['automation'], ['green_pack']),
   T('fast_inserter', 'Fast inserter', [r], 30, 15, ['automation'], ['fast_inserter']),
-  T('lifts', 'Lifts', [r, g], 40, 15, ['logistics', 'logistic_science'], ['lift', 'angled belts']),
   T('logistics2', 'Logistics 2', [r, g], 50, 15, ['logistics', 'logistic_science'], ['fast_belt']),
   T('electric_distribution', 'Electric distribution', [r, g], 40, 10, ['steel', 'logistic_science'], ['medium_pole']),
   T('high_voltage', 'High voltage', [r, g], 60, 15, ['electric_distribution'], ['power_line', 'transformer', 'transformer_cable']),
@@ -743,7 +741,7 @@ export const TECHS = [
   T('advanced_smelting', 'Advanced smelting', [r, g], 75, 15, ['electric_smelting', 'logistic_science'], ['steel_furnace']),
   T('crafting_stations', 'Crafting stations', [r], 30, 10, ['automation', 'logistics'], ['crafting_station']),
   T('filter_inserter', 'Filter inserter', [r, g], 60, 15, ['fast_inserter', 'logistic_science'], ['filter_inserter']),
-  T('excavation', 'Excavation', [r, g], 60, 15, ['lifts'], ['layer -1'], { precision: 1 }),
+  T('excavation', 'Excavation', [r, g], 60, 15, ['logistics', 'logistic_science'], ['layer -1'], { precision: 1 }),
   T('optics', 'Optics', [r, g], 50, 10, ['excavation'], ['lens']),
   T('precision_science', 'Precision science', [r, g], 75, 15, ['optics', 'steel'], ['blue_pack']),
   T('advanced_electronics', 'Advanced electronics', [r, g, b], 75, 15, ['precision_science'], ['adv_circuit']),
@@ -799,7 +797,7 @@ export const TECH_CATS = [
 ];
 const TECH_CAT = {
   production: ['automation', 'automation2', 'electric_smelting', 'advanced_smelting', 'crafting_stations', 'steel', 'deep_drilling', 'augments', 'augments_2', 'augments_3', 'augments_4', 'augments_5', 'factory_planning'],
-  logistics: ['logistics', 'logistics2', 'logistics3', 'long_arms', 'fast_inserter', 'filter_inserter', 'lifts', 'bus_belts'],
+  logistics: ['logistics', 'logistics2', 'logistics3', 'long_arms', 'fast_inserter', 'filter_inserter', 'bus_belts'],
   power: ['electric_distribution', 'direct_wiring', 'high_voltage', 'solar', 'hydro_power', 'nuclear_power', 'road_power'],
   fluids: ['fluid_handling', 'advanced_fluids', 'oil_processing', 'advanced_oil', 'uranium_processing'],
   transport: ['roads', 'vehicles', 'railways', 'shipping'],

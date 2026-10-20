@@ -474,14 +474,17 @@ export function makeMesh(e) {
         if (e.midOff) st(box(.24, .1, .06), M(0xd84a3a), 0, .15, -.47);
         break;
       }
-      if (e.dy) {   // angled: one tile along and one layer up or down, standing on legs where it leaves its floor
-        const dy = e.dy, ang = Math.atan2(dy, 1), len = Math.hypot(1, 1), h = .5 * dy, trim = M(0xffffff & (def.color + 0x202020));
-        st(box(.9, .07, len), dark, 0, h + .06, 0, ang);
-        st(new THREE.PlaneGeometry(.78, len).rotateX(-Math.PI / 2), tread, 0, h + .1, 0, ang);
-        for (const x of [-.44, .44]) { st(box(.08, .14, len), col, x, h + .09, 0, ang); st(box(.1, .03, len), trim, x, h + .17, 0, ang); }
-        for (const z of [-.5, .5]) st(cyl(.05, .05, .8, seg).rotateZ(Math.PI / 2), steel, 0, .06 + (.5 - z) * dy, z * .96);   // end rollers, level with the belts they meet
-        // legs under the raised end: from the lower floor (this one going up, the one below going down) to the belt
-        const zl = -.3 * dy, top = h - zl * dy, foot = Math.min(0, dy);
+      if (e.dy) {   // angled: one tile along, between this layer's floor and the next one up, on legs under its high end
+        const dy = e.dy, ang = Math.atan2(dy, 1), len = Math.hypot(1, 1), h = .5, trim = M(0xffffff & (def.color + 0x202020));
+        // every piece sits where it would on a flat belt, measured out from the slope's surface along its normal, so the
+        // tread lies on top of the base instead of inside it
+        const ny = Math.cos(ang), nz = Math.sin(ang), on = (geo, mat, x, off) => st(geo, mat, x, h + off * ny, off * nz, ang);
+        const tg = new THREE.PlaneGeometry(.78, len), uv = tg.attributes.uv;
+        for (let i = 0; i < uv.count; i++) uv.setY(i, uv.getY(i) * len);   // the chevrons keep their size over the longer run
+        on(box(.9, .07, len), dark, 0, .06);
+        on(tg.rotateX(-Math.PI / 2), tread, 0, .1);
+        for (const x of [-.44, .44]) { on(box(.08, .14, len), col, x, .09); on(box(.1, .03, len), trim, x, .17); }
+        const zl = -.3 * dy, top = h - zl * dy, foot = 0;
         for (const x of [-.4, .4]) { st(box(.06, top - foot, .06), steel, x, (top + foot) / 2, zl); st(box(.14, .03, .14), dark, x, foot + .015, zl); }
         st(box(.8, .04, .04), steel, 0, (top + foot) / 2, zl);
         break;
@@ -493,7 +496,6 @@ export function makeMesh(e) {
           st(box(.08, .14, 1), col, x, .09, 0);
           st(box(.1, .03, 1), M(0xffffff & (def.color + 0x202020)), x, .17, 0);
         }
-        for (const z of [-.46, .46]) st(cyl(.05, .05, .8, seg).rotateZ(Math.PI / 2), steel, 0, .06, z);
         for (const [x, z] of [[-.4, -.38], [.4, -.38], [-.4, .38], [.4, .38]]) st(box(.06, .04, .06), dark, x, .02, z);
       } else {
         const L = e.curve === 'L', cx = L ? -.5 : .5;
@@ -535,16 +537,6 @@ export function makeMesh(e) {
         const sp = new THREE.Sprite(iconSpriteMat(f)); sp.scale.set(.3, .3, 1); sp.position.set([0, -.3, .3][k], .72, [-.3, 0, 0][k]);
         sp.renderOrder = 10; sp.layers.set(UI_LAYER); g.add(sp);
       });
-      break;
-    }
-    case 'lift': {
-      const dy = e.dy || 1, ang = Math.atan2(dy, 1), len = Math.hypot(1, 1);
-      st(box(.84, .07, len), dark, 0, .5 * dy + .08, 0, ang);
-      st(new THREE.PlaneGeometry(.74, len).rotateX(-Math.PI / 2), treadMat('lift'), 0, .5 * dy + .12, 0, ang);
-      for (const x of [-.44, .44]) {
-        st(box(.07, .12, len), col, x, .5 * dy + .15, 0, ang);
-        st(box(.08, 1.1, .08), steel, x, dy > 0 ? .55 : -.45, dy > 0 ? -.44 : .44);
-      }
       break;
     }
     case 'inserter': {

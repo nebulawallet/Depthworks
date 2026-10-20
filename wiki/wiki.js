@@ -97,7 +97,7 @@ const unlockTech = id => RECIPE[id]?.tech ?? TECHS.find(t => t.unlocks.includes(
 // ---------------------------------------------------------------- what kind of thing an item is
 const B = (group, topic) => ({ label: 'building', group, topic, cat: 'Buildings' });
 const KIND_GROUP = {
-  belt: ['Belts', 'Belt logistics'], underground: ['Belts', 'Belt logistics'], splitter: ['Belts', 'Belt logistics'], lift: ['Belts', 'Depth'],
+  belt: ['Belts', 'Belt logistics'], underground: ['Belts', 'Belt logistics'], splitter: ['Belts', 'Belt logistics'],
   inserter: ['Inserters', 'Inserters'], chest: ['Storage', 'Storage'], frame: ['Depth', 'Depth'], drill: ['Mining', 'Mining'],
   furnace: ['Smelting', 'Smelting'], assembler: ['Crafting machines', 'Crafting'], lab: ['Research', 'Research'], pole: ['Electric network', 'Electricity'],
   pump: ['Power generation', 'Steam power'], boiler: ['Power generation', 'Steam power'], engine: ['Power generation', 'Steam power'],
@@ -149,7 +149,6 @@ function entityRows(id) {
     case 'belt': r('Speed', `${d.speed} tiles/s`); r('Lanes', d.lanes ?? 2); r('Throughput', `${fmt(throughput(d))} items/s`); break;
     case 'underground': r('Exit', `up to ${d.range - 1} tiles ahead`); r('Throughput', `${fmt(throughput(d))} items/s`); break;
     case 'splitter': r('Speed', `${d.speed} tiles/s`); break;
-    case 'lift': r('Speed', `${d.speed} tiles/s`); r('Moves', 'one layer up or down'); break;
     case 'inserter': r('Swing', `${d.swing} s each way`); r('Rate', `${fmt(1 / (2 * d.swing), 2)} items/s`); r('Reach', plural(d.reach, 'tile')); if (d.filter) r('Filter', 'yes'); break;
     case 'drill': r('Mining rate', `${fmt(d.rate, 2)} ore/s (${fmt(d.rate * 60)}/min)`); r('Reaches', DEPOSIT[d.depth].name.toLowerCase() + ' layer'); if (d.acid) r('Acid', `${d.acid} sulfuric acid per ore`); break;
     case 'furnace': case 'assembler': case 'lab': case 'medlab': r('Crafting speed', `×${d.speed}`); break;
@@ -440,12 +439,13 @@ const GEN = {
     ['nothing moved for n s', 'no item went on or off for n seconds'], ['cargo has n', 'the cargo holds at least n of an item'], ['depot has n', 'the depot holds at least n of an item'], ['next stop has room', 'the next stop is not full']].map(([a, b]) => `<tr><td><b>${a}</b></td><td>${b}</td></tr>`), 'wikitable'),
   glyphs: () => {
     const by = {}; for (const [id, d] of Object.entries(ENTITIES)) if (d.glyph) (by[d.glyph] ||= []).push(id);
-    const special = { pulse: 'the transmitter itself: every sentence starts with it', hollow: 'a hollow frame with a working machine inside', above: 'a working machine above the ground (layer 1 and up)', below: 'a working machine below the ground', abyss: 'a working machine on layer −2' };
-    const names = [...new Set([...Object.keys(by), 'hollow', 'above', 'below', 'abyss'])];
+    const special = { pulse: 'the transmitter itself: every sentence starts with it', hollow: 'a hollow frame with a working machine inside', above: 'a working machine above the ground (layer 1 and up)', below: 'a working machine below the ground', abyss: 'a working machine on layer −2', rise: 'an angled belt carrying items up or down a layer' };
+    const names = [...new Set([...Object.keys(by), 'rise', 'hollow', 'above', 'below', 'abyss'])];
     return `<div class="glyphs">${names.map(g => `<div class="glyph"><canvas width="48" height="48" data-g="${g}"></canvas><b>${g}</b><span>${special[g] ?? by[g].slice(0, 4).map(id => esc(ENTITIES[id].name.toLowerCase())).join(', ') + (by[g].length > 4 ? '…' : '')}</span></div>`).join('')}</div>`;
   },
   glyphtable: () => { const by = {}; for (const [id, d] of Object.entries(ENTITIES)) if (d.glyph && d.glyph !== 'pulse') (by[d.glyph] ||= []).push(id);
-    return table(th('Glyph', 'Heard from'), Object.entries(by).map(([g, ids]) => `<tr><td><code>${g}</code></td><td>${ids.map(id => iconLink(id)).join(' ')}</td></tr>`), 'wikitable'); },
+    by.rise = ['belt', 'fast_belt', 'express_belt'];   // angled ones
+    return table(th('Glyph', 'Heard from'), Object.entries(by).map(([g, ids]) => `<tr><td><code>${g}</code></td><td>${ids.map(id => iconLink(id)).join(' ')}${g === 'rise' ? ' (angled)' : ''}</td></tr>`), 'wikitable'); },
   conversation: () => table(th('#', 'They send', 'Translated', 'They ask for', 'Hint'), CONVERSATION.map((c, i) => `<tr>${num(i + 1)}<td class="seq">${c.seq.join(' · ')}</td><td class="alien">${esc(c.text)}</td><td class="seq">${c.ask ? c.ask.join(' + ') : '<i>(the end)</i>'}</td><td>${c.hint ? esc(c.hint) : '—'}</td></tr>`), 'wikitable'),
   ambient: () => table(th('Glyphs they need to know', 'Message'), AMBIENT.map(a => `<tr><td class="seq">${a.seq.join(' · ')}</td><td class="alien">${esc(a.text)}</td></tr>`), 'wikitable'),
   controls: () => {

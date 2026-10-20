@@ -49,7 +49,7 @@ Tier-ups rebuild every model with more radial segments. Precision is something y
   and abyssal alloy (from layer −2), so the conversation literally sits at the bottom of the world.
 - A pulse carries a **sentence**: the transmitter hears every working machine within 5 tiles,
   nearest first. Glyphs include `flow` belts, `tunnel` undergrounds, `split` splitters,
-  `rise` lifts, `swing` inserters, `bore` drills, `heat` furnaces, `make` assemblers, `think` labs,
+  `rise` angled belts, `swing` inserters, `bore` drills, `heat` furnaces, `make` assemblers, `think` labs,
   `keep` chests, `spark` generators and `shine` solar. There is also `hollow` for a frame with a
   working machine inside, and `above`/`below`/`abyss` for layers.
 - The aliens speak using **only glyphs they've been taught**. Each scripted message ends with a
@@ -87,7 +87,7 @@ Built:
   supply and demand. Wires and supply areas are visible, and machines outside an area show "not
   connected".
 - **Logistics:** belts carry 4 items per tile with compression, side-loading and auto-curves, in 3
-  speeds. Also underground belts, splitters and lifts. Dragging a belt over an existing one
+  speeds. Also underground belts, splitters and angled belts (once lifts). Dragging a belt over an existing one
   replaces it (fast-replace).
 - **Progression:** about 25 machines, 21 technologies, 4 science pack tiers, and precision tiers
   that unlock layers −2 to 4.

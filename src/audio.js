@@ -168,7 +168,7 @@ export function updateAudio(dt) {
     if (d2 > 260) continue;
     const near = 1 / (1 + d2 / 30), active = S.T - e.lastActive < .6;
     switch (e.kind) {
-      case 'belt': case 'underground': case 'splitter': case 'lift': if (active && e.nItems) w.belt += near * .25; break;
+      case 'belt': case 'underground': case 'splitter': if (active && e.nItems) w.belt += near * .25; break;
       case 'drill': if (e.status === 'mining') w.drill += near * .6; break;
       case 'furnace': if (e.crafting && active) (ENTITIES[e.type].burner ? (w.fire += near * .6) : (w.machine += near * .5)); break;
       case 'assembler': if (e.crafting && active) w.machine += near * .6; break;

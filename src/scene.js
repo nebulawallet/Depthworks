@@ -6,7 +6,7 @@ import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECI
 import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, nightDepth, lodAt, tilesOf } from './state.js';
 import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown, oreChanged } from './terrain.js';
 import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, treadMat, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat } from './models.js';
-import { canPlace, canSlope, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
+import { canPlace, canSlope, slopeLayer, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
 import { portEdges } from './fluids.js';
 import { bpAt } from './blueprint.js';
 import { REACTOR } from './plants.js';
@@ -261,8 +261,7 @@ export function beltItemPos(b, p, out, o = 0) {
     else { const r = .5 - o; lx = .5 - r * Math.cos(th); lz = -.5 + r * Math.sin(th); }
   } else if (b.kind === 'underground' && b.role === 'in') lz = .5 - Math.min(p, .5);
   else if (b.kind === 'underground') lz = .5 - (p - (b.len - 1));
-  else if (b.kind === 'lift') ly = p * b.dy + .04;
-  else if (b.dy && b.kind === 'belt') ly = p * b.dy;   // an angled belt
+  else if (b.dy && b.kind === 'belt') ly = (b.dy > 0 ? p : 1 - p) + .04;   // slopes run from their own floor to the next one up (their tread sits a little higher)
   const [fx, fz] = DIRS[b.dir];
   out.set(b.x + .5 + lx * -fz - lz * fx, b.y + .11 + ly, b.z + .5 + lx * fx - lz * fz);
   return out;
@@ -802,8 +801,8 @@ function ioHints(type, x, y, z, dir, dy) {
     if (def.big) markTiles(fakeAt(type, x, y, z, dir).foot.filter(([tx, tz]) => world.ores.has(key(tx, y, tz))), 0xffd23f, y);   // the ore it would cover
     return t ? `Drill pushes ore into the ${ENTITIES[t.type].name.toLowerCase()} at the orange arrow` : 'Drill: ore comes out at the orange arrow. Put a belt, chest or furnace there (R rotates)';
   }
-  if (kind === 'belt' || kind === 'underground' || kind === 'splitter' || kind === 'lift') {
-    const ny = kind === 'lift' || canSlope(type) ? y + dy : y, nx = x + dx, nz = z + dz, n = at(nx, ny, nz), bus = (def.lanes ?? 2) === 3, real = at(x, y, z);
+  if (kind === 'belt' || kind === 'underground' || kind === 'splitter') {
+    const ny = canSlope(type) && dy > 0 ? y + 1 : y, nx = x + dx, nz = z + dz, n = at(nx, ny, nz), bus = (def.lanes ?? 2) === 3, real = at(x, y, z);
     if (kind === 'underground') return `${def.name}: place the exit up to ${def.range - 1} tiles ahead, facing the same way`;
     if (n && !beltish(n) && n.kind !== 'inserter') { cross(nx, ny, nz); return `Belts can't load a ${ENTITIES[n.type].name.toLowerCase()} directly: put an inserter between them`; }
     arrow(nx, ny, nz, dir, COL.FLOW, .75);
@@ -1078,7 +1077,7 @@ function updateHover(hover) {
   if (VEHICLES[S.sel] || ROADS[S.sel] || ITEMS[S.sel]?.tool === 'signal' || ENTITIES[S.sel]?.drag) { updateToolHover(hover); return; }
   const sel = S.sel && ENTITIES[S.sel] ? S.sel : null;
   const kind = sel && ENTITIES[sel].kind;
-  const dy = kind === 'lift' ? (S.dy === -1 ? -1 : 1) : (kind === 'inserter' || canSlope(sel)) && S.mode === 'depth' ? S.dy : 0;
+  const dy = (kind === 'inserter' && S.mode === 'depth') || canSlope(sel) ? S.dy : 0;
   const pk = [sel, S.dir, dy, S.maxTier].join();
   if (pk !== previewKey) {
     if (preview) { scene.remove(preview); preview = null; }
@@ -1101,7 +1100,7 @@ function updateHover(hover) {
     || (!!hover && world.ents.get(key(hover.x, hover.y, hover.z))?.kind === 'pole');
   updateLinkLine(hover);
   if (!hover) return;
-  const { x, y, z } = hover, real = world.ents.get(key(x, y, z)), ent = real || (y === 0 && world.feats.get(key(x, 0, z)) ? { kind: 'feat' } : null);
+  const { x, z } = hover, y = sel ? slopeLayer(sel, x, hover.y, z, S.dir, dy) : hover.y, real = world.ents.get(key(x, y, z)), ent = real || (y === 0 && world.feats.get(key(x, 0, z)) ? { kind: 'feat' } : null);
   const pulse = 1 + Math.sin(S.T * 6) * .025;
   marker.position.set(x + .5, y, z + .5);
   marker.scale.set(1.08 * pulse, sel ? .5 : heightOf(ent?.kind === 'feat' ? { kind: 'pole' } : ent) * .95 + .05, 1.08 * pulse);

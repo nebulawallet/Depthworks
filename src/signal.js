@@ -14,6 +14,7 @@ export function sentenceFor(tx) {
     const d = Math.max(Math.abs(e.x - tx.x), Math.abs(e.z - tx.z));
     if (d > HEAR_RADIUS) continue;
     add(ENTITIES[e.type].glyph, d);
+    if (e.kind === 'belt' && e.dy) add('rise', d);   // an angled belt carries things between layers
     if (e.y > 0) add('above', d);
     if (e.y < 0) add('below', d);
     if (e.y <= -2) add('abyss', d);

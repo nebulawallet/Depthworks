@@ -1,7 +1,7 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
 import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, FEATURE_HIT, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT, FRAMES, ROADS, TILES, TOOLS, VOLTAGES, ELV, ROAD_POWER, PIPE_HIT, WIRE_TECH, hitOf, oreStage, groupOf, ingredientMatches, wiresBuildings } from './data.js';
 import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, tilesOf, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize, oreWear, SPAWN, daylight, removeFeat, underOf, patchAt, isResearched } from './state.js';
-import { isBeltLike, dropOnBelt, takeFromBelt, beltWants, beltsTick, touchBelts, clearSeg, segItems, beltCommand, lanesOf, slopeOf } from './belts.js';
+import { isBeltLike, dropOnBelt, takeFromBelt, beltWants, beltsTick, touchBelts, clearSeg, segItems, beltCommand, lanesOf, outRise } from './belts.js';
 import { rebuildFluids, fluidPre, fluidPost, producerCaps, burnNet, burnRate, draw, push, avail, room, passThrough, fluidConflict, flush, sameFac, isPipeLike } from './fluids.js';
 import { roadAt, removeRoad, roadTiles, isWalkway, roadBlocks, transportTick, rebuildRails, wayNear, vehSlots, vehSlotAccept, vehSlotPut, vehSlotTake, vehicleById, vehicleTarget, removeVehicle, depotCommand, vstats } from './transport.js';
 import { bpAt, removeBlueprintsUnder, removeBlueprint } from './blueprint.js';
@@ -48,8 +48,17 @@ export function machineStats(e) {
 function prodExtra(e, prod) { if (prod <= 0) return 0; e.pbar = (e.pbar || 0) + prod; const n = Math.floor(e.pbar); e.pbar -= n; return n; }
 
 // ---------------------------------------------------------------- entities
-// Ordinary two-lane belts can be angled (dy): one tile along, one layer up or down, like a lift. Bus belts can't.
+// Ordinary two-lane belts can be angled (dy): one tile along, one layer up or down. Bus belts can't.
 export const canSlope = type => ENTITIES[type]?.kind === 'belt' && !ENTITIES[type].lanes;
+// Where a slope going down is built when you point at cell (x, y, z). It stands on the lower layer, so normally
+// right there, bringing a belt down from the layer above. But pointing just past the end of a run on this layer (or the top
+// of a slope up) means "take this run down": then it goes one layer lower.
+export function slopeLayer(type, x, y, z, dir, dy) {
+  if (!(dy < 0) || !canSlope(type)) return y;
+  const [dx, dz] = DIRS[dir], [lo] = layerRange();
+  const feeds = [y, y - 1].some(ly => { const n = world.ents.get(key(x - dx, ly, z - dz)); return n?.belt && n.dir === dir && n.y + outRise(n) === y; });
+  return feeds && y - 1 >= lo ? y - 1 : y;
+}
 export function createEntity(type, x, y, z, dir = 0, dy = 0) {
   const def = ENTITIES[type];
   const e = { id: nextId++, type, kind: def.kind, x, y, z, dir, dy: 0, lastActive: -99, prog: 0, status: '', net: null };
@@ -59,7 +68,6 @@ export function createEntity(type, x, y, z, dir = 0, dy = 0) {
     // belts keep their items on their line (belts.js); `buf` holds a tile's items while it has none
     case 'belt': case 'splitter': e.belt = true; e.buf = []; e.len = 1; e.speed = def.speed; e.curve = null; if (canSlope(type)) e.dy = dy || 0; break;
     case 'underground': e.belt = true; e.buf = []; e.len = 1; e.speed = def.speed; e.role = 'in'; e.pair = null; break;
-    case 'lift': e.belt = true; e.buf = []; e.len = 1; e.speed = def.speed; e.dy = dy || 1; break;
     case 'inserter': e.t = 0; e.held = null; e.reach = def.reach; e.swing = def.swing; e.dy = dy || 0; e.filter = null; break;
     case 'drill': e.timer = 0; e.buffer = null; e.bufN = 0; break;
     case 'furnace': e.recipe = null; e.inp = {}; e.out = {}; e.crafting = false; break;
@@ -858,7 +866,7 @@ export function playerTick(dt, input) {
   p.vz = (p.vz || 0) + (input.mz * spd - (p.vz || 0)) * a;
   let vx = p.vx, vz = p.vz;
   const under = world.ents.get(key(Math.floor(p.x), 0, Math.floor(p.z)));
-  if (under?.belt && under.kind !== 'lift') { const [dx, dz] = DIRS[under.dir], sp = under.line?.speed ?? under.speed; vx += dx * sp; vz += dz * sp; }
+  if (under?.belt && !under.dy) { const [dx, dz] = DIRS[under.dir], sp = under.line?.speed ?? under.speed; vx += dx * sp; vz += dz * sp; }
   const stuck = collides(p.x, p.z);
   const nx = p.x + vx * dt; if (stuck || !collides(nx, p.z)) p.x = nx; else if (Math.abs(vx) > Math.abs(vz) * 2) slideAround(p, vx * dt, 0);
   const nz = p.z + vz * dt; if (stuck || !collides(p.x, nz)) p.z = nz; else if (Math.abs(vz) > Math.abs(vx) * 2) slideAround(p, 0, vz * dt);
@@ -1175,17 +1183,12 @@ export function canPlace(type, x, y, z, dir = S.dir, dy = S.dy, opts = {}) {
   if (y === 0 && roadBlocks(x, z) && !def.onRoad) return 'keep roads clear: build beside them, or pass under with an underground belt or pipe';
   if (def.kind === 'depot' && !wayNear(def.way, x, y, z)) return def.way === 'sea' ? 'ports go on the shore, next to water' : def.way === 'rail' ? 'train stations go right beside a rail' : 'truck depots go right beside a road';
   if (def.cap || def.fluids || def.ports) { const f = fluidConflict(type, x, y, z, dir, opts.fac ?? actorFac(), ex?.recipe); if (f) return f; }
-  if (def.kind === 'lift') { const ty = y + (dy || 1); if (ty < lo || ty > hi) return 'the lift would lead to a locked layer'; }
-  if (canSlope(type) && dy) {   // an angled belt rises (or dips) through the space over (or under) its own tile
-    if (!isResearched('lifts') && !S.sandbox) return 'angled belts need the Lifts research';
-    const ty = y + dy; if (ty < lo || ty > hi) return 'the slope would lead to a locked layer';
-    if (world.ents.get(key(x, ty, z))) return `something is in the way ${dy > 0 ? 'above' : 'below'}: the slope passes through there`;
-  }
-  if (slopeOf(world.ents.get(key(x, y - 1, z))) > 0 || slopeOf(world.ents.get(key(x, y + 1, z))) < 0) return 'a sloped belt passes through here';
+  // slopes stand on the lower of the two layers they join (belts.js): the one above must be open too
+  if (canSlope(type) && dy && y + 1 > hi) return 'the slope would lead to a locked layer';
   if (y === 0 && opts.reach && !BELTISH.has(def.kind) && def.kind !== 'pole' && playerBlocks(x, z)) return 'you are standing there';
   return null;
 }
-const BELTISH = new Set(['belt', 'underground', 'splitter', 'lift']);
+const BELTISH = new Set(['belt', 'underground', 'splitter']);
 // Buildings that cover several tiles: every tile must be free. Per-tile ones (dams, greenhouses) take an item for every
 // `perItem` tiles; the rest are one object built from one item.
 const itemsFor = (type, tiles) => { const d = ENTITIES[type]; return d.perTile ? Math.max(1, Math.ceil(tiles.length / (d.perItem || 1))) : 1; };
@@ -1299,7 +1302,7 @@ function placeOne(type, x, y, z, dir, dy, free, fac) {
   }
   const ent = ENTITIES[type];
   const old = world.ents.get(k);
-  const e = createEntity(type, x, y, z, dir, ent.kind === 'lift' ? (dy || 1) : ent.kind === 'inserter' || canSlope(type) ? dy : 0);
+  const e = createEntity(type, x, y, z, dir, ent.kind === 'inserter' || canSlope(type) ? dy : 0);
   if (!ent.shared) e.fac = factoryOf(fac ?? actorFac())?.id ?? 1;
   if (old) {   // fast replace keeps what was on it
     if (old.belt && e.belt) { e.buf = segItems(old).map(it => [...it]); e.lcfg = old.lcfg; e.aug = old.aug; }

@@ -10,7 +10,7 @@ export { BIOME_TEXT };
 // Other names people search for: alias -> 'Page' or 'Page#Section'.
 export const ALIASES = {
   'Belts': 'Belt logistics', 'Belt lines': 'Belt logistics#Belt lines', 'Bus belts': 'Belt logistics#Bus belts', 'Splitters': 'Belt logistics#Splitters',
-  'Underground belts': 'Belt logistics#Underground belts', 'Lanes': 'Belt logistics#Lanes', 'Side-loading': 'Belt logistics#Lanes', 'Lifts': 'Belt logistics#Lifts',
+  'Underground belts': 'Belt logistics#Underground belts', 'Lanes': 'Belt logistics#Lanes', 'Side-loading': 'Belt logistics#Lanes', 'Lifts': 'Belt logistics#Angled belts', 'Lift': 'Belt logistics#Angled belts', 'Slopes': 'Belt logistics#Angled belts', 'Inclines': 'Belt logistics#Angled belts',
   'Power': 'Electricity', 'Electric network': 'Electricity', 'Voltages': 'Electricity#Voltages', 'Brownout': 'Electricity#Brownouts', 'Direct wiring': 'Electricity#Direct wiring', 'Poles': 'Electricity#Poles',
   'Barrel': 'Empty barrel', 'Barrels': 'Fluids#Barrels', 'Pipes': 'Fluids', 'Valves': 'Fluids#Buildings', 'Oil': 'Oil processing', 'Refining': 'Oil processing#Refining', 'Chemistry': 'Oil processing#Chemistry',
   'Trains': 'Railways', 'Rail signals': 'Railways#Signals', 'Signals': 'Railways#Signals', 'Boats': 'Shipping', 'Ships': 'Shipping', 'Trucks': 'Vehicles', 'Cars': 'Vehicles', 'Tanks': 'Vehicles',
@@ -66,7 +66,6 @@ export const NOTES = {
   boiler: "At full output a boiler burns 1.8 MW of fuel, a piece of coal every 2.2 seconds, but it only works as hard as its engines need.",
   steam_engine: "Two engines take all the steam one boiler makes.",
   splitter: "Unlike in ''Factorio'', a splitter here is a single tile that deals to three ways: front, left and right.",
-  lift: "Press {{k|pitch}} to choose whether it carries items up or down.",
   radar: "Available from the start. It needs no research, only power.",
   reactor: "Keep a coolant tower against it at all times. See [[Nuclear power]] for heat and repairs.",
   greenhouse: "A greenhouse can be crafted into 25 panels, and 25 panels back into a greenhouse, so rooms can take any shape.",

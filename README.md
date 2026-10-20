@@ -24,7 +24,7 @@ conversation with something that only understands machines.
 - **Real inventories:** 80 slots for you, typed slots for every machine (fuel, input, result, ingredients,
   science packs, storage). Drag stacks between them.
 - **Logistics:** two-lane belts in three speeds that compress, side-load onto the near lane and curve; underground
-  belts, splitters with a filter per way, and lifts that move items between layers. Three-lane bus belts with filtered
+  belts, splitters with a filter per way, and angled belts (V) that carry items a layer up or down. Three-lane bus belts with filtered
   side channels. Belts run as lines (see `src/belts.js`): each line can be named, filtered and sped up with augments
   in the logistics window, which also draws a line's whole network. Inserters can pitch up or down a layer.
 - **Augments:** speed, efficiency and productivity augments in five tiers for drills, furnaces, assemblers, labs and

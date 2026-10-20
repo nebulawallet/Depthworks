@@ -207,9 +207,8 @@ export function renderHotbar() {
     : tool ? (S.linkFrom ? ` · now click the other pole${it.toBuilding && isResearched(WIRE_TECH) ? ' or a machine' : ''} · Esc cancels` : ` · click a pole, then another${it.toBuilding && isResearched(WIRE_TECH) ? ' (or a machine)' : ''}, to string a cable`)
     : it?.road ? ` · drag to lay · R turns it (${S.dir % 2 ? 'east-west' : 'north-south'})` : it?.vehicle ? ` · click to put it down · R turns it · facing ${DIR_NAMES[S.dir]}`
     : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : ` · Ctrl+click a machine to put it in${S.picks.length && S.pickMode ? ` (${TRANSFER_MODES[S.pickMode].name.toLowerCase()} mode on the selection)` : ''}${S.picks.length > 1 ? ` · Ctrl+click a selected one: shared over all ${S.picks.length}` : ''} · Z drops one`)
-    + (ent?.kind === 'lift' ? ` · ${S.dy === -1 ? 'down' : 'up'}` : '')
     + (ent?.kind === 'inserter' && S.mode === 'depth' ? ` · ${['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]}` : '')
-    + (ent?.kind === 'belt' && !ent.lanes && S.mode === 'depth' ? ` · ${['level', 'slopes up ↑', 'slopes down ↓'][[0, 1, -1].indexOf(S.dy)]} (${keyName('pitch')})` : '')
+    + (ent?.kind === 'belt' && !ent.lanes ? ` · ${['level', 'slopes up ↑', 'slopes down ↓'][[0, 1, -1].indexOf(S.dy)]} (${keyName('pitch')} angles it)` : '')
     : '';
   setHTML($('hand'), hand);
   $('hand').style.display = hand ? '' : 'none';
@@ -308,7 +307,7 @@ function recipeTab(r) {
   if (['greenhouse', 'medlab'].includes(ent?.kind) || ent?.irrigation || ['chlorophyll', 'green_lamp'].includes(r.id) || it?.seed || it?.crop) return 'Agriculture';
   if (it?.road || it?.tool === 'signal' || it?.shape === 'engine' || ['chassis', 'wheel', 'hull', 'armor_plate', 'turret', 'fishing_net'].includes(r.id) || ['depot', 'rail'].includes(ent?.kind) || ent?.cats?.includes('vehicle')) return 'Transport';
   if (['pipe', 'upipe', 'fpump', 'valve', 'tank', 'oilpump', 'fgen'].includes(ent?.kind) || ent?.ports || it?.shape === 'barrel') return 'Fluids';
-  return it?.shape === 'pack' ? 'Science' : it?.shape === 'aug' ? 'Production' : it?.tool ? 'Logistics' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'lift', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
+  return it?.shape === 'pack' ? 'Science' : it?.shape === 'aug' ? 'Production' : it?.tool ? 'Logistics' : !ent ? 'Intermediates' : ['belt', 'underground', 'splitter', 'inserter', 'chest', 'frame', 'pole'].includes(ent.kind) ? 'Logistics' : 'Production';
 }
 function renderInventory() {
   if (S.craftTab === SANDBOX_TAB && !S.sandbox) S.craftTab = TABS[0];
@@ -404,7 +403,7 @@ function beltHTML(e) {
     return `<div><span class="dim">${laneName(n, i)}</span> ${kinds.map(k => iconHTML(k, on.filter(it => it[0] === k).length)).join('') || '<span class="dim">empty</span>'}</div>`;
   }).join('')}</div>`;
   if (e.kind === 'underground') h += `<div class="dim">${e.role === 'in' ? (e.pair ? `entrance, linked ${e.len} tiles ahead` : `entrance: place an exit up to ${def.range - 1} tiles ahead`) : e.pair ? 'exit, linked' : 'exit with no entrance'}</div>`;
-  if (e.kind === 'lift' || (e.kind === 'belt' && e.dy)) h += `<div class="dim">${e.kind === 'belt' ? 'angled: ' : ''}carries items ${e.dy > 0 ? 'up' : 'down'} to layer ${e.y + e.dy}</div>`;
+  if (e.kind === 'belt' && e.dy) h += `<div class="dim">angled: ${e.dy > 0 ? `carries items up to layer ${e.y + 1}` : `brings items down from layer ${e.y + 1}`}</div>`;
   const pickGrid = what => beltPick === what ? `<div class="grid small">${knownItems().map(it => `<div class="cell" data-act="bpickset:${it}"${tipAttr(itemName(it))}>${iconHTML(it)}</div>`).join('')}</div>` : '';
   if (e.kind === 'splitter') {   // a filter per way: matching items go only that way, the rest round the unfiltered ways
     h += `<h4>Filters</h4>` + ['front', 'left', 'right'].map((w, k) => { const f = e.sf?.[k]; return `<div class="row">${w}: ${f ? `${iconHTML(f)} ${itemName(f)} only <span class="x" data-act="sfilter:${k}:"${tipAttr('clear')}>✕</span>` : '<span class="dim">anything else</span>'} <button data-act="bpick:sf${k}">${beltPick === 'sf' + k ? 'cancel' : 'set'}</button></div>` + pickGrid('sf' + k); }).join('');
@@ -646,7 +645,7 @@ function renderEntity() {
       if (e.held) body += `<h4>Holding</h4>${iconHTML(e.held)} ${itemName(e.held)}`;
       break;
     }
-    case 'belt': case 'splitter': case 'lift': case 'underground': body += beltHTML(e); break;
+    case 'belt': case 'splitter': case 'underground': body += beltHTML(e); break;
     case 'transmitter': {
       const sent = sentenceFor(e), ask = currentAsk();
       body += `<h4>Charge</h4>${pbar(e.prog)}` + machineSlotsHTML(e);
@@ -881,7 +880,7 @@ const GOALS = [
   ['assemble', 'Make 20 automation packs in assemblers', () => made('red_pack') >= 20],
   ['p1', 'Reach precision 1: keep 15 volume of machines busy', () => S.maxTier >= 1],
   ['green', 'Research Logistic science', () => S.research.done.has('logistic_science')],
-  ['up', 'Research Lifts and run machinery on top of hollow frames', () => any(e => e.y > 0 && isActive(e))],
+  ['up', 'Run machinery on top of hollow frames (Tab, then PgUp)', () => any(e => e.y > 0 && isActive(e))],
   ['dig', 'Research Excavation and build on layer -1 (Tab, then PgDn)', () => any(e => e.y < 0)],
   ['lens', 'Smelt resonant crystal into 5 lenses', () => made('lens') >= 5],
   ['p2', 'Reach precision 2', () => S.maxTier >= 2],
