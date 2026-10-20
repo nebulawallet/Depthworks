@@ -37,7 +37,7 @@ export const S = {
 // ---------------------------------------------------------------- players
 // Every engineer has their own body, inventory and crafting queue. S.player is the one on this screen.
 export function newPlayer(id, name = 'Engineer', color = 0xe07a2e, local = false) {
-  return { id, name, color, local, x: SPAWN.x, z: SPAWN.z, vx: 0, vz: 0, face: 0, walk: 0, moving: false,
+  return { id, name, color, local, x: SPAWN.x, z: SPAWN.z, h: 0, vx: 0, vz: 0, face: 0, walk: 0, moving: false,
     mining: null, mineCell: null, pickup: false, inv: local ? null : new Inventory(PLAYER.inventory), craft: [],
     fac: 1, veh: null, drive: null, fed: 0,   // fac: the factory they build for; veh: the vehicle they drive; fed: well fed until
     hp: PLAYER.health, hurtT: -99, sta: PLAYER.stamina, staT: -99, tired: false };   // health, stamina, and when each was last used

@@ -1143,7 +1143,7 @@ export function renderNametags() {
     live.add(p.id);
     let el = tagEls.get(p.id);
     if (!el) { el = document.createElement('div'); el.className = 'nametag'; document.body.append(el); tagEls.set(p.id, el); }
-    const [x, y] = project(p.rx, 1.32, p.rz);
+    const [x, y] = project(p.rx, 1.32 + (p.rh || 0), p.rz);
     el.textContent = p.name; el.style.left = x + 'px'; el.style.top = y + 'px';
     el.style.borderColor = '#' + p.color.toString(16).padStart(6, '0');
   }

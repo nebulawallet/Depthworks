@@ -1142,7 +1142,7 @@ export function animatePlayer(g, p, T, dt = .016) {
   P.pick.visible = tool === 'pickaxe'; P.axe.visible = tool === 'axe'; P.shovel.visible = tool === 'shovel';
   P.armR.rotation.x = mining ? -1.7 + Math.sin(T * 14) * .95 : sw * .8;
   P.body.rotation.x = mining ? .12 + Math.sin(T * 14) * .05 : walkAmt * .1;
-  g.position.set(p.x, Math.abs(Math.sin(p.walk)) * .035 * walkAmt, p.z);
+  g.position.set(p.x, (p.h || 0) + Math.abs(Math.sin(p.walk)) * .035 * walkAmt, p.z);
   let d = p.face - g.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
   g.rotation.y += d * Math.min(1, dt * 16);
 }

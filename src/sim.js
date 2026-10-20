@@ -781,12 +781,13 @@ export const distTo = (x, z) => Math.hypot(x + .5 - actor.x, z + .5 - actor.z);
 // What the engineer bumps into on the surface, as rectangles [x0, z0, x1, z1] and circles [x, z, r]. Machines are
 // squares, trees and rocks circles, small things smaller shapes from data (hitOf): pipes their middle and the straight
 // runs of their line. Buildings over several tiles are solid right across their inside. Belts and hollow frames are walkable.
-function solidShapes(cx, cz, out) {
+// What blocks the engineer on layer L (the one they stand on): its buildings; on the ground also water, trees and rocks.
+function solidShapes(cx, cz, out, L = 0) {
   if (cx < 0 || cz < 0 || cx >= GRID || cz >= GRID) { out.push([cx, cz, cx + 1, cz + 1]); return; }
-  const e = world.ents.get(key(cx, 0, cz));
+  const e = world.ents.get(key(cx, L, cz));
   if (e?.kind === 'dam') return;   // dams are ground to walk on
-  if (isWater(cx, cz)) { out.push([cx, cz, cx + 1, cz + 1]); return; }   // no swimming
-  const f = world.feats.get(key(cx, 0, cz));
+  if (L === 0 && isWater(cx, cz)) { out.push([cx, cz, cx + 1, cz + 1]); return; }   // no swimming
+  const f = L === 0 && world.feats.get(key(cx, 0, cz));
   if (f) { out.push([cx + .5, cz + .5, FEATURE_HIT[FEATURES[f.type]?.look.shape === 'rock' ? 'rock' : 'tree']]); return; }
   if (!e || e.belt) return;
   if (e.kind === 'greenhouse') {   // thin walls along a room's walled edges: walk in through the doors
@@ -809,7 +810,7 @@ function solidShapes(cx, cz, out) {
     const w = PIPE_HIT, c = e.conn || 0;
     const straight = (q, ns) => q === (ns ? 5 : 10);
     let conn = 0;
-    for (let d = 0; d < 4; d++) if (c >> d & 1) { const n = world.ents.get(key(cx + DIRS[d][0], 0, cz + DIRS[d][1])), ns = d % 2 === 0; if (straight(c, ns) || straight(n?.conn || 0, ns)) conn |= 1 << d; }
+    for (let d = 0; d < 4; d++) if (c >> d & 1) { const n = world.ents.get(key(cx + DIRS[d][0], L, cz + DIRS[d][1])), ns = d % 2 === 0; if (straight(c, ns) || straight(n?.conn || 0, ns)) conn |= 1 << d; }
     out.push([mx - w, mz - w, mx + w, mz + w]);
     for (let d = 0; d < 4; d++) if (conn >> d & 1) {
       const [dx, dz] = DIRS[d];
@@ -821,10 +822,37 @@ function solidShapes(cx, cz, out) {
   else out.push([mx - h.sq, mz - h.sq, mx + h.sq, mz + h.sq]);
 }
 const _shapes = [];
-function collides(px, pz) {
-  const r = PLAYER.radius;
+// ---------------------------------------------------------------- standing on things
+// The engineer has a height `h`, in layers: the ground is 0, the top of a hollow frame on layer L is L + 1, and an angled
+// belt's surface runs from its low end to its high end across its tile. Each step stands them on the highest surface
+// under their feet within a short step up, so they walk (or ride) up a slope onto the frames it leads to. Anything higher
+// right in front of them (the side of a slope) is a wall; a floor well overhead (frames) is walked under. Off an edge, they drop.
+const STEP = .35, HEADROOM = .9, FALL = 7;
+function surfacesAt(x, z, fn) {
+  const cx = Math.floor(x), cz = Math.floor(z);
+  fn(0, world.ents.get(key(cx, 0, cz)));
+  for (let L = 0; L < LAYER_MAX; L++) {
+    if (world.frames.has(key(cx, L, cz))) fn(L + 1, world.ents.get(key(cx, L + 1, cz)));
+    const e = world.ents.get(key(cx, L, cz));
+    if (e?.kind === 'belt' && e.dy) {
+      const [dx, dz] = DIRS[e.dir], f = Math.max(0, Math.min(1, (x - cx - .5) * dx + (z - cz - .5) * dz + .5));
+      fn(L + (e.dy > 0 ? f : 1 - f), e);
+    }
+  }
+}
+// Where someone at height h would stand at (x, z): the surface's height, the building under their feet, and whether a
+// surface there is too high to step onto but too low to walk under.
+export function footing(x, z, h = 0) {
+  let best = -1, on = null, wall = false;
+  surfacesAt(x, z, (s, e) => { if (s <= h + STEP) { if (s > best) { best = s; on = e; } } else if (s < h + HEADROOM) wall = true; });
+  return { h: Math.max(0, best), on, wall };
+}
+export const layerOfHeight = h => Math.round(h || 0);
+function collides(px, pz, h = 0) {
+  const r = PLAYER.radius, L = layerOfHeight(h);
+  if (footing(px, pz, h).wall) return true;
   for (let cx = Math.floor(px - r - .5); cx <= Math.floor(px + r + .5); cx++) for (let cz = Math.floor(pz - r - .5); cz <= Math.floor(pz + r + .5); cz++) {
-    _shapes.length = 0; solidShapes(cx, cz, _shapes);
+    _shapes.length = 0; solidShapes(cx, cz, _shapes, L);
     for (const s of _shapes) {
       if (s.length === 3) { if (Math.hypot(px - s[0], pz - s[1]) < r + s[2]) return true; continue; }
       if (Math.hypot(px - Math.max(s[0], Math.min(px, s[2])), pz - Math.max(s[1], Math.min(pz, s[3]))) < r) return true;
@@ -841,14 +869,14 @@ function slideAround(p, mx, mz) {
   for (let o = .04; o <= PLAYER.slide + 1e-6; o += .04) {
     for (const s of [pref, -pref]) {
       const ox = ax * o * s, oz = az * o * s;
-      if (collides(p.x + ox + mx, p.z + oz + mz) || collides(p.x + ox, p.z + oz)) continue;
+      if (collides(p.x + ox + mx, p.z + oz + mz, p.h) || collides(p.x + ox, p.z + oz, p.h)) continue;
       const k = Math.min(o, step) / o;   // no faster than walking
       p.x += ox * k; p.z += oz * k;
       return;
     }
   }
 }
-export const playerBlocks = (x, z) => { const r = PLAYER.radius; for (const p of S.players.values()) if (p.x + r > x + .04 && p.x - r < x + .96 && p.z + r > z + .04 && p.z - r < z + .96) return true; return false; };
+export const playerBlocks = (x, z, y = 0) => { const r = PLAYER.radius; for (const p of S.players.values()) if (layerOfHeight(p.h) === y && p.x + r > x + .04 && p.x - r < x + .96 && p.z + r > z + .04 && p.z - r < z + .96) return true; return false; };
 
 // input: { mx, mz } desired direction in world space (unit or zero)
 export function playerTick(dt, input) {
@@ -856,7 +884,7 @@ export function playerTick(dt, input) {
   if (p.veh) {   // driving: the vehicle carries you, and your keys drive it
     const v = vehicleById(p.veh);
     if (!v) p.veh = null;
-    else { staminaTick(p, dt, false); p.drive = { t: input.fz || 0, s: input.fx || 0 }; p.x = v.x; p.z = v.z; p.vx = p.vz = 0; p.moving = false; p.face = v.ang; if (!isClient()) { mineTick(dt); pickupTick(dt); } return; }
+    else { staminaTick(p, dt, false); p.drive = { t: input.fz || 0, s: input.fx || 0 }; p.x = v.x; p.z = v.z; p.h = 0; p.vx = p.vz = 0; p.moving = false; p.face = v.ang; if (!isClient()) { mineTick(dt); pickupTick(dt); } return; }
   }
   // quick acceleration and braking: responsive, but not a teleporting box
   const a = 1 - Math.exp(-dt * (input.mx || input.mz ? 22 : 30));
@@ -865,12 +893,15 @@ export function playerTick(dt, input) {
   p.vx = (p.vx || 0) + (input.mx * spd - (p.vx || 0)) * a;
   p.vz = (p.vz || 0) + (input.mz * spd - (p.vz || 0)) * a;
   let vx = p.vx, vz = p.vz;
-  const under = world.ents.get(key(Math.floor(p.x), 0, Math.floor(p.z)));
-  if (under?.belt && !under.dy) { const [dx, dz] = DIRS[under.dir], sp = under.line?.speed ?? under.speed; vx += dx * sp; vz += dz * sp; }
-  const stuck = collides(p.x, p.z);
-  const nx = p.x + vx * dt; if (stuck || !collides(nx, p.z)) p.x = nx; else if (Math.abs(vx) > Math.abs(vz) * 2) slideAround(p, vx * dt, 0);
-  const nz = p.z + vz * dt; if (stuck || !collides(p.x, nz)) p.z = nz; else if (Math.abs(vz) > Math.abs(vx) * 2) slideAround(p, 0, vz * dt);
+  // a belt under your feet carries you, up and down slopes too
+  const h = p.h || 0, foot = footing(p.x, p.z, h), under = Math.abs(foot.h - h) < .05 ? foot.on : null;
+  if (under?.belt) { const [dx, dz] = DIRS[under.dir], sp = under.line?.speed ?? under.speed; vx += dx * sp; vz += dz * sp; }
+  const stuck = collides(p.x, p.z, h);
+  const nx = p.x + vx * dt; if (stuck || !collides(nx, p.z, h)) p.x = nx; else if (Math.abs(vx) > Math.abs(vz) * 2) slideAround(p, vx * dt, 0);
+  const nz = p.z + vz * dt; if (stuck || !collides(p.x, nz, h)) p.z = nz; else if (Math.abs(vz) > Math.abs(vx) * 2) slideAround(p, 0, vz * dt);
   p.x = Math.min(GRID - .3, Math.max(.3, p.x)); p.z = Math.min(GRID - .3, Math.max(.3, p.z));
+  const to = footing(p.x, p.z, h).h;   // step up onto what is underfoot at once; drop off edges at a fall's pace
+  p.h = to >= h ? to : Math.max(to, h - FALL * dt);
   const sp = Math.hypot(p.vx, p.vz);
   if (input.mx || input.mz) p.face = Math.atan2(input.mx, input.mz);
   else if (p.mining && p.mineCell) p.face = Math.atan2(p.mineCell.x + .5 - p.x, p.mineCell.z + .5 - p.z);
@@ -898,7 +929,7 @@ function healthTick(dt) {
   const p = actor;
   if (!p.veh) for (const v of world.vehicles) {
     const sp = Math.abs(v.v || 0);
-    if (sp < PLAYER.hitSpeed || S.T - (p.hitT ?? -99) < 1) continue;
+    if (sp < PLAYER.hitSpeed || S.T - (p.hitT ?? -99) < 1 || (p.h || 0) > .5) continue;   // vehicles stay on the ground
     const st = vstats(v.type), u = v.unit && world.units.find(q => q.id === v.unit);
     if (!st || st.way === 'sea' || p.veh === v.id || u?.cars.includes(p.veh)) continue;
     if (Math.hypot(v.x - p.x, v.z - p.z) > FRAMES[st.frame].len / 2 + PLAYER.radius + .1) continue;
@@ -914,7 +945,7 @@ export function hurt(p, n, by) {
   notify('hurt', n);
   if (p.hp > 0) return;
   p.hp = maxHealth(p); p.veh = null; p.vx = p.vz = 0; p.mining = null;
-  p.x = SPAWN.x; p.z = SPAWN.z;
+  p.x = SPAWN.x; p.z = SPAWN.z; p.h = 0;
   notify('respawn', p.x, p.z);
   notify('toast', `You were run over by a ${by}. You woke up at the landing site.`);
 }
@@ -1015,7 +1046,7 @@ function pickupTick(dt) {
   if (best >= 0) { const g = world.ground.splice(best, 1)[0]; invAdd(g.type); notify('pickup'); return; }
   const pc = playerCell();
   for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
-    const b = world.ents.get(key(pc.x + dx, 0, pc.z + dz));
+    const b = world.ents.get(key(pc.x + dx, layerOfHeight(p.h), pc.z + dz));
     if (!isBeltLike(b) || distTo(b.x, b.z) > 1.6) continue;
     const it = take(b, t => invRoom(t) > 0);
     if (it) { invAdd(it); notify('pickup'); return; }
@@ -1185,7 +1216,7 @@ export function canPlace(type, x, y, z, dir = S.dir, dy = S.dy, opts = {}) {
   if (def.cap || def.fluids || def.ports) { const f = fluidConflict(type, x, y, z, dir, opts.fac ?? actorFac(), ex?.recipe); if (f) return f; }
   // slopes stand on the lower of the two layers they join (belts.js): the one above must be open too
   if (canSlope(type) && dy && y + 1 > hi) return 'the slope would lead to a locked layer';
-  if (y === 0 && opts.reach && !BELTISH.has(def.kind) && def.kind !== 'pole' && playerBlocks(x, z)) return 'you are standing there';
+  if (opts.reach && !BELTISH.has(def.kind) && def.kind !== 'pole' && playerBlocks(x, z, y)) return 'you are standing there';
   return null;
 }
 const BELTISH = new Set(['belt', 'underground', 'splitter']);
@@ -1212,7 +1243,7 @@ function canPlaceMulti(type, tiles, y, opts) {
     if (world.ents.get(k)) return 'occupied';
     if (y === 0 && roadAt(x, z)) return 'keep roads clear';
     if (y === 0 && world.oil.has(x + ',' + z)) return 'there is crude oil under it';
-    if (def.big && y === 0 && opts.reach && playerBlocks(x, z)) return 'you are standing there';
+    if (def.big && opts.reach && playerBlocks(x, z, y)) return 'you are standing there';
   }
   if (def.kind === 'drill' && !tiles.some(([x, z]) => world.ores.has(key(x, y, z)))) return 'drills need a deposit underneath';
   if (groups(tiles).length > 1) return `a ${def.name.toLowerCase()} has to be one piece`;

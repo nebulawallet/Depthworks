@@ -203,7 +203,7 @@ function onHostMessage(conn, m) {
   switch (m.t) {
     case 'input':
       p.heard = performance.now();   // trades call it off when this goes quiet (trade.js)
-      if (!p.veh) Object.assign(p, { x: m.x, z: m.z });
+      if (!p.veh) Object.assign(p, { x: m.x, z: m.z, h: Math.max(0, Math.min(5, +m.h || 0)) });
       Object.assign(p, { face: m.face, walk: m.walk, moving: m.moving, vx: m.vx, vz: m.vz, pickup: !!m.pickup, drive: m.drive && typeof m.drive.t === 'number' ? { t: Math.max(-1, Math.min(1, m.drive.t)), s: Math.max(-1, Math.min(1, m.drive.s || 0)) } : null });
       if (typeof m.fac === 'number' && factoryOf(m.fac)) p.fac = m.fac;
       p.sel = typeof m.sel === 'string' && ITEMS[m.sel] ? m.sel : null;   // what they hold, for anyone looking at them
@@ -252,7 +252,7 @@ bus.on('factories', () => op({ o: 'factories', factories: world.factories, facNe
 bus.on('remote', (p, ev, args) => { const c = net.conns.get(p.id); if (c) send(c.conn, { t: 'fx', ev, args }); });
 
 const signalJSON = () => ({ ...S.signal, taught: [...S.signal.taught], seen: [...S.signal.seen] });
-const playerJSON = p => ({ id: p.id, name: p.name, color: p.color, x: +p.x.toFixed(3), z: +p.z.toFixed(3), face: +(p.face || 0).toFixed(2), walk: +(p.walk || 0).toFixed(2),
+const playerJSON = p => ({ id: p.id, name: p.name, color: p.color, x: +p.x.toFixed(3), z: +p.z.toFixed(3), h: +(p.h || 0).toFixed(3), face: +(p.face || 0).toFixed(2), walk: +(p.walk || 0).toFixed(2),
   hp: Math.round(p.hp ?? 0), sta: Math.round(p.sta ?? 0), sel: p.sel || null, fac: p.fac ?? 1, fed: p.fed || 0, veh: p.veh || null, expo: p.expo || null,
   moving: !!p.moving, vx: +(p.vx || 0).toFixed(2), vz: +(p.vz || 0).toFixed(2), mining: p.mining ? { prog: +p.mining.prog.toFixed(2), kind: p.mining.kind, tool: p.mining.tool || null, name: p.mining.name, blocked: p.mining.blocked || null } : null,
   mineCell: p.mineCell || null });
@@ -427,7 +427,7 @@ export function netTick(dt) {
   else if (S.net.role === 'client' && net.conn?.open && (net.inputT += dt) > .066) {
     net.inputT = 0;
     const p = S.player;
-    send(net.conn, { t: 'input', x: p.x, z: p.z, face: p.face, walk: p.walk, moving: p.moving, vx: p.vx, vz: p.vz, mine: p.mineCell, pickup: !!p.pickup, drive: p.drive, fac: p.fac, sel: S.sel || null });
+    send(net.conn, { t: 'input', x: p.x, z: p.z, h: +(p.h || 0).toFixed(3), face: p.face, walk: p.walk, moving: p.moving, vx: p.vx, vz: p.vz, mine: p.mineCell, pickup: !!p.pickup, drive: p.drive, fac: p.fac, sel: S.sel || null });
   }
 }
 export function leave() { try { net.peer?.destroy(); } catch { /* ignore */ } }

@@ -42,7 +42,7 @@ From the start, an ordinary belt (plain, fast or express) can be '''angled''' to
 
 '''Coming down:''' place the slope on the lower layer, on the tile just past the end of the raised belt (with a raised run on layer 1, that is on the ground). It takes items from the belt above and behind it and hands them on along the ground. Pointing just past the end of a belt on your own layer instead takes that belt down a layer: from the ground, down to layer −1 (which needs {{t|excavation}}).
 
-A slope up followed straight away by a slope down makes a hump over something in the way. Slopes never curve or take items from the side, and bus belts can't be angled.
+A slope up followed straight away by a slope down makes a hump over something in the way. The engineer can walk up a slope (or let the belt carry them) onto the frames, and down again. See [[Engineer#Climbing|climbing]]. Slopes never curve or take items from the side, and bus belts can't be angled.
 
 Angled belts replaced the old '''lift''' building and its research: lifts in older worlds turn into angled belts where they stand, and lift items come back as the belts, steel and frames they were made from.
 

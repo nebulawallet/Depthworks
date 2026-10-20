@@ -316,6 +316,10 @@ The menu ({{k|help}}) pauses a solo game. It holds '''Settings''' (volume, alt m
 
 The engineer walks with {{kbd|W}}{{kbd|A}}{{kbd|S}}{{kbd|D}} and bumps into machines, trees and rocks, sliding round their corners. Things smaller than a tile (inserters, poles, pipes, chests, lamps) leave gaps, so you can squeeze between two rows of them. You can walk over belts (they carry you), under [[Hollow frame|hollow frames]], and through greenhouse doors, but not into water.
 
+=== Climbing ===
+
+The engineer can walk, or ride, up an [[Belt logistics#Angled belts|angled belt]] onto the frames it leads to, and walk about on top of [[Hollow frame|hollow frames]]. Up there you bump into what is built on that layer instead of what is on the ground. Walk off the edge of the frames and you drop back to the ground. You step onto a slope from its low end; its side is too high to climb further up. Vehicles stay on the ground and can't hit you up there.
+
 Walking on a [[Path]] or a road's sidewalk is {{d|SIDEWALK_SPEED}} times faster.
 
 === Sprinting and stamina ===

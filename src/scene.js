@@ -430,12 +430,12 @@ function animateOthers(dt) {
   for (const p of S.players.values()) {
     if (p.local) continue;
     let m = others.get(p.id);
-    if (!m || m.userData.color !== p.color) { if (m) scene.remove(m); m = makePlayer(p.color); scene.add(m); others.set(p.id, m); p.rx ??= p.x; p.rz ??= p.z; }
+    if (!m || m.userData.color !== p.color) { if (m) scene.remove(m); m = makePlayer(p.color); scene.add(m); others.set(p.id, m); p.rx ??= p.x; p.rz ??= p.z; p.rh ??= p.h || 0; }
     m.userData.player = p.id;
     // friends' positions arrive a few times a second: glide between them
-    if (Math.hypot(p.x - p.rx, p.z - p.rz) > 4) { p.rx = p.x; p.rz = p.z; }
-    p.rx += (p.x - p.rx) * k; p.rz += (p.z - p.rz) * k;
-    animatePlayer(m, { ...p, x: p.rx, z: p.rz }, S.T, dt);
+    if (Math.hypot(p.x - p.rx, p.z - p.rz) > 4) { p.rx = p.x; p.rz = p.z; p.rh = p.h || 0; }
+    p.rx += (p.x - p.rx) * k; p.rz += (p.z - p.rz) * k; p.rh = (p.rh ?? 0) + ((p.h || 0) - (p.rh ?? 0)) * k;
+    animatePlayer(m, { ...p, x: p.rx, z: p.rz, h: p.rh }, S.T, dt);
     const g = S.mode === 'depth' && S.layer < 0;
     if (m.userData.ghost !== g) { m.userData.ghost = g; setGhost(m, g); }
   }
@@ -647,7 +647,7 @@ export function updateCamera(dt) {
   C.ppu += (C.ppuT - C.ppu) * (1 - Math.pow(.00001, dt)); if (Math.abs(C.ppu - C.ppuT) < .02) C.ppu = C.ppuT;
   C.panX = (C.panX || 0) + ((C.panXT || 0) - (C.panX || 0)) * k; C.panZ = (C.panZ || 0) + ((C.panZT || 0) - (C.panZ || 0)) * k;   // depth mode's pan, tweened home when it ends
   if (S.started) { const f = 1 - Math.pow(.00002, dt); C.x += (S.player.x + C.panX - C.x) * f; C.z += (S.player.z + C.panZ - C.z) * f; }
-  C.y += ((S.mode === 'depth' ? S.layer : 0) - C.y) * k;
+  C.y += ((S.mode === 'depth' ? S.layer : S.player.h || 0) - C.y) * k;   // flat mode follows the engineer up onto frames
   const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), dist = 120, cp = Math.cos(C.pitch);
   _t.set(C.x, C.y, C.z);
   camera.position.set(C.x + sy * cp * dist, C.y + Math.sin(C.pitch) * dist, C.z + cy * cp * dist);
