@@ -121,6 +121,9 @@ There's no build step; every push to `main` updates the site.
 
 ## Docs
 
+- [The wiki](wiki/) (`/wiki/` on the live site): a player's guide in the style of an encyclopedia. Its articles are
+  written by hand in `wiki/articles/`; every item, building, technology and biome page and every table of numbers is
+  built in the browser from `src/data.js`, so it follows the game when the data changes.
 - [DESIGN.md](DESIGN.md): what the game is going for, precision tiers, the signal, rendering.
 - [HANDOFF.md](HANDOFF.md): current status, what has and hasn't been verified, next steps.
 - [AGENTS.md](AGENTS.md): how the code fits together and the rules for changing it.

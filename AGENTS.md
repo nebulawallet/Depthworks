@@ -60,6 +60,7 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 | `src/input.js` | Key bindings: actions, defaults, rebinding (saved in localStorage); mouse combos like `Shift+Mouse0` |
 | `src/main.js` | Boot, title screen (slots, load game, host/join), input, game loop (paused while the menu is open in solo) |
 | `src/audio.js`, `src/signal.js`, `src/icons.js` | Sound, the alien conversation, pixel icons |
+| `wiki/` | The player wiki (`/wiki/`): `wiki.js` builds item, building, tech and biome pages and every table from `data.js`; `articles/*.js` are hand-written wikitext. When a change makes an article wrong (a new mechanic, a changed rule), update the article too |
 
 Modules talk through direct imports plus `bus` events (`placed`, `removed`, `remesh`, `ore`, `feat`, `research`,
 `tier`, `pulse`, `signal`, `inv`, `players`, `chat`, `power`, `links`, `marks`, `openmap`, `roads`, `routes`,
