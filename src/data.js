@@ -1,7 +1,5 @@
 // Static game data: items, entities, recipes, research, precision tiers, the alien script.
 
-// The game's version, shown on the title screen: 0.minor for each push that adds a system, 0.minor.patch for fixes.
-export const VERSION = '0.5 alpha';
 
 export const TIERS = [
   { need: 0,   name: 'Coarse',     res: 5,  up: 1 },
@@ -68,7 +66,6 @@ export const ITEMS = {
   power_cable:       { name: 'Power cable', color: 0xd88a4a, shape: 'cable', tool: 'link', reach: 32, toBuilding: 12, desc: 'Click two poles of the same voltage to connect them, up to 32 tiles apart. With Direct wiring researched, also from an electric pole to a machine up to 12 tiles away, which then draws from that pole. Click a linked pair again to take it down.' },
   transformer_cable: { name: 'Transformer cable', color: 0x6ab8ff, shape: 'cable', tool: 'link', reach: 32, transformer: true, steps: [0, 1], desc: 'Connects a transformer station to a high voltage line, up to 32 tiles away.' },
   // `steps`: the two voltages a transformer cable joins (the station's own, then the one it steps into)
-  step_up_cable:  { name: 'Step-up cable', color: 0xd8c84a, shape: 'cable', tool: 'link', reach: 32, transformer: true, steps: [2, 0], desc: 'Connects a step-up station to a low voltage pole up to 32 tiles away, so the power of your generators reaches your machines.' },
   road_conduit:   { name: 'Road conduit', color: 0xffc83a, shape: 'cable', tool: 'conduit', desc: 'Hold it and drag over road tiles to lay a power conduit inside them (one a tile). Touching conduit tiles carry low voltage from a pole near them to machines right beside the road, with no poles or wires. Mining the road gives it back.' },
   rail_signal:    { name: 'Rail signal', color: 0xd84a3a, shape: 'signal', tool: 'signal', desc: 'Click a rail to split the track into blocks there: only one train at a time in each block. R turns which side it stands on.' },
   barrel:         { name: 'Empty barrel', color: 0x8a96a6, shape: 'barrel', desc: `Fill it with ${BARREL_SIZE} of any fluid in a barreling station.` },
@@ -298,15 +295,13 @@ export const TILE = Object.fromEntries(TILES.map((t, i) => [t.id, i]));
 
 // Voltage tiers. Poles of one tier wire to each other; transformer stations step between tiers. The index is what
 // saves and poles store (`volt`, `volts`), so new tiers go on the end; `rank` is the order from lowest to highest.
-// Generators (steam engines, diesel generators) only feed extra-low voltage: a step-up station and a step-up cable
-// carry it into low voltage, where machines are, and a transformer station carries that on into high voltage.
-// `consumers`: machines can draw from poles of this tier.
+// Generators feed the pole whose area they stand in, like any machine draws from one; a transformer station carries low
+// voltage on into high voltage for long lines. `consumers`: machines can draw from poles of this tier.
+// (There was once a third, extra-low voltage only generators fed, at index 2: its poles are gone, see RETIRED.)
 export const VOLTAGES = [
   { name: 'Low voltage', short: 'LV', rank: 1, wire: 0xb8683a, consumers: true },
   { name: 'High voltage', short: 'HV', rank: 2, wire: 0x6ab8ff, consumers: true },
-  { name: 'Extra-low voltage', short: 'ELV', rank: 0, wire: 0xd8c84a, consumers: false },
 ];
-export const ELV = 2;
 // Power in roads (Powered roads research): road tiles with a conduit in them carry low voltage underground. Every
 // touching conduit tile is one grid. A grid joins a low voltage pole whose supply area covers one of its tiles (or that
 // stands within `poleReach` of one), and powers machines standing within `reach` tiles of it. A grid carries at most
@@ -319,13 +314,13 @@ export const ENTITIES = {
   fast_belt:        { name: 'Fast belt', kind: 'belt', speed: 3, color: 0xd8483a, vol: .35, glyph: 'flow', desc: 'Twice as fast.' },
   express_belt:     { name: 'Express belt', kind: 'belt', speed: 4.5, color: 0x3a9ad8, vol: .5, glyph: 'flow', desc: 'Three times as fast.' },
   // Undergrounds run at their belt's speed, so a belt and its tunnels make one line (see belts.js).
-  underground:      { name: 'Underground belt', kind: 'underground', speed: 1.5, color: 0xc9a227, range: 5, vol: .6, glyph: 'tunnel', desc: 'Place an entrance, then an exit up to 4 tiles ahead. Passes under anything between, roads too.' },
-  fast_underground: { name: 'Fast underground belt', kind: 'underground', speed: 3, color: 0xd8483a, range: 7, vol: .7, glyph: 'tunnel', desc: 'Entrance and exit up to 6 tiles apart.' },
-  express_underground: { name: 'Express underground belt', kind: 'underground', speed: 4.5, color: 0x3a9ad8, range: 9, vol: .8, glyph: 'tunnel', desc: 'Entrance and exit up to 8 tiles apart.' },
+  underground:      { name: 'Underground belt', kind: 'underground', speed: 1.5, color: 0xc9a227, range: 7, vol: .6, glyph: 'tunnel', desc: 'Place an entrance, then an exit up to 6 tiles ahead: enough to cross any road. Passes under anything between. For longer runs, angle a belt down to layer -1.' },
+  fast_underground: { name: 'Fast underground belt', kind: 'underground', speed: 3, color: 0xd8483a, range: 9, vol: .7, glyph: 'tunnel', desc: 'Entrance and exit up to 8 tiles apart.' },
+  express_underground: { name: 'Express underground belt', kind: 'underground', speed: 4.5, color: 0x3a9ad8, range: 11, vol: .8, glyph: 'tunnel', desc: 'Entrance and exit up to 10 tiles apart.' },
   // Bus belts carry three lanes and take items only from the belt behind them. Any tile can send its left or right
   // lane off to the side through a filtered channel (see belts.js); the middle lane always goes straight.
   bus_belt:         { name: 'Bus belt', kind: 'belt', lanes: 3, speed: 3, color: 0x8a5ad8, vol: .4, glyph: 'flow', desc: 'Three lanes, fed only from behind. Click a tile to send its left or right lane off to the side, with a filter. The middle lane goes straight.' },
-  bus_underground:  { name: 'Bus underground', kind: 'underground', lanes: 3, speed: 3, color: 0x8a5ad8, range: 7, vol: .7, glyph: 'tunnel', desc: 'Takes a bus belt under anything, up to 6 tiles.' },
+  bus_underground:  { name: 'Bus underground', kind: 'underground', lanes: 3, speed: 3, color: 0x8a5ad8, range: 9, vol: .7, glyph: 'tunnel', desc: 'Takes a bus belt under anything, up to 8 tiles.' },
   splitter:         { name: 'Splitter', kind: 'splitter', speed: 3, color: 0xc9a227, vol: .8, glyph: 'split', desc: 'Deals items in turn to the belts in front, left and right of it. Each way can have a filter.' },
   burner_inserter:  { name: 'Burner inserter', kind: 'inserter', swing: .9, reach: 1, burner: true, color: 0x9a6a3a, vol: .4, glyph: 'swing', desc: 'Slow, needs no power. Burns fuel, and keeps fuel it carries when it runs dry.' },
   inserter:         { name: 'Inserter', kind: 'inserter', swing: .6, reach: 1, power: 13, color: 0xe0a92e, vol: .5, glyph: 'swing', desc: 'Moves items from behind it to in front of it.' },
@@ -358,18 +353,14 @@ export const ENTITIES = {
   power_line:       { name: 'Power line', kind: 'pole', volt: 1, supply: 12, wire: 24, top: 2.9, color: 0x9aa8b8, vol: .3, glyph: 'spark', desc: 'High voltage. Powers everything in a {area} area and wires to other lines up to 24 tiles away.' },
   // volts[0] is the side that wires itself up; the other sides need a transformer cable
   transformer:      { name: 'Transformer station', kind: 'pole', volts: [0, 1], supply: 3, wire: 7.5, top: 1.2, color: 0x4a6a8a, vol: .5, glyph: 'spark', desc: 'Steps power between voltages. Powers a {area} area. Wires to low voltage poles nearby; link it to a power line with a transformer cable.' },
-  // Extra-low voltage: what generators feed. A generator pole only gathers generators' power; a step-up station wires
-  // itself to generator poles and steps their power up into low voltage through a step-up cable.
-  generator_pole:   { name: 'Generator pole', kind: 'pole', volt: 2, supply: 4, wire: 7.5, top: 1.1, color: 0xb8a04a, vol: .1, glyph: 'spark', desc: 'Extra-low voltage. Steam engines and diesel generators in its {area} area feed it; machines can\'t draw from it. Wires to other generator poles and step-up stations up to 7.5 tiles away.' },
-  step_up:          { name: 'Step-up station', kind: 'pole', volts: [2, 0], supply: 3, wire: 7.5, top: 1, color: 0x8a7a3a, vol: .3, glyph: 'spark', desc: 'Steps generator power up into low voltage. Wires itself to generator poles nearby; link it to a low voltage pole with a step-up cable.' },
   // Factorio's chain: one pump feeds 20 boilers, one boiler feeds 2 engines (rates in units per second).
   water_pump:       { name: 'Water pump', kind: 'pump', onWater: true, fluids: { water: 'out' }, rate: 1200, color: 0x3a7ab8, vol: .4, glyph: 'flow', desc: 'Place it on water. Pumps up to 1200 water/s into boilers next to it: enough for 20.' },
-  // Boilers and steam engines are big: `size` is [width, depth] as built facing north (R turns them). `gen`: feeds only
-  // extra-low voltage poles. Ones from older saves stay one tile (`compact`) and keep their old connections.
+  // Boilers and steam engines are big: `size` is [width, depth] as built facing north (R turns them). `gen`: a generator,
+  // feeding the pole whose area it stands in. Ones from older saves stay one tile (`compact`).
   boiler:           { name: 'Boiler', kind: 'boiler', burner: true, fuelStacks: 1, fluids: { water: 'in', steam: 'out' }, heat: 1.8, steam: 60, size: [2, 1], big: true, multi: true, color: 0x8a5a3a, vol: 1, glyph: 'heat',
     desc: 'Two tiles wide. Burns fuel to turn 60 water/s into steam (1.8 MW). Water goes in and through at either end; steam comes out of the back. Touching boilers and engines pass water and steam on.' },
   steam_engine:     { name: 'Steam engine', kind: 'engine', fluids: { steam: 'in' }, out: 900, steam: 30, size: [2, 2], big: true, multi: true, gen: true, color: 0x7a8a6a, vol: 1.5, glyph: 'spark',
-    desc: '2×2. Turns 30 steam/s into up to 900 kW. Steam goes in and through at the front and back, so engines chain end to end (touching ones join on any side). Feeds a generator pole\'s area only. Only works as hard as the network needs.' },
+    desc: '2×2. Turns 30 steam/s into up to 900 kW. Steam goes in and through at the front and back, so engines chain end to end (touching ones join on any side). Feeds the pole whose area it stands in. Only works as hard as the network needs.' },
   solar:            { name: 'Solar panel', kind: 'solar', out: 60, color: 0x2a4a7a, vol: 1, glyph: 'shine', desc: 'Up to 60 kW in daylight, less at dusk and dawn, nothing at night.' },
   // A radar keeps the map live (see explore.js) within `scan` tiles while it has power, and explores outward while it
   // runs: `sweep` tiles a second, up to `reveal` tiles away.
@@ -392,7 +383,7 @@ export const ENTITIES = {
     ports: [{ side: 2, io: 'in' }, { side: 3, io: 'in' }, { side: 0, io: 'out' }], desc: 'Fluid chemistry. Fluids go in the back and left side and come out the front; items by inserter.' },
   barreler:         { name: 'Barreling station', kind: 'assembler', model: 'barreler', cats: ['barrel'], speed: 1, power: 50, cap: 100, color: 0x6a7a5a, vol: 1, glyph: 'keep',
     ports: [{ side: 2, io: 'in' }, { side: 2, io: 'out' }], desc: 'Fills empty barrels from a pipe at its back, or empties barrels into it. Pick fill or empty as its recipe.' },
-  fuel_generator:   { name: 'Diesel generator', kind: 'fgen', fluids: { diesel: 'in' }, out: 1500, cap: 100, gen: true, color: 0x7a6a4a, vol: 1.5, glyph: 'spark', desc: 'Burns diesel from a pipe for up to 1.5 MW. Only works as hard as the network needs. Feeds a generator pole\'s area.' },
+  fuel_generator:   { name: 'Diesel generator', kind: 'fgen', fluids: { diesel: 'in' }, out: 1500, cap: 100, gen: true, color: 0x7a6a4a, vol: 1.5, glyph: 'spark', desc: 'Burns diesel from a pipe for up to 1.5 MW. Only works as hard as the network needs. Feeds the pole whose area it stands in.' },
   vehicle_factory:  { name: 'Vehicle factory', kind: 'assembler', model: 'vfactory', cats: ['vehicle'], speed: 1, power: 300, augSlots: 4, color: 0x5a6a8a, vol: 3, glyph: 'make', desc: 'Builds vehicles. Pick a frame and an engine: together they decide speed and fuel.' },
   // Depots: storage for goods and fuel where vehicles dock. They sit next to the rail, road or water they serve.
   train_station:    { name: 'Train station', kind: 'depot', way: 'rail', cap: 40, fluidCap: 2000, color: 0xb84a3a, vol: 1, glyph: 'keep', desc: 'Put it beside a rail. Trains stop here, refuel from its tank, then load or unload by their schedule and its settings.' },
@@ -439,9 +430,9 @@ export const ENTITIES = {
 // two). Descriptions name the area as {area}, filled in here so they always match the numbers.
 for (const d of Object.values(ENTITIES)) if (d.kind === 'pole') d.desc = d.desc.replace('{area}', `${d.supply * 2 + 1}×${d.supply * 2 + 1}`);
 // Direct wiring (research): a power cable from a pole that `wiresBuildings` straight to a machine, up to the cable's
-// `toBuilding` tiles away, powers it from that pole wherever it stands. Generator poles and stations never do.
+// `toBuilding` tiles away, powers it from that pole wherever it stands. Stations never do.
 export const WIRE_TECH = 'direct_wiring';
-export const wiresBuildings = d => d?.kind === 'pole' && !d.volts && d.volt !== 2;
+export const wiresBuildings = d => d?.kind === 'pole' && !d.volts;
 // How fluids connect: `fluids` buildings join neighbours on every side. Boilers take pipes only at their drum ends
 // (water) and back (steam), so one pipe can't touch both. `ports` machines connect only at the listed sides.
 ENTITIES.boiler.pipeSides = { water: [1, 3], steam: [2] };
@@ -461,7 +452,7 @@ for (const id of ['water_pump', 'boiler', 'steam_engine']) ENTITIES[id].cap = 20
 export const SOLID = .43;
 export const HIT_BY_KIND = { pipe: 'pipe', upipe: { sq: .16 }, fpump: { sq: .16 }, valve: { sq: .13 }, inserter: { r: .13 }, chest: { sq: .19 }, pole: { r: .08 },
   lamp: { r: .09 }, rail: null, belt: null, underground: null, splitter: null, dam: null };
-export const HIT_BY_TYPE = { transformer: { sq: .26 }, step_up: { sq: .22 }, power_line: { sq: .16 }, brazier: { r: .15 }, wooden_chest: { sq: .18 }, chest: { sq: .19 }, burner_inserter: { r: .13 } };
+export const HIT_BY_TYPE = { transformer: { sq: .26 }, power_line: { sq: .16 }, brazier: { r: .15 }, wooden_chest: { sq: .18 }, chest: { sq: .19 }, burner_inserter: { r: .13 } };
 // Trees and rocks: a circle each.
 export const FEATURE_HIT = { tree: .17, rock: .38 };
 export const hitOf = type => { const def = ENTITIES[type]; return type in HIT_BY_TYPE ? HIT_BY_TYPE[type] : def && def.kind in HIT_BY_KIND ? HIT_BY_KIND[def.kind] : { sq: SOLID }; };
@@ -542,13 +533,15 @@ export const oreStage = wear => { let s = 0; for (let k = 0; k < ORE_STAGES.leng
 
 // Things that no longer exist, and the parts a save gets back for each one it still holds.
 // Lifts: angled belts do what they did, from the start. Lifts standing in a save become angled belts (save.js).
-export const RETIRED = { generator: { brick: 10, gear: 8, iron_plate: 5 }, lift: { belt: 4, steel: 2, frame: 1 } };
+// Extra-low voltage: generators feed ordinary poles now. Its poles in a save become small poles, its cables power cables.
+export const RETIRED = { generator: { brick: 10, gear: 8, iron_plate: 5 }, lift: { belt: 4, steel: 2, frame: 1 },
+  generator_pole: { cable: 1 }, step_up: { iron_plate: 5, gear: 2, cable: 8 }, step_up_cable: { cable: 4, copper_plate: 1 } };
 
 // Stack sizes decide how many inventory / chest slots things take.
 const STACKS = { ore: 50, crystal: 50, wood: 100, plate: 100, brick: 100, lens: 100, gear: 100, cable: 200, chip: 200, coil: 100, pack: 200,
   barrel: 50, engine: 10, vehicle: 1, part: 20, wheel: 50, hull: 10, signal: 50, net: 5, fish: 50, road: 100, aug: 50, seed: 100, crop: 50, vial: 100, pellet: 50, cell: 50 };
 const MACHINE_STACKS = { lamp: 50, brazier: 50, belt: 100, fast_belt: 100, express_belt: 100, bus_belt: 100, small_pole: 50, medium_pole: 50, lab: 10, transmitter: 5, frame: 50, big_drill: 10,
-  power_line: 20, transformer: 10, generator_pole: 50, step_up: 10, crafting_station: 10, water_pump: 20, steam_engine: 10, pipe: 100, rail: 100, storage_tank: 10, refinery: 10, vehicle_factory: 5,
+  power_line: 20, transformer: 10, crafting_station: 10, water_pump: 20, steam_engine: 10, pipe: 100, rail: 100, storage_tank: 10, refinery: 10, vehicle_factory: 5,
   steel_pipe: 100, irrigation_pipe: 100, steel_irrigation_pipe: 100, green_lamp: 50, greenhouse: 10, greenhouse_panel: 100, dam: 100, reactor: 5, coolant_tower: 5, hp_pump: 10 };
 for (const [id, it] of Object.entries(ITEMS)) it.stack = it.shape === 'machine' ? (MACHINE_STACKS[id] ?? 50) : (STACKS[it.shape] ?? 50);
 
@@ -614,10 +607,6 @@ export const RECIPES = [
   R('boiler', { furnace: 1, iron_plate: 4 }, .5),
   R('steam_engine', { gear: 8, iron_plate: 15 }, .5),
   R('power_cable', { cable: 4, iron_plate: 1 }, .5),
-  // generator power: what the first steam engine needs to reach a machine, all from early materials
-  { ...R('generator_pole', { wood: 1, cable: 2 }, .5), out: { generator_pole: 2 } },
-  R('step_up', { iron_plate: 5, gear: 2, cable: 8 }, 1),
-  R('step_up_cable', { cable: 4, copper_plate: 1 }, .5),
   R('power_line', { steel: 6, circuit: 4, copper_plate: 6 }, 1, { tech: 'high_voltage' }),
   R('transformer', { steel: 10, coil: 6, circuit: 6 }, 2, { tech: 'high_voltage' }),
   R('transformer_cable', { power_cable: 2, steel: 1 }, .5, { tech: 'high_voltage' }),
@@ -736,7 +725,7 @@ export const TECHS = [
   T('logistics2', 'Logistics 2', [r, g], 50, 15, ['logistics', 'logistic_science'], ['fast_belt']),
   T('electric_distribution', 'Electric distribution', [r, g], 40, 10, ['steel', 'logistic_science'], ['medium_pole']),
   T('high_voltage', 'High voltage', [r, g], 60, 15, ['electric_distribution'], ['power_line', 'transformer', 'transformer_cable']),
-  // electric poles (not generator poles or stations) run power cables straight to machines
+  // electric poles (not stations) run power cables straight to machines
   T('direct_wiring', 'Direct wiring', [r, g], 40, 10, ['electric_distribution'], ['cables from poles to machines']),
   T('solar', 'Solar energy', [r, g], 60, 10, ['steel', 'logistic_science'], ['solar']),
   // electric furnaces come with red science, right after steel; the steel electric furnace is their green upgrade

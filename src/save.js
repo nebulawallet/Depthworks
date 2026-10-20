@@ -46,6 +46,8 @@ export function wipeSave(n = S.slot) {
 const worldName = () => (S.sandbox ? 'Sandbox' : 'World') + (world.gen ? ` ${GRID}²` : '');
 
 // ---------------------------------------------------------------- entities <-> plain data
+// Saved halfway through an underground belt's tunnel: you come back out at its exit.
+const tunnelExit = p => { const x = world.ents.get(p.tun.k)?.pair; return x ? { x: x.x + .5, z: x.z + .5, h: x.y } : { x: p.x, z: p.z, h: 0 }; };
 export function entToJSON(e) {
   if (e.kind === 'frame') return { t: 'frame', x: e.x, y: e.y, z: e.z };
   const o = { t: e.type, x: e.x, y: e.y, z: e.z, d: e.dir, dy: e.dy };
@@ -140,7 +142,7 @@ function unpackTiles(s) {
 export function serialize() {
   const gen = !!world.gen;
   return JSON.stringify({
-    v: 3, T: S.T, sandbox: S.sandbox, player: { x: S.player.x, z: S.player.z, h: S.player.h || 0, face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed, hp: Math.round(S.player.hp) }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam,
+    v: 3, T: S.T, sandbox: S.sandbox, player: { ...(S.player.tun ? tunnelExit(S.player) : { x: S.player.x, z: S.player.z, h: S.player.h || 0 }), face: S.player.face, fac: S.player.fac, veh: S.player.veh, fed: S.player.fed, hp: Math.round(S.player.hp) }, roadCfg: S.roadCfg, maxTier: S.maxTier, hotbar: S.hotbar, bars: S.bars, bar: S.bar, hotbarSeen: [...S.hotbarSeen], cam: S.cam,
     seed: S.seed, med: medToJSON(), explored: exploredToJSON(), gen: world.gen, edits: gen ? editsToJSON() : undefined, barrel: BARREL_SIZE,
     tiles: gen ? undefined : packTiles(), waterGen: WATER_GEN, links: world.links, marks: world.marks,
     research: { done: [...S.research.done], current: S.research.current, queue: S.research.queue || [], progress: S.research.progress, extra: [...(S.research.extra || [])] }, bps: bpsToJSON(),
@@ -302,6 +304,10 @@ function retireItems(d) {
   const counts = o => { for (const it of Object.keys(o || {})) if (gone(it)) { back(it, o[it]); delete o[it]; } };
   // lifts standing in the world become the angled belts that replaced them, on the same tile, going the same way
   for (const o of d.ents || []) if (o.t === 'lift') { o.t = 'belt'; o.dy = o.dy < 0 ? -1 : 1; }
+  // extra-low voltage is gone: its poles and stations stand on as small poles, its cables as power cables, so every
+  // power plant keeps working with nothing rebuilt
+  for (const o of d.ents || []) if (o.t === 'generator_pole' || o.t === 'step_up') o.t = 'small_pole';
+  for (const l of d.links || []) if (l.kind === 'step_up_cable') l.kind = 'power_cable';
   d.ents = (d.ents || []).filter(o => {
     if (!gone(o.t)) return true;
     back(o.t); if (o.fuel && o.fuelType) give(o.fuelType, o.fuel);

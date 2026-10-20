@@ -319,6 +319,7 @@ export const vehicleTarget = (v, c) => ({ kind: 'veh', k: 'veh' + v.id, veh: v.i
 // Get in or out (B). Out puts you on the nearest dry, free tile.
 export function board() {
   const p = actor;
+  if (!p.veh && (p.tun || Math.abs(p.h || 0) > .5)) { notify('toast', 'vehicles are down on the ground'); return; }
   if (p.veh) {
     const v = vehicleById(p.veh);
     if (v) {

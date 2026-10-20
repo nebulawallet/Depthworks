@@ -22,9 +22,9 @@ Hold a belt and drag to lay a line. A belt goes down facing where {{k|rotate}} p
 
 == Underground belts ==
 
-An underground belt carries items under anything in its way, roads included. Place the entrance, then the exit facing the same way up to its reach ahead; the two pair by themselves. Undergrounds run at their belt's speed, so belt, tunnel and belt make one line.
+An underground belt carries items under anything in its way, roads included. Place the entrance, then the exit facing the same way up to its reach ahead (6 tiles for a plain one, 8 fast, 10 express, enough to cross any road); the two pair by themselves. For anything longer, angle a belt down to layer −1 and run it underground for real. Undergrounds run at their belt's speed, so belt, tunnel and belt make one line.
 
-In [[Depth|depth mode]], page down below the ground ({{k|layerDown}}) to see the tunnel itself: a belt in a channel dug through the earth, diving down from the entrance and climbing up into the exit, with everything travelling through it.
+The engineer can ride through it: step onto the entrance. In [[Depth|depth mode]], page down below the ground ({{k|layerDown}}) to see the tunnel itself: a belt in a channel dug through the earth, diving down from the entrance and climbing up into the exit, with everything travelling through it.
 
 == Splitters ==
 
@@ -50,7 +50,7 @@ Angled belts replaced the old '''lift''' building and its research: lifts in old
 
 The {{i|bus_belt}} carries '''three lanes''' and takes items only from the belt behind it: no side-loading, no inserters. Any bus tile can send its left or right lane off to the side through a '''channel''' with a filter; the middle lane always goes straight on. A channel only fills once the bus ahead of it backs up, so the first items arrive after the bus is full.
 
-Where a bus belt runs onto a two-lane belt, its outer lanes go onto that belt's lanes. A {{i|bus_underground}} takes a bus under anything for up to 6 tiles.
+Where a bus belt runs onto a two-lane belt, its outer lanes go onto that belt's lanes. A {{i|bus_underground}} takes a bus under anything for up to 8 tiles.
 
 == Belt lines ==
 
@@ -201,7 +201,7 @@ Heavy oil cracking turns surplus heavy oil into diesel. Jet fuel comes from adva
 
 == Diesel power ==
 
-The {{i|fuel_generator}} burns diesel from a pipe for up to 1.5 MW. Like a steam engine it feeds a [[Generator pole|generator pole]] and only works as hard as the network needs.
+The {{i|fuel_generator}} burns diesel from a pipe for up to 1.5 MW. Like a steam engine it feeds the pole whose area it stands in, and only works as hard as the network needs.
 
 == See also ==
 

@@ -7,6 +7,7 @@ import * as D from '../src/data.js';
 import { iconURL } from '../src/icons.js';
 import { ACTIONS, codeName } from '../src/input.js';
 import { ARTICLES, ALIASES, NOTES, BIOME_TEXT } from './articles/index.js';
+import { CHANGELOG, VERSION } from '../src/changelog.js';
 
 const { ITEMS, ENTITIES, RECIPES, RECIPE, TECHS, TECH, FLUIDS, BIOMES, FEATURES, HAZARDS, MEDICAL, MED, MED_RULES, TOOLS, AUGMENTS, AUG_RULES,
   DEPOSIT, TIERS, VOLTAGES, ROADS, FRAMES, ENGINES, VEHICLES, CROPS, TECH_CATS, CONVERSATION, AMBIENT, PLAYER, DAY, BARREL_SIZE, STRAY_ORES } = D;
@@ -395,13 +396,13 @@ const GEN = {
   poles: () => table(th('Pole', 'Voltage', 'Supply area', 'Wire reach', 'Wires to machines', 'Research'), entsOfKind('pole').map(id => { const d = ENTITIES[id], v = d.volts || [d.volt];
     return `<tr><td>${itemLink(id)}</td><td>${v.map(x => VOLTAGES[x].short).join(' → ')}</td>${num(d.supply, `${d.supply * 2 + 1}×${d.supply * 2 + 1}`)}${num(d.wire, d.wire + ' tiles')}<td class="c">${D.wiresBuildings(d) ? '<span class="yes">yes</span>' : '<span class="no">no</span>'}</td><td>${techOf(id)}</td></tr>`; })),
   generators: () => table(th('Building', 'Output', 'Needs', 'Feeds', 'Research'), [
-    ['steam_engine', `up to ${kw(900)}`, `${ENTITIES.steam_engine.steam} steam/s`, 'extra-low voltage'],
-    ['fuel_generator', `up to ${kw(1500)}`, 'diesel (1 MJ a unit)', 'extra-low voltage'],
+    ['steam_engine', `up to ${kw(900)}`, `${ENTITIES.steam_engine.steam} steam/s`, 'low voltage'],
+    ['fuel_generator', `up to ${kw(1500)}`, 'diesel (1 MJ a unit)', 'low voltage'],
     ['solar', `up to ${kw(60)}`, 'daylight', 'low voltage'],
     ['dam', `${kw(180)} a tile (more on rivers)`, `${kw(300)} to start`, 'high voltage'],
     ['boiler', `${kw(1800)} of steam`, `fuel and ${ENTITIES.boiler.steam} water/s`, 'steam engines'],
     ['reactor', `${kw(60000)} of steam`, 'uranium fuel cells, water, cooling', 'steam engines']].map(([id, o, n, f]) => `<tr><td>${itemLink(id)}</td><td>${o}</td><td>${n}</td><td>${f}</td><td>${techOf(id)}</td></tr>`)),
-  voltages: () => table(th('Voltage', 'Short', 'Wire colour', 'Machines draw from it', 'Poles'), [2, 0, 1].map(i => { const v = VOLTAGES[i];
+  voltages: () => table(th('Voltage', 'Short', 'Wire colour', 'Machines draw from it', 'Poles'), [0, 1].map(i => { const v = VOLTAGES[i];
     return `<tr><td>${v.name}</td><td class="c">${v.short}</td><td><span style="display:inline-block;width:32px;height:6px;background:#${v.wire.toString(16).padStart(6, '0')};vertical-align:middle"></span></td><td class="c">${v.consumers ? '<span class="yes">yes</span>' : '<span class="no">no</span>'}</td><td>${entsOfKind('pole').filter(id => (ENTITIES[id].volts || [ENTITIES[id].volt]).includes(i)).map(id => itemLink(id)).join(', ')}</td></tr>`; }), 'wikitable'),
   fluidbuildings: () => table(th('Building', 'What it does', 'Numbers', 'Research'), ['pipe', 'underground_pipe', 'steel_pipe', 'underground_steel_pipe', 'pump', 'valve', 'storage_tank', 'barreler', 'water_pump', 'hp_pump'].map(id => { const d = ENTITIES[id];
     const n = d.kind === 'pipe' ? `${d.cap} a tile, flow ×${d.flow || 1}` : d.kind === 'upipe' ? `${d.range - 1} tiles, flow ×${d.flow || 1}` : d.kind === 'fpump' ? `${d.rate}/s, ${kw(d.power)}` : d.kind === 'tank' ? `${fmt(d.cap)} units` : d.kind === 'pump' ? `${d.rate} water/s` : d.power ? kw(d.power) : '';
@@ -455,6 +456,7 @@ const GEN = {
   stats: () => table(th('', 'Base value'), [['Walking speed', `${PLAYER.speed} tiles/s`], ['Sprint', `×${PLAYER.sprint}, ${PLAYER.sprintCost} stamina/s`], ['Reach (building)', `${PLAYER.reach} tiles`], ['Reach (hand mining ore)', `${PLAYER.mineReach} tiles`],
     ['Inventory', `${PLAYER.inventory} slots`], ['Health', PLAYER.health], ['Health regeneration', `${PLAYER.regen}/s after ${PLAYER.regenDelay} s unhurt (${PLAYER.fedRegen}/s well fed)`], ['Stamina', `${PLAYER.stamina}, refills ${PLAYER.staminaRegen}/s`],
     ['Exhausted', `sprinting stops until stamina is back to ${PLAYER.rested}`], ['Vehicle hits', `${PLAYER.hitDamage} damage per tile/s of the vehicle's speed`]].map(([a, b]) => `<tr><th style="text-align:left">${a}</th><td>${b}</td></tr>`), 'wikitable'),
+  recent: () => `<ul>${CHANGELOG.slice(0, 4).map(c => `<li><b>${c.version} ${c.stage}</b>: ${link('Changelog#' + `${c.version} ${c.stage}: ${c.title}`, c.title)}. ${c.summary}</li>`).join('')}</ul><p>${link('Changelog', 'Every change')}</p>`,
   daytable: () => table(th('Time', 'What happens'), [['05:30', 'Sunrise: solar panels start to give power, lamps go out'], ['08:00', 'A new world starts here'], ['13:00', 'Midday: brightest, white light, solar at its peak'], ['20:00', 'Sunset: solar stops, lamps and braziers light up'], ['00:45', 'The middle of the night: darkest']].map(([a, b]) => `<tr><td class="c"><b>${a}</b></td><td>${b}</td></tr>`), 'wikitable'),
   items: group => { const ids = Object.keys(ITEMS).filter(id => classOf(id).group === group);
     return table(th('Item', 'Stack', 'Description'), ids.map(id => `<tr><td>${itemLink(id)}</td>${num(ITEMS[id].stack)}<td>${esc(ITEMS[id].desc || ENTITIES[id]?.desc || '')}</td></tr>`)); },
@@ -475,6 +477,11 @@ addPage({ title: 'List of recipes', kind: 'list', desc: 'Every recipe, by machin
     [['Crafting', 'craft'], ['Smelting', 'smelt'], ['Oil refining', 'refine'], ['Chemistry', 'chem'], ['Enrichment', 'centrifuge'], ['Barreling', 'barrel'], ['Vehicles', 'vehicle']].map(([n, c]) => `== ${n} ==\n\n{{gen|recipes|${c}}}`).join('\n\n') });
 addPage({ title: 'List of technologies', kind: 'list', desc: 'Every technology, by section', cats: ['Lists'], icon: 'lab',
   src: () => `Every technology in [[Depthworks]], by its section of the research tree. See [[Research]] for how research works and [[Science packs]] for the packs.\n\n` + TECH_CATS.map(c => `== ${c.name} ==\n\n{{gen|techs|${c.id}}}`).join('\n\n') });
+
+// ---------------------------------------------------------------- the change log (src/changelog.js)
+addPage({ title: 'Changelog', kind: 'list', desc: `What changed in each version · now ${VERSION}`, cats: ['Lists'], icon: 'lab',
+  src: () => `This is the '''changelog''' of [[Depthworks]]: what changed in each version, newest first. The game is at version '''${VERSION}'''; the same list is under ''Change logs'' on the title screen. Versions 0.1 to 0.4 were numbered afterwards, from the history of the game's code.\n\n`
+    + CHANGELOG.map(c => `== ${c.version} ${c.stage}: ${c.title} ==\n\n<p class="dim">${c.date}${c.retro ? ' · numbered afterwards' : ''}</p>\n\n${c.summary}\n\n${c.changes.map(x => '* ' + x).join('\n')}`).join('\n\n') });
 
 // ---------------------------------------------------------------- the hand-written articles
 for (const a of ARTICLES) addPage({ ...a, kind: a.kind || 'article', src: () => a.body, box: a.box ? () => a.box : null });

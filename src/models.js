@@ -742,23 +742,6 @@ export function makeMesh(e) {
         for (let i = -1; i <= 1; i++) st(box(.1, .06, .02), M(i ? C.hazard : C.yellow), i * .12, .3, -.32);
         break;
       }
-      if (e.type === 'generator_pole') {   // a stout post with yellow insulators: extra-low voltage
-        st(cyl(.07, .09, 1.12, 6), M(C.woodDark), 0, .56, 0);
-        st(box(.5, .08, .1), M(def.color), 0, 1.02, 0);
-        for (const x of [-.2, .2]) st(cyl(.045, .055, .12, 6), M(0xe5c83a), x, 1.1, 0);
-        st(box(.3, .02, .3), M(0xe5c83a), 0, .03, 0);
-        break;
-      }
-      if (e.type === 'step_up') {   // a small transformer with one yellow and one copper bushing
-        st(box(.7, .1, .7), dark, 0, .05, 0);
-        st(box(.46, .5, .46), col, 0, .35, 0);
-        for (const s of [-1, 1]) for (let i = -1; i <= 1; i++) st(box(.07, .38, .03), M(C.mid), i * .1, .35, s * .245);
-        st(box(.5, .05, .5), M(C.steel), 0, .62, 0);
-        st(cyl(.04, .06, .3, 6), M(0xe5c83a), -.12, .8, 0); st(cyl(.04, .06, .3, 6), M(0xd88a4a), .12, .8, 0);
-        st(cyl(.06, .06, .03, 6), M(0xe5c83a), -.12, .96, 0); st(cyl(.06, .06, .03, 6), M(0xd88a4a), .12, .96, 0);
-        st(new THREE.ConeGeometry(.06, .12, 4), M(0xf2f2f2), 0, .7, -.18);
-        break;
-      }
       if (e.type === 'small_pole') {
         st(cyl(.06, .08, 1.3, 6), M(C.wood), 0, .65, 0);
         st(box(.6, .07, .08), M(C.woodDark), 0, 1.18, 0);

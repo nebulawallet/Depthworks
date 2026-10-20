@@ -60,6 +60,7 @@ Instructions for coding agents (and people) working on Depthworks. Read [HANDOFF
 | `src/input.js` | Key bindings: actions, defaults, rebinding (saved in localStorage); mouse combos like `Shift+Mouse0` |
 | `src/main.js` | Boot, title screen (slots, load game, host/join), input, game loop (paused while the menu is open in solo) |
 | `src/audio.js`, `src/signal.js`, `src/icons.js` | Sound, the alien conversation, pixel icons |
+| `src/changelog.js` | The change log, newest first: the title screen's Change logs, the wiki's Changelog page, and the version shown on the title screen all come from it |
 | `wiki/` | The player wiki (`/wiki/`): `wiki.js` builds item, building, tech and biome pages and every table from `data.js`; `articles/*.js` are hand-written wikitext. When a change makes an article wrong (a new mechanic, a changed rule), update the article too |
 
 Modules talk through direct imports plus `bus` events (`placed`, `removed`, `remesh`, `ore`, `feat`, `research`,
@@ -109,8 +110,8 @@ so players can rebind them. Add new actions to `ACTIONS`.
     marked `onWater`. If you change `generateWater`, bump `WATER_GEN` so older saves get their water redone.
 11. **Power** is rebuilt from scratch whenever `world.powerDirty` is set: poles of one voltage join by wire reach,
     overlapping supply areas and hand-strung `world.links`. Engines, boilers and pumps only work as hard as what
-    draws on them. Which poles feed which buildings is `poleServes`: generators (`gen`) feed extra-low voltage
-    (generator poles, step-up stations) only, machines draw from tiers with `consumers`, dams from high voltage.
+    draws on them. Which poles feed which buildings is `poleServes`: generators (`gen`) and machines use tiers with
+    `consumers`, dams high voltage only.
     Transformer-type cables join exactly their `steps` pair of voltages. Road conduits (`p` on a road tile) make
     grids that join low voltage poles near them and power machines beside them, up to `ROAD_POWER.capacity`.
     One-tile boilers and engines from old saves are `compact`: they keep their old footprint and feed any pole.

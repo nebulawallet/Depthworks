@@ -1,6 +1,6 @@
 // Simulation: the engineer, logistics, machines, power networks, research, precision, crafting, building.
-import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, FEATURE_HIT, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT, FRAMES, ROADS, TILES, TOOLS, VOLTAGES, ELV, ROAD_POWER, PIPE_HIT, WIRE_TECH, hitOf, oreStage, groupOf, ingredientMatches, wiresBuildings } from './data.js';
-import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, tilesOf, DIRS, GRID, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize, oreWear, SPAWN, daylight, removeFeat, underOf, patchAt, isResearched } from './state.js';
+import { ENTITIES, ITEMS, RECIPE, RECIPES, TECH, TIERS, FEATURES, FEATURE_HIT, PLAYER, FLUIDS, BARREL_SIZE, SIDEWALK_SPEED, AUGMENTS, AUG_RULES, DEPOSIT, FRAMES, ROADS, TILES, TOOLS, VOLTAGES, ROAD_POWER, PIPE_HIT, WIRE_TECH, hitOf, oreStage, groupOf, ingredientMatches, wiresBuildings } from './data.js';
+import { S, world, invAdd, invGet, invGive, invRoom, Inventory, stackOf, spill, bus, key, tilesOf, DIRS, GRID, LAYER_MIN, LAYER_MAX, layerRange, layerLockReason, recipeUnlocked, actor, setActor, notify, isWater, factoryOf, endless, layerSize, oreWear, SPAWN, daylight, removeFeat, underOf, patchAt, isResearched } from './state.js';
 import { isBeltLike, dropOnBelt, takeFromBelt, beltWants, beltsTick, touchBelts, clearSeg, segItems, beltCommand, lanesOf, outRise } from './belts.js';
 import { rebuildFluids, fluidPre, fluidPost, producerCaps, burnNet, burnRate, draw, push, avail, room, passThrough, fluidConflict, flush, sameFac, isPipeLike } from './fluids.js';
 import { roadAt, removeRoad, roadTiles, isWalkway, roadBlocks, transportTick, rebuildRails, wayNear, vehSlots, vehSlotAccept, vehSlotPut, vehSlotTake, vehicleById, vehicleTarget, removeVehicle, depotCommand, vstats } from './transport.js';
@@ -193,8 +193,7 @@ function burner(e, want, mw, dt) {
 // ---------------------------------------------------------------- power networks
 // Poles join into networks by wire reach, by overlapping supply areas, and by cables strung by hand, but only
 // within one voltage (VOLTAGES). Machines inside a pole's supply area join that network, but only poles of a voltage
-// machines may draw from: generators feed extra-low voltage only (one-tile engines from old saves, `compact`, still
-// feed any pole, as they always did), and dams high voltage only. Road conduits join poles near them into grids that
+// machines may draw from (generators feed them the same way), and dams high voltage only. Road conduits join poles near them into grids that
 // power machines beside the road (ROAD_POWER).
 export const nets = [];
 export const voltsOf = def => def.volts || [def.volt ?? 0];
@@ -204,7 +203,6 @@ const producerKind = e => e.kind === 'solar' || e.kind === 'engine' || e.kind ==
 export function poleServes(e, p) {
   const def = ENTITIES[e.type], pv = voltsOf(ENTITIES[p.type]);
   if (def.hv) return pv.includes(1);
-  if (def.gen) return e.compact ? true : pv.includes(ELV);
   return pv.some(v => VOLTAGES[v]?.consumers);
 }
 const conduitAt = (x, z) => !!world.roads.get(x + ',' + z)?.p;
@@ -311,7 +309,7 @@ function powerTick(dt) {
     }
     n.demand = n.nextDemand; n.produced = used; n.nextDemand = 0;
   }
-  for (const e of world.ents.values()) if ((e.kind === 'engine' || e.kind === 'fgen') && !e.net) { e.load = 0; e.status = e.compact ? 'not connected: put it in a pole\'s area' : 'not connected: put it in a generator pole\'s area'; }
+  for (const e of world.ents.values()) if ((e.kind === 'engine' || e.kind === 'fgen') && !e.net) { e.load = 0; e.status = 'not connected: put it in a pole\'s area'; }
   fluidPost(dt, burner);
   reactorTick(dt);
 }
@@ -830,9 +828,10 @@ const _shapes = [];
 const STEP = .35, HEADROOM = .9, FALL = 7;
 function surfacesAt(x, z, fn) {
   const cx = Math.floor(x), cz = Math.floor(z);
-  fn(0, world.ents.get(key(cx, 0, cz)));
-  for (let L = 0; L < LAYER_MAX; L++) {
-    if (world.frames.has(key(cx, L, cz))) fn(L + 1, world.ents.get(key(cx, L + 1, cz)));
+  // the ground, and the floors of the layers under it, except where a slope on the layer below opens a way down
+  for (let L = LAYER_MIN; L <= 0; L++) { const below = world.ents.get(key(cx, L - 1, cz)); if (!(below?.kind === 'belt' && below.dy)) fn(L, world.ents.get(key(cx, L, cz))); }
+  for (let L = LAYER_MIN; L < LAYER_MAX; L++) {
+    if (L >= 0 && world.frames.has(key(cx, L, cz))) fn(L + 1, world.ents.get(key(cx, L + 1, cz)));
     const e = world.ents.get(key(cx, L, cz));
     if (e?.kind === 'belt' && e.dy) {
       const [dx, dz] = DIRS[e.dir], f = Math.max(0, Math.min(1, (x - cx - .5) * dx + (z - cz - .5) * dz + .5));
@@ -843,11 +842,25 @@ function surfacesAt(x, z, fn) {
 // Where someone at height h would stand at (x, z): the surface's height, the building under their feet, and whether a
 // surface there is too high to step onto but too low to walk under.
 export function footing(x, z, h = 0) {
-  let best = -1, on = null, wall = false;
+  let best = -Infinity, on = null, wall = false;
   surfacesAt(x, z, (s, e) => { if (s <= h + STEP) { if (s > best) { best = s; on = e; } } else if (s < h + HEADROOM) wall = true; });
-  return { h: Math.max(0, best), on, wall };
+  return { h: Math.max(LAYER_MIN, best), on, wall };
 }
 export const layerOfHeight = h => Math.round(h || 0);
+// Riding an underground belt: in at the entrance's middle, down into the tunnel, along under whatever it crosses, and
+// up out of the exit's middle. `p.tun`: { k: the entrance's key, s: how far along, from the entrance's back edge }.
+export const TUNNEL_D = .55;   // how far under its layer's floor the tunnel's belt runs (scene.js draws it there too)
+function tunnelTick(p, dt, input) {
+  const e = world.ents.get(p.tun.k), x = e?.pair;
+  if (!e || !x) { p.tun = null; p.h = e?.y ?? 0; return; }   // taken up under you: you climb out where you went in
+  const [dx, dz] = DIRS[e.dir], push = Math.max(0, (input.mx || 0) * dx + (input.mz || 0) * dz);
+  const sp = (e.line?.speed ?? e.speed) + push * PLAYER.speed * .6, end = e.len + .5;
+  p.tun.s = Math.min(end, p.tun.s + sp * dt);
+  const s = p.tun.s, k = s < 1 ? (s - .5) / .5 : s > e.len ? (end - s) / .5 : 1;
+  p.x = e.x + .5 + dx * (s - .5); p.z = e.z + .5 + dz * (s - .5); p.h = e.y - Math.max(0, Math.min(1, k)) * TUNNEL_D;
+  p.vx = dx * sp; p.vz = dz * sp; p.face = Math.atan2(dx, dz); p.walk += dt * 10 * Math.min(1, sp / PLAYER.speed); p.moving = true;
+  if (s >= end) { p.tun = null; p.h = x.y; }
+}
 function collides(px, pz, h = 0) {
   const r = PLAYER.radius, L = layerOfHeight(h);
   if (footing(px, pz, h).wall) return true;
@@ -881,6 +894,7 @@ export const playerBlocks = (x, z, y = 0) => { const r = PLAYER.radius; for (con
 // input: { mx, mz } desired direction in world space (unit or zero)
 export function playerTick(dt, input) {
   const p = actor;
+  if (p.tun) { staminaTick(p, dt, false); tunnelTick(p, dt, input); return; }
   if (p.veh) {   // driving: the vehicle carries you, and your keys drive it
     const v = vehicleById(p.veh);
     if (!v) p.veh = null;
@@ -896,12 +910,21 @@ export function playerTick(dt, input) {
   // a belt under your feet carries you, up and down slopes too
   const h = p.h || 0, foot = footing(p.x, p.z, h), under = Math.abs(foot.h - h) < .05 ? foot.on : null;
   if (under?.belt) { const [dx, dz] = DIRS[under.dir], sp = under.line?.speed ?? under.speed; vx += dx * sp; vz += dz * sp; }
-  const stuck = collides(p.x, p.z, h);
-  const nx = p.x + vx * dt; if (stuck || !collides(nx, p.z, h)) p.x = nx; else if (Math.abs(vx) > Math.abs(vz) * 2) slideAround(p, vx * dt, 0);
-  const nz = p.z + vz * dt; if (stuck || !collides(p.x, nz, h)) p.z = nz; else if (Math.abs(vz) > Math.abs(vx) * 2) slideAround(p, 0, vz * dt);
-  p.x = Math.min(GRID - .3, Math.max(.3, p.x)); p.z = Math.min(GRID - .3, Math.max(.3, p.z));
-  const to = footing(p.x, p.z, h).h;   // step up onto what is underfoot at once; drop off edges at a fall's pace
-  p.h = to >= h ? to : Math.max(to, h - FALL * dt);
+  // in short steps, so a slope is climbed (and its side stays a wall) however long the frame or fast the sprint
+  const n = Math.max(1, Math.ceil(Math.hypot(vx, vz) * dt / .12)), sdt = dt / n;
+  for (let i = 0; i < n; i++) {
+    const hh = p.h || 0, stuck = collides(p.x, p.z, hh);
+    const nx = p.x + vx * sdt; if (stuck || !collides(nx, p.z, hh)) p.x = nx; else if (Math.abs(vx) > Math.abs(vz) * 2) slideAround(p, vx * sdt, 0);
+    const nz = p.z + vz * sdt; if (stuck || !collides(p.x, nz, hh)) p.z = nz; else if (Math.abs(vz) > Math.abs(vx) * 2) slideAround(p, 0, vz * sdt);
+    p.x = Math.min(GRID - .3, Math.max(.3, p.x)); p.z = Math.min(GRID - .3, Math.max(.3, p.z));
+    const to = footing(p.x, p.z, hh).h;   // step up or down a slope with it; drop off edges at a fall's pace
+    p.h = to >= hh - STEP ? to : Math.max(to, hh - FALL * sdt);
+  }
+  // carried (or walking) forward past the middle of an underground belt's entrance: down into its tunnel
+  if (under?.kind === 'underground' && under.role === 'in' && under.pair && sameFac(under, under.pair)) {
+    const [dx, dz] = DIRS[under.dir], f = (p.x - under.x - .5) * dx + (p.z - under.z - .5) * dz + .5, side = Math.abs((p.x - under.x - .5) * dz - (p.z - under.z - .5) * dx);
+    if (f > .5 && side < .3 && p.vx * dx + p.vz * dz + (under.line?.speed ?? under.speed) > 0) p.tun = { k: key(under.x, under.y, under.z), s: f };
+  }
   const sp = Math.hypot(p.vx, p.vz);
   if (input.mx || input.mz) p.face = Math.atan2(input.mx, input.mz);
   else if (p.mining && p.mineCell) p.face = Math.atan2(p.mineCell.x + .5 - p.x, p.mineCell.z + .5 - p.z);
@@ -929,7 +952,7 @@ function healthTick(dt) {
   const p = actor;
   if (!p.veh) for (const v of world.vehicles) {
     const sp = Math.abs(v.v || 0);
-    if (sp < PLAYER.hitSpeed || S.T - (p.hitT ?? -99) < 1 || (p.h || 0) > .5) continue;   // vehicles stay on the ground
+    if (sp < PLAYER.hitSpeed || S.T - (p.hitT ?? -99) < 1 || p.tun || Math.abs(p.h || 0) > .5) continue;   // vehicles stay on the ground
     const st = vstats(v.type), u = v.unit && world.units.find(q => q.id === v.unit);
     if (!st || st.way === 'sea' || p.veh === v.id || u?.cars.includes(p.veh)) continue;
     if (Math.hypot(v.x - p.x, v.z - p.z) > FRAMES[st.frame].len / 2 + PLAYER.radius + .1) continue;
@@ -945,7 +968,7 @@ export function hurt(p, n, by) {
   notify('hurt', n);
   if (p.hp > 0) return;
   p.hp = maxHealth(p); p.veh = null; p.vx = p.vz = 0; p.mining = null;
-  p.x = SPAWN.x; p.z = SPAWN.z; p.h = 0;
+  p.x = SPAWN.x; p.z = SPAWN.z; p.h = 0; p.tun = null;
   notify('respawn', p.x, p.z);
   notify('toast', `You were run over by a ${by}. You woke up at the landing site.`);
 }
@@ -1418,7 +1441,7 @@ export function linkPoles(kind, a, b) {
   if (tool.transformer) {
     const st = tool.steps, isSt = d => d.volts?.length > 1 && d.volts[0] === st[0] && d.volts.includes(st[1]);
     const [t, o] = isSt(da) ? [da, db] : isSt(db) ? [db, da] : [];
-    if (!t || !voltsOf(o).includes(st[1])) return st[0] === 2 ? 'step-up cables go from a step-up station to a low voltage pole' : 'transformer cables go from a transformer station to a high voltage line';
+    if (!t || !voltsOf(o).includes(st[1])) return 'transformer cables go from a transformer station to a high voltage line';
   } else if (autoVolt(da) !== autoVolt(db)) return 'different voltages: link them through a transformer station';
   if (!invGet(kind)) return `no ${tool.name.toLowerCase()} in inventory`;
   invAdd(kind, -1);
@@ -1435,7 +1458,7 @@ function linkBuilding(kind, P, M) {
   if (i >= 0) { const [l] = world.links.splice(i, 1); invGive(l.kind); world.powerDirty = true; bus.emit('links'); return 'cable taken down'; }
   if (!tool.toBuilding) return 'that cable only goes between poles';
   if (!isResearched(WIRE_TECH)) return `research ${TECH[WIRE_TECH].name} to run cables from poles to machines`;
-  if (!wiresBuildings(ENTITIES[P.type])) return 'only electric poles wire to machines: not generator poles or stations';
+  if (!wiresBuildings(ENTITIES[P.type])) return 'only electric poles wire to machines, not stations';
   if (!ENTITIES[M.type].power) return `the ${ENTITIES[M.type].name.toLowerCase()} doesn't use power`;
   if (!poleServes(M, P)) return `the ${ENTITIES[M.type].name.toLowerCase()} can't draw from that voltage`;
   if (!sameFac(P, M)) return 'that belongs to another factory';

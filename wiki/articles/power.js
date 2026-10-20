@@ -20,14 +20,12 @@ Drag poles to lay a line: they are spaced to their wire reach, and the preview s
 
 == Voltages ==
 
-There are three voltages. Poles only wire to poles of their own voltage, and special stations carry power from one voltage to the next.
+There are two voltages. Poles only wire to poles of their own voltage, and a transformer station carries power from one to the other.
 
 {{gen|voltages}}
 
-; Extra-low voltage (ELV)
-: What steam engines and diesel generators feed. Machines can't draw from it. Put a {{i|generator_pole}} by your generators.
 ; Low voltage (LV)
-: What most machines run on. A {{i|step_up}} wires itself to generator poles nearby and lifts their power into low voltage: link the station to a low voltage pole with a {{i|step_up_cable}}. Solar panels feed low voltage directly.
+: What most machines run on, and what generators feed: steam engines, diesel generators and solar panels all feed the pole whose area they stand in.
 ; High voltage (HV)
 : {{i|power_line|Power lines}} cover a large area and wire up to 24 tiles apart. A {{i|transformer}} wires itself to low voltage poles nearby; link it to a power line with a {{i|transformer_cable}}. Machines can run straight off a power line's area too. [[Dam|Dams]] join high voltage only.
 
@@ -69,8 +67,7 @@ With {{t|road_power}}, conduits inside road tiles carry low voltage to machines 
 # A {{i|water_pump}} on water pumps up to 1,200 water a second.
 # A {{i|boiler}} (two tiles wide) burns fuel to turn 60 water a second into steam: 1.8 MW of heat.
 # A {{i|steam_engine}} (2×2) turns 30 steam a second into up to 900 kW.
-# A {{i|generator_pole}} next to the engines collects their power as [[Electricity#Voltages|extra-low voltage]].
-# A {{i|step_up}} near the generator pole and a {{i|step_up_cable}} to a {{i|small_pole}} carry it into low voltage, where machines can use it.
+# A {{i|small_pole}} next to the engines takes their power; poles wired on from it carry it to your machines.
 
 == Ratios ==
 
@@ -94,9 +91,9 @@ Hover over a boiler or an engine to see a blue and orange pair of arrows where a
 
 Boilers burn any solid fuel. At full output a boiler burns a piece of coal every 2.2 seconds, but boilers (like engines) only work as hard as the network needs, so a lightly loaded plant burns very little. Fuel them with inserters from a belt of coal.
 
-== Old one-tile engines ==
+== Old worlds ==
 
-In worlds saved before boilers and engines became big, the old one-tile ones stay as they were and keep feeding any pole they touch. A new one placed (or an old one picked up and put back) is big.
+In worlds saved before boilers and engines became big, the old one-tile ones stay as they were. Worlds from when generators needed their own '''extra-low voltage''' network (generator poles, step-up stations and step-up cables) keep working: those poles and stations turn into small electric poles, and their cables into power cables.
 
 == See also ==
 

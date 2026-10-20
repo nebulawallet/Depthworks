@@ -1,4 +1,5 @@
-import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE, TECH, WIRE_TECH, VERSION } from './data.js';
+import { ENTITIES, ITEMS, OLD_HOTBARS, TIERS, PLAYER, ROADS, VEHICLES, WORLD, RECIPE, TECH, WIRE_TECH } from './data.js';
+import { CHANGELOG, VERSION } from './changelog.js';
 import { S, world, inv, invGet, bus, key, DIRS, startingInventory, layerRange, layerLockReason, freshBars, factoryOf, unlockAll, SPAWN, GRID, recipeUnlocked, isResearched } from './state.js';
 import { newWorld, ensureChunks } from './worldgen.js';
 import { stockFish } from './fish.js';
@@ -110,7 +111,7 @@ function titleScreen(view = 'main', opt = {}) {
   msg.textContent = '';
   if (view === 'main') {
     $('titleBtns').innerHTML = (hasSave() ? btn('bContinue', 'Continue') : '') + btn('bNew', 'New game') + btn('bSandbox', 'Sandbox') + btn('bLoad', 'Load game')
-      + btn('bHost', 'Host co-op') + btn('bJoin', 'Join co-op') + btn('bHelp', 'How to play') + btn('bWiki', 'Wiki');
+      + btn('bHost', 'Host co-op') + btn('bJoin', 'Join co-op') + btn('bHelp', 'How to play') + btn('bWiki', 'Wiki') + btn('bLog', 'Change logs');
     $('bContinue')?.addEventListener('click', () => begin(false, false, latestSlot()));
     $('bNew').addEventListener('click', () => startNew(false));
     $('bSandbox').addEventListener('click', () => startNew(true));
@@ -119,6 +120,7 @@ function titleScreen(view = 'main', opt = {}) {
     $('bJoin').addEventListener('click', () => titleScreen('join'));
     $('bHelp').addEventListener('click', () => openMenu('guide'));
     $('bWiki').addEventListener('click', openWiki);
+    $('bLog').addEventListener('click', () => titleScreen('changelog'));
   } else if (view === 'slots') {
     // load: load / export / delete each world, or load one from a file. new: pick a slot to start in (replacing
     // what is there, after a second click). host: host a saved world, or start a new one to host.
@@ -169,6 +171,10 @@ function titleScreen(view = 'main', opt = {}) {
       try { localStorage.setItem(OPTS_KEY, JSON.stringify({ size, biomes: world.biomes, water: world.water, ores: world.ores })); } catch { /* storage unavailable */ }
       startWith({ sandbox: opt.sandbox, hosting: opt.hosting, world });
     });
+  } else if (view === 'changelog') {   // what changed in each version, newest first (changelog.js)
+    $('titleBtns').innerHTML = `<div class="changelog">${CHANGELOG.map(c => `<div class="cl"><div class="clh"><b>${c.version}</b> ${c.stage} <span class="dim">· ${c.date}${c.retro ? ' · numbered afterwards' : ''}</span></div>`
+      + `<div class="clt">${c.title}</div><div class="cls dim">${c.summary}</div><ul>${c.changes.map(x => `<li>${x}</li>`).join('')}</ul></div>`).join('')}</div>` + btn('bBack', 'Back');
+    $('bBack').addEventListener('click', () => titleScreen('main'));
   } else if (view === 'join') {
     $('titleBtns').innerHTML = '<div class="dim">Ask the host for their invite code.</div><input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false">'
       + btn('bJoinGo', 'Join') + btn('bBack', 'Back');
@@ -230,6 +236,17 @@ addEventListener('beforeunload', () => { if (started) save(); leave(); });
 // that doesn't drag is still the pipette. Leaving depth mode tweens it back to the default view. Every key and button
 // is rebindable (input.js).
 const TILTS = [.35, .55, .75, .95, 1.15, 1.35], FLAT_PITCH = .82, DEPTH_PITCH = .55, ORBIT_PITCH = [.3, 1.45];
+// Walking down into the layers under the ground (not riding a tunnel), the view follows you: depth mode, on your layer,
+// and back to the ground layer when you climb out.
+let lastFoot = 0;
+function followUnderground() {
+  const p = S.player, L = p.tun ? lastFoot : Math.round(p.h || 0);
+  if (L === lastFoot) return;
+  const [lo] = layerRange();
+  if (L < 0 && L >= lo) { if (S.mode !== 'depth') toggleMode(); setLayer(L); }
+  else if (L >= 0 && lastFoot < 0 && S.mode === 'depth' && S.layer < 0) setLayer(0);
+  lastFoot = L;
+}
 function toggleMode() {
   const C = S.cam;
   if (S.mode === 'flat') { S.mode = 'depth'; C.pitchT = DEPTH_PITCH; }
@@ -619,6 +636,7 @@ function frame() {
       S.player.mineCell = rmb && !S.modal ? hover : null;
       const typing = document.activeElement?.tagName === 'INPUT';
       simulate(dt, S.modal || typing ? { mx: 0, mz: 0 } : moveInput());
+      followUnderground();
       netTick(dt);
       if (building && hover && (!lastPaint || key(hover.x, hover.y, hover.z) !== key(lastPaint.x, lastPaint.y, lastPaint.z))) paintAt(hover, false);
       updateUI(dt, hover);

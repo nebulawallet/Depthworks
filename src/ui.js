@@ -13,7 +13,7 @@ import { fishTarget } from './fish.js';
 import { openLogistics, renderLogistics, drawLogistics, showBeltLine, lineEndHTML } from './logistics.js';
 import { iconHTML, iconURL, fmtN, toolCursor } from './icons.js';
 import { sentenceFor, drawStrip, maskText, clarity, currentAsk, HEAR_RADIUS } from './signal.js';
-import { ROAD_POWER, ELV, WIRE_TECH } from './data.js';
+import { ROAD_POWER, WIRE_TECH } from './data.js';
 import { project } from './scene.js';
 import { doAction, chat, netInfo } from './net.js';
 import { ACTIONS, keyName, keyNames, rebind, resetKeys, MOUSE_ACTIONS, combo, is } from './input.js';
@@ -612,7 +612,7 @@ function renderEntity() {
       body += `<h4>Output</h4>${pbar(e.load || 0)}<div class="dim">${Math.round((e.load || 0) * def.out)} / ${def.out} kW · ${Math.round((e.load || 0) * def.steam)} steam/s</div>`;
       const boilers = st ? st.members.some(m => m.kind === 'boiler') : false;
       body += `<div>steam: ${!boilers ? '<span class="warn">no boiler on its steam</span>' : st.amount > 0 ? `<span class="okc">${fmtN(st.amount)} in the line</span>` : '<span class="warn">boilers have no fuel or water</span>'} · ${n ? `network ${n.id + 1}` : `<span class="warn">not in a ${e.compact ? 'pole' : 'generator pole'}\'s area</span>`}</div>`;
-      body += `<div class="dim">${e.compact ? 'An engine from before engines were big: it feeds any pole, as it always did. A new one feeds generator poles only.' : 'Feeds a generator pole (extra-low voltage). A step-up station and a step-up cable take that power to your machines.'}</div>`;
+      body += `<div class="dim">Feeds the pole whose area it stands in.${e.compact ? ' An engine from before engines were big: it stays one tile.' : ''}</div>`;
       break;
     }
     case 'pole': {
@@ -628,7 +628,6 @@ function renderEntity() {
       }
       const cables = world.links.filter(l => [l.a, l.b].some(p => p[0] === e.x && p[1] === e.y && p[2] === e.z)).length;
       body += `<div class="dim">${VOLTAGES[voltsOf(def)[0]].name}${def.volts ? ` → ${def.volts.slice(1).map(v => VOLTAGES[v].name.toLowerCase()).join(', ')}` : ''} · supplies a ${def.supply * 2 + 1}×${def.supply * 2 + 1} area · wires reach ${def.wire} tiles${cables ? ` · ${cables} cable${cables > 1 ? 's' : ''}` : ''}</div>`;
-      if (voltsOf(def).includes(ELV) && !def.volts) body += `<div class="dim">Generators in its area feed it; machines can't draw from it. Wire it to a step-up station and link that to a low voltage pole with a step-up cable.</div>`;
       const grids = (world.roadGrids || []).filter(g => g.poles.includes(e));
       if (grids.length) body += `<div class="dim">feeds ${grids.length} powered road${grids.length > 1 ? 's' : ''}: ${grids.map(g => `${g.tiles.length} tiles, ${Math.round(g.demand)} / ${ROAD_POWER.capacity} kW`).join(' · ')}</div>`;
       break;
@@ -872,8 +871,7 @@ const GOALS = [
   ['wood', 'Chop a few trees for wood', () => (S.stats.mined?.wood || 0) >= 8],
   ['expand', 'Craft more burner drills and furnaces (E) and run 4 drills', () => count(e => e.kind === 'drill' && isActive(e)) >= 4],
   ['copper', 'Smelt 20 copper plates', () => made('copper_plate') >= 20],
-  ['power', 'Make power: a water pump on water, a fuelled boiler and a steam engine beside it, a generator pole by the engine', () => any(e => e.kind === 'engine' && e.net && e.cap > 0)],
-  ['stepup', 'Link a step-up station to a small pole with a step-up cable, so the power reaches your machines', () => any(e => e.kind !== 'pole' && e.net && ENTITIES[e.type].power && e.net.engines.length)],
+  ['power', 'Make power: a water pump on water, a fuelled boiler and a steam engine beside it, a small electric pole by the engine', () => any(e => e.kind === 'engine' && e.net && e.cap > 0)],
   ['electric', 'Run an electric drill on the network', () => any(e => e.type === 'drill' && e.status === 'mining')],
   ['lab', 'Craft automation packs, place a lab and choose research (T)', () => Object.keys(S.research.progress).length > 0],
   ['automation', 'Finish researching Automation', () => S.research.done.has('automation')],

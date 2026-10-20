@@ -6,7 +6,7 @@ import { ENTITIES, ITEMS, TILES, VOLTAGES, ROADS, VEHICLES, FRAMES, FLUIDS, RECI
 import { S, world, bus, key, DIRS, GRID, rng, tileAt, isWater, factoryOf, invGet, daylight, nightDepth, lodAt, tilesOf } from './state.js';
 import { initTerrain, updateTerrain, dropAllChunks, repaintTiles, rebuildChunkClutter, shownAt, showClutter, dropClutter, featPickList, featKeyAt, oreLook, animateWater, setDepthView, chunkShown, oreChanged } from './terrain.js';
 import { makeMesh, disposeMesh, setGhost, setPreview, setBlueprint, poseInserter, poseStation, itemGeo, itemMat, iconSpriteMat, animateTreads, treadMat, makePlayer, animatePlayer, toonRamp, facet, M, UI_LAYER, makeVehicle, fishGeo, DITHER_OFF, ditherMat } from './models.js';
-import { canPlace, canSlope, slopeLayer, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
+import { canPlace, canSlope, slopeLayer, TUNNEL_D, distTo, mineTargetAt, voltsOf, planCraft, sweepTiles, stationChests, machineStats, drillFront } from './sim.js';
 import { portEdges } from './fluids.js';
 import { bpAt } from './blueprint.js';
 import { REACTOR } from './plants.js';
@@ -269,7 +269,6 @@ export function beltItemPos(b, p, out, o = 0) {
 const _p = new THREE.Vector3(), _q0 = new THREE.Quaternion(), _sc = new THREE.Vector3();
 // Depth mode, looking below an underground belt's layer: its tunnel shows as a real belt in a channel dug through the
 // earth, diving from the entrance and climbing to the exit, and what travels through it rides along.
-const TUNNEL_D = .55;   // how far under its layer's floor the tunnel's belt runs
 const tunnelShown = b => b.kind === 'underground' && S.mode === 'depth' && S.layer < b.y;
 // How deep an item is: it dives over the entrance's front half and climbs over the exit's back half.
 function tunnelPos(b, p, out, o) {
@@ -436,7 +435,7 @@ function animateOthers(dt) {
     if (Math.hypot(p.x - p.rx, p.z - p.rz) > 4) { p.rx = p.x; p.rz = p.z; p.rh = p.h || 0; }
     p.rx += (p.x - p.rx) * k; p.rz += (p.z - p.rz) * k; p.rh = (p.rh ?? 0) + ((p.h || 0) - (p.rh ?? 0)) * k;
     animatePlayer(m, { ...p, x: p.rx, z: p.rz, h: p.rh }, S.T, dt);
-    const g = S.mode === 'depth' && S.layer < 0;
+    const g = S.mode === 'depth' && S.layer < Math.round(p.rh || 0);   // ghosted from below, like the buildings above you
     if (m.userData.ghost !== g) { m.userData.ghost = g; setGhost(m, g); }
   }
   for (const [id, m] of others) if (!S.players.has(id)) { scene.remove(m); others.delete(id); }
@@ -608,7 +607,7 @@ function animate(dt) {
   playerMesh.userData.player = S.player.id;
   animatePlayer(playerMesh, S.player, S.T, dt);
   animateOthers(dt);
-  const pg = S.mode === 'depth' && S.layer < 0;
+  const pg = S.mode === 'depth' && S.layer < Math.round(S.player.h || 0);
   if (playerMesh.userData.ghost !== pg) { playerMesh.userData.ghost = pg; setGhost(playerMesh, pg); }
   playerMesh.visible = !!S.started;
   for (let i = rings.length - 1; i >= 0; i--) {
@@ -647,7 +646,7 @@ export function updateCamera(dt) {
   C.ppu += (C.ppuT - C.ppu) * (1 - Math.pow(.00001, dt)); if (Math.abs(C.ppu - C.ppuT) < .02) C.ppu = C.ppuT;
   C.panX = (C.panX || 0) + ((C.panXT || 0) - (C.panX || 0)) * k; C.panZ = (C.panZ || 0) + ((C.panZT || 0) - (C.panZ || 0)) * k;   // depth mode's pan, tweened home when it ends
   if (S.started) { const f = 1 - Math.pow(.00002, dt); C.x += (S.player.x + C.panX - C.x) * f; C.z += (S.player.z + C.panZ - C.z) * f; }
-  C.y += ((S.mode === 'depth' ? S.layer : S.player.h || 0) - C.y) * k;   // flat mode follows the engineer up onto frames
+  C.y += ((S.mode === 'depth' ? S.layer : Math.max(0, S.player.h || 0)) - C.y) * k;   // flat mode follows the engineer up onto frames
   const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), dist = 120, cp = Math.cos(C.pitch);
   _t.set(C.x, C.y, C.z);
   camera.position.set(C.x + sy * cp * dist, C.y + Math.sin(C.pitch) * dist, C.z + cy * cp * dist);
@@ -824,7 +823,7 @@ function ioHints(type, x, y, z, dir, dy) {
   if (def.big && (kind === 'boiler' || kind === 'engine')) {
     portArrows(fakeAt(type, x, y, z, dir), (px, pz, d, c) => arrowAt(px, y + .06, pz, d, c, .55));
     return kind === 'boiler' ? `Boiler: water goes in and on through either end (blue in, orange out), steam comes out of the back. Fuel it by hand or inserter`
-      : 'Steam engine: steam goes in and on through the front and back, so engines chain end to end. Put a generator pole beside it, and a step-up station to reach your machines';
+      : 'Steam engine: steam goes in and on through the front and back, so engines chain end to end. Put a pole beside it, and wire poles on to your machines';
   }
   if (def.ports) {
     for (const p of def.ports) { const d = (p.side + dir) % 4; arrow(x + DIRS[d][0], y, z + DIRS[d][1], p.io === 'in' ? (d + 2) % 4 : d, p.io === 'in' ? COL.IN : COL.OUT, .8); }
@@ -856,8 +855,6 @@ function ioHints(type, x, y, z, dir, dy) {
   }
   if (kind === 'engine') { fluidHint(); return 'Steam engine (old, one tile): put it against a boiler or another engine (or pipe steam to it), inside a pole\'s supply area'; }
   if (kind === 'fgen') { fluidHint(); return 'Diesel generator: pipe diesel to any side, and put it in a pole\'s supply area'; }
-  if (kind === 'pole' && def.volts?.[0] === 2) return 'Step-up station: wires itself to generator poles. Hold a step-up cable and click it, then a low voltage pole: that is how generator power reaches machines';
-  if (kind === 'pole' && voltsOf(def)[0] === 2) return 'Generator pole: steam engines and diesel generators in its area feed it. Machines can\'t draw from it: wire it to a step-up station';
   if (kind === 'pole' && def.volts) return 'Transformer: wires itself to low voltage poles. Hold a transformer cable and click it, then a power line';
   if (kind === 'pole' && voltsOf(def)[0] > 0) return 'Power line: high voltage, wires to other lines. Step it down with a transformer station';
   if (SINKS.has(kind)) {

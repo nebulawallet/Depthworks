@@ -25,13 +25,8 @@ export default [
 <li>…that every sound in the game is synthesised in your browser, with no sound files at all?</li>
 </ul></div></div>
 <div class="mp-box"><h2>Recent changes to the game</h2><div class="in">
-<ul>
-<li>The camera in [[Depth|depth mode]] now orbits freely round what it looks at.</li>
-<li>[[Map|Map exploration]]: the map shows only what has been seen, and [[Radar|radars]] keep it live.</li>
-<li>The 2×2 {{i|big_drill}} reaches bedrock; [[Trading|trading]] between engineers; a [[Medical research|medical research]] tree.</li>
-<li>A [[Research|research queue]] and a new tech tree window, three [[Electricity#Voltages|voltages]], [[Blueprints|blueprints]] and the {{i|crafting_station}}.</li>
-<li>Big [[World generation|generated worlds]] with eleven [[Biomes|biomes]], [[Agriculture|farming]], [[Nuclear power|nuclear power]] and [[Copy and paste|copy and paste]].</li>
-</ul></div></div>
+{{gen|recent}}
+</div></div>
 </div>
 
 <div class="mp-box mp-wide"><h2>Explore by topic</h2><div class="in"><div class="portals">
@@ -136,7 +131,7 @@ Copper plates make {{i|cable|copper cable}}, which goes into {{i|circuit|circuit
 
 == 6. Power ==
 
-''Goals: make power; link a step-up station to a small pole; run an electric drill on the network.''
+''Goals: make power; run an electric drill on the network.''
 
 {{main|Steam power|Electricity}}
 
@@ -145,9 +140,8 @@ Electricity starts with steam, and water is never right next to the landing site
 # a {{i|water_pump}} placed on water;
 # a {{i|boiler}} (two tiles wide) against the pump, fuelled with coal;
 # a {{i|steam_engine}} (2×2) against the boiler. Water and steam pass between buildings that touch, or through [[Pipe|pipes]];
-# a {{i|generator_pole}} next to the engine. Generators only feed '''extra-low voltage''', which machines can't use;
-# a {{i|step_up}} near the generator pole (it wires itself to it), and a {{i|step_up_cable}}: hold it, click the station, then click a {{i|small_pole}};
-# small poles leading to your machines. A machine runs when it stands inside a pole's supply area, shown in blue.
+# a {{i|small_pole}} next to the engine, so the engine stands in its supply area;
+# more small poles leading to your machines (they wire to each other by themselves). A machine runs when it stands inside a pole's supply area, shown in blue.
 
 Now place an {{i|drill}} on ore inside a pole's area. A flashing plug on a machine means no power (red) or too little (yellow).
 
@@ -183,7 +177,6 @@ Along the way: [[Oil processing|oil]], [[Vehicles|vehicles]], [[Railways|trains]
 
 * '''Belts never load machines directly.''' Put an inserter between a belt and a furnace or assembler.
 * '''Inserters only take what the machine in front of them needs.''' An inserter facing an assembler with no recipe will wait.
-* '''Steam engines can't power machines on their own.''' They feed generator poles; you need the step-up station and cable.
 * '''Solar panels give nothing at night.''' There are no accumulators, so keep steam or diesel running.
 * '''Drills need to reach the layer.''' A burner drill stops when its tile drops to the depth layer: use an electric drill there, or a depth augment.
 
@@ -319,6 +312,10 @@ The engineer walks with {{kbd|W}}{{kbd|A}}{{kbd|S}}{{kbd|D}} and bumps into mach
 === Climbing ===
 
 The engineer can walk, or ride, up an [[Belt logistics#Angled belts|angled belt]] onto the frames it leads to, and walk about on top of [[Hollow frame|hollow frames]]. Up there you bump into what is built on that layer instead of what is on the ground. Walk off the edge of the frames and you drop back to the ground. You step onto a slope from its low end; its side is too high to climb further up. Vehicles stay on the ground and can't hit you up there.
+
+Going down works the same way. A slope down to layer −1 opens a way through the ground where it stands: walk (or ride) down it and you can walk about among what is built on layer −1, and back up an upward slope. The view follows you: depth mode on your layer, and back to the ground layer when you climb out.
+
+'''Underground belts''' can be ridden too: step onto an entrance and the belt carries you down into its tunnel, under whatever it crosses, and up out of the exit. Walking forward speeds you along. In depth mode, below the ground, you can watch yourself go through.
 
 Walking on a [[Path]] or a road's sidewalk is {{d|SIDEWALK_SPEED}} times faster.
 
@@ -677,8 +674,8 @@ While well fed you walk 25% faster, mine 50% faster, and heal 6 health a second 
 : How much of the aliens' messages you can read. See [[The Signal#Clarity|The Signal]].
 ; Depth mode
 : The second camera mode ({{k|depthMode}}) for building on other layers. See [[Depth]].
-; ELV, LV, HV
-: Extra-low, low and high voltage. See [[Electricity#Voltages|voltages]].
+; LV, HV
+: Low and high voltage. See [[Electricity#Voltages|voltages]].
 ; Exposure
 : How much of a biome's [[Hazards|hazard]] you have taken in. It builds up over 12 s and fades over 12 s.
 ; Factory
@@ -701,8 +698,6 @@ While well fed you walk 25% faster, mine 50% faster, and heal 6 health a second 
 : One sentence sent by a transmitter, costing one resonance pack.
 ; Side-loading
 : Feeding a belt into the side of another, which puts items on the near lane.
-; Step-up
-: Lifting generator power (ELV) into low voltage with a step-up station and cable.
 ; Sweep
 : A tool upgrade that makes one stroke hit everything of the same kind nearby.
 ; Weedy patch
@@ -735,7 +730,7 @@ While well fed you walk 25% faster, mine 50% faster, and heal 6 health a second 
 == Power ==
 
 * One water pump : 20 boilers : 40 steam engines. One boiler feeds two engines exactly.
-* Steam engines only feed '''generator poles'''. Don't forget the step-up station and its cable.
+* Put a pole by your steam engines: they feed whatever pole they stand next to.
 * Engines and boilers only work as hard as the network needs, so spare capacity costs no fuel.
 * Solar panels are useless at night and there are no accumulators: keep steam or diesel running.
 * A dam needs a little power to start. Put a power line over it, connected to a network that is already running.

@@ -198,6 +198,11 @@
   #help:not(.ingame) .ingame-only, #help.ingame .title-only { display: none; }
   #help kbd { color: #111; background: var(--ink); padding: 0 4px; font-family: inherit; }
   #help p { margin: 6px 0; }
+  /* the change log on the title screen */
+  #titleBtns .changelog { width: 100%; max-height: min(58vh, 520px); overflow-y: auto; text-align: left; border: 1px solid var(--line); background: rgba(0,0,0,.25); padding: 8px 12px; }
+  .cl { margin-bottom: 14px; } .cl:last-child { margin-bottom: 4px; }
+  .clh { color: var(--acc); font-size: 18px; } .clt { color: var(--ink); font-size: 17px; margin: 2px 0; } .cls { font-size: 15px; margin-bottom: 4px; }
+  .cl ul { margin: 4px 0 0 18px; padding: 0; font-size: 15px; } .cl li { margin-bottom: 4px; } .cl b { color: var(--gold); font-weight: normal; }
   #version { position: absolute; right: 10px; bottom: 6px; font-size: 13px; letter-spacing: .04em; }
   #title { width: min(640px, calc(100vw - 24px)); text-align: center; background: rgba(11,13,18,.82); padding: 26px; }
   #title h1 { font-family: 'Silkscreen', monospace; font-weight: normal; color: var(--acc); font-size: 46px; margin: 0; letter-spacing: 4px; }
@@ -399,7 +404,7 @@
     Something out there answers, but only with the mechanisms it has heard you use.</p>
   <h3 style="margin-top:10px">Getting started</h3>
   <p class="dim">You land with 8 iron plates, a burner drill and a stone furnace. Mine coal and stone by hand, put the drill on iron ore facing the furnace, and fuel both.
-    Craft from there (E). Electricity comes from steam: a water pump on water, a boiler burning fuel beside it, steam engines beside that, a generator pole by the engines, and a step-up station linked with a step-up cable to a small pole; machines only run inside a low voltage pole's blue supply area. Belts have two lanes (bus belts three); click any belt for its line and its network (also under L, Belt lines).</p>
+    Craft from there (E). Electricity comes from steam: a water pump on water, a boiler burning fuel beside it, steam engines beside that, and a small electric pole by the engines, wired on to your machines; machines only run inside a pole's blue supply area. Belts have two lanes (bus belts three); click any belt for its line and its network (also under L, Belt lines).</p>
   <h3 style="margin-top:10px">Reading the arrows</h3>
   <p class="dim">Hover or hold a building to see where things go. <b style="color:#4aa3ff">Blue</b>: where an inserter picks up, or where one can feed a machine.
     <b style="color:#ffa53d">Orange</b>: where things come out. <b style="color:#7be37a">Green</b>: something is feeding it. <b style="color:#ff4a4a">Red ✕</b>: that won't work.
@@ -413,7 +418,7 @@
   <p class="dim">Put a water pump on water, boilers (two tiles wide) against it, and steam engines (2×2) against the boilers: one pump feeds 20 boilers, one boiler feeds 2 engines.
     Water and steam pass between buildings that touch; pipes join boilers at their ends (water) and back (steam), engines at their front and back. Hover one for its arrows: a blue and an orange pair where a fluid passes through.
     Engines only work as hard as the network needs; when it needs more than they give, every machine slows down.
-    Generators feed <b>extra-low voltage</b>: put a generator pole by them, a step-up station near that, and link the station to a low voltage pole with a step-up cable.
+    Put a pole by your engines: they feed it, and poles wired to it carry the power to your machines.
     Poles of one voltage wire up by themselves. Hold a power cable and click two poles to link them from further away. Drag poles to lay a line, spaced to their coverage. High voltage power lines cover a 21×21 area;
     step down to low voltage with a transformer station and a transformer cable. Powered roads carry low voltage in road conduits to machines beside the road. A flashing plug means a machine has no power (red) or too little (yellow).
     Days turn to night: solar panels give nothing in the dark, so keep steam or diesel going. Lamps (powered) and braziers (burning coal or wood) light the ground, and working machines glow.</p>

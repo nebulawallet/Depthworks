@@ -36,8 +36,8 @@ conversation with something that only understands machines.
 - **Health and stamina:** vehicles hurt, food heals, Shift sprints.
 - **Saves:** five slots, plus export to and load from files.
 - **Power:** steam (2-wide boilers, 2×2 steam engines), diesel generators and solar panels on separate pole networks,
-  with visible wires and supply areas. Three voltages: generators feed extra-low voltage, a step-up station lifts it to
-  the low voltage machines use, transformer stations lift that to high voltage lines. Powered roads carry it under
+  with visible wires and supply areas. Generators feed ordinary poles; transformer stations lift low voltage to high
+  voltage lines for long runs. Powered roads carry it under
   roads. Pole lines drag out spaced to their coverage.
 - **Oil and fluids:** pipes that branch wherever they meet, underground pipes, pumps, valves and storage tanks, with
   less flow down long lines. Pumpjacks on crude oil feed refineries and chemical plants that make heavy fuel oil,

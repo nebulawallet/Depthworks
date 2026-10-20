@@ -38,6 +38,7 @@ export const ALIASES = {
   'Save': 'Saving', 'Saves': 'Saving', 'Export': 'Saving', 'Load': 'Saving', 'Autosave': 'Saving',
   'Factory': 'Factories', 'Fuel value': 'Fuel', 'Science': 'Science packs', 'Packs': 'Science packs', 'Modules': 'Augments', 'Augment': 'Augments',
   'Biome': 'Biomes', 'Hazard': 'Hazards', 'Exposure': 'Hazards', 'Copy settings': 'Copy and paste', 'Paste': 'Copy and paste', 'Blueprint': 'Blueprints', 'Trade': 'Trading', 'Creative mode': 'Sandbox',
+  'Change logs': 'Changelog', 'Changes': 'Changelog', 'Patch notes': 'Changelog', 'Version history': 'Changelog', 'Updates': 'Changelog', 'Version': 'Changelog',
   'FAQ': 'Tips and tricks', 'Tips': 'Tips and tricks', 'Game': 'Depthworks',
 };
 
@@ -46,7 +47,7 @@ export const NOTES = {
   iron_plate: "Iron plates are the most used item in the game: gears, circuits, belts, inserters, chests and most buildings need them. You land with eight. Five plates smelt into one {{i|steel}}.",
   copper_plate: "Nearly all copper goes into {{i|cable|copper cable}} (two cables a plate), and from there into {{i|circuit|circuits}}.",
   coal: "The first fuel. Rocks give 6 coal each, a quick way to get started, and charred trees in the [[Ashlands]] give coal too.",
-  wood: "Felled from trees with the axe. Wood is a weak fuel, and goes into wooden chests, small poles, generator poles, ports, hulls and fishing nets.",
+  wood: "Felled from trees with the axe. Wood is a weak fuel, and goes into wooden chests, small poles, ports, hulls and fishing nets.",
   stone: "Rocks give 20 stone each. Two stone smelt into a {{i|brick}}; five make a stone furnace.",
   crystal: "Resonant crystal lies '''under the ground''', on layer −1 (and layer −2 in the [[Singing steppe]]). It smelts into {{i|lens|lenses}} for precision packs and advanced circuits, and goes into resonance packs as it is. Reaching it needs {{t|excavation}} and [[Precision|precision]] 1.",
   abyssal_ore: "Abyssal ore lies on layer −2, the bottom of the world (and on layer −1 in the [[Ashlands]]). Reaching it needs {{t|deep_excavation}} and [[Precision|precision]] 2. Its alloy goes into the transmitter, resonance packs and the best augments.",
@@ -60,8 +61,6 @@ export const NOTES = {
   transmitter: "Everything about what it does is in [[The Signal]].",
   frame: "The key to building up. Anything above the ground stands on frames, and a working machine '''inside''' a frame counts double towards [[Precision|precision]]. See [[Depth]].",
   small_pole: "One recipe makes two. Small poles wire to each other up to 7.5 tiles apart: dragging a line spaces them 7 apart, so their areas overlap.",
-  generator_pole: "Steam engines and diesel generators only feed generator poles. Link their network to your machines with a {{i|step_up}} and a {{i|step_up_cable}}.",
-  step_up: "The missing link of a first power plant: it wires itself to generator poles near it, and a step-up cable joins it to a low voltage pole.",
   water_pump: "1,200 water a second: exactly enough for 20 boilers.",
   boiler: "At full output a boiler burns 1.8 MW of fuel, a piece of coal every 2.2 seconds, but it only works as hard as its engines need.",
   steam_engine: "Two engines take all the steam one boiler makes.",
