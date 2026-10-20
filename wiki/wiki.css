@@ -187,6 +187,9 @@ details.spoil[open] summary { border-bottom: 1px solid var(--border-soft); margi
 .result .rx { font-size: 14px; }
 .result mark { background: var(--hl); color: inherit; font-weight: 700; }
 
+/* inside the game (F2) there is no need to link back to it */
+.embedded .play, .embedded .play-link { display: none; }
+
 /* ---------------------------------------------------------------- footer */
 .foot { border-top: 1px solid var(--border-soft); padding: 14px 24px 28px; font-size: 13px; color: var(--text-dim); max-width: 1440px; margin: 0 auto; }
 .foot p { margin: 4px 0; }

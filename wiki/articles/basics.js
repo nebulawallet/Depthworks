@@ -46,7 +46,7 @@ export default [
   title: 'Depthworks', desc: 'The game this wiki is about', cats: ['Depthworks'], icon: 'transmitter',
   box: { title: 'Depthworks', img: 'transmitter', caption: 'The transmitter, heart of the endgame', rows: [
     ['Genre', 'Factory building, automation'], ['Modes', 'Single-player, co-op, sandbox'], ['Platform', 'Web browser'], ['Engine', 'Three.js (WebGL), plain JavaScript'],
-    ['Multiplayer', 'Peer to peer (WebRTC through PeerJS)'], ['World', '512 to 65,536 tiles a side, generated from a seed'], ['First version', 'October 2026'], ['Play', '<a href="../">in your browser</a>']] },
+    ['Multiplayer', 'Peer to peer (WebRTC through PeerJS)'], ['World', '512 to 65,536 tiles a side, generated from a seed'], ['First version', 'October 2026'], ['Play', '<a href="../" target="_blank" rel="noopener">in your browser</a>']] },
   body: `'''Depthworks''' is a pixelated 2.5D factory-building game in the tradition of ''Factorio'', played in a web browser. The player controls an engineer who lands on an untouched world, mines it by hand, crafts tools and machines, and gradually automates everything with [[Belt logistics|belts]], [[Inserters|inserters]] and [[Electricity|power networks]], researching up a [[Research|technology tree]] as they go. Its tagline is "a factory that goes down, up, and out".
 
 Two ideas set it apart. The first is '''[[Depth|depth]]''': the world has seven buildable layers, from two rock layers under the ground to hollow frames stacked above it, and the higher and deeper layers open only as your factory earns [[Precision|precision]] by keeping its machines busy. The second is its ending: there is no rocket to launch. Instead the player builds a [[The Signal|transmitter]] and holds a conversation with something that only understands machines.
@@ -277,7 +277,8 @@ Leaving depth mode turns the camera back to face north, centred on you.
 | {{k|map}} || [[Map]]
 | {{k|logistics}} || [[Routes and depots|Logistics]]: rail lines, truck routes, sea lanes and belt lines
 | {{k|factories}} || [[Factories]]
-| {{k|help}} or {{kbd|Esc}} || The menu: resume, settings, controls, how to play, save, export, quit
+| {{k|help}} or {{kbd|Esc}} || The menu: resume, settings, controls, how to play, the wiki, save, export, quit
+| {{k|wiki}} || This wiki, in a window over the game (the solo game pauses while it is open)
 | {{kbd|Enter}} || Chat, in [[Multiplayer|co-op]]
 
 Clicking a building opens its panel next to your inventory, with its typed slots: fuel, input, results, ingredients, science packs, augments or storage. {{kbd|Esc}} closes the topmost window first, then empties your hand, then opens the menu.

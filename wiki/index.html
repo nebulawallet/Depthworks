@@ -10,6 +10,8 @@
 <script>
   // the theme before first paint, so a dark page never flashes white
   try { const t = localStorage.getItem('depthworks.wiki.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  // shown inside the game (F2): hide the links back to the game
+  if (window.parent !== window) document.documentElement.classList.add('embedded');
 </script>
 </head>
 <body>
@@ -92,7 +94,7 @@
 
 <footer class="foot">
   <p>Every number, recipe and technology on this wiki is read straight from the game's own data, so it always matches the version you play.</p>
-  <p><a href="#/Main_Page">Main page</a> · <a href="#/Special:AllPages">All pages</a> · <a href="#/About_this_wiki">About this wiki</a> · <a href="../">Play Depthworks</a></p>
+  <p><a href="#/Main_Page">Main page</a> · <a href="#/Special:AllPages">All pages</a> · <a href="#/About_this_wiki">About this wiki</a> · <a href="../" class="play-link">Play Depthworks</a></p>
 </footer>
 
 <script type="module" src="wiki.js"></script>

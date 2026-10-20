@@ -7,7 +7,7 @@ import { bpAt } from './blueprint.js';
 import { sizeOf } from './multi.js';
 import { toolCursor } from './icons.js';
 import { renderer, render, pickCell, pickTarget, setMouseFromEvent, zoomStep, mouse, keys, moveInput, buildTerrain, applyGhostAll, resize, remeshAll } from './scene.js';
-import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI, openMenu, setMenuTab, setSetting, pickTargetFor, clearPick, openPlayer, isPicked } from './ui.js';
+import { toast, openModal, closeModals, toggleModal, selectItem, renderHotbar, openEntity, closeEntity, entityOpen, updateUI, initUI, drawSignalCanvases, renderNametags, openChat, cancelCursor, cycleBar, setHideUI, openMenu, setMenuTab, setSetting, openWiki, closeWiki, toggleWiki, pickTargetFor, clearPick, openPlayer, isPicked } from './ui.js';
 import { save, load, loadData, hasSave, wipeSave, slotList, freeSlot, latestSlot, exportSave, exportSlot, importSave } from './save.js';
 import { doAction, host, join, netTick, leave, rememberFriends, cleanName } from './net.js';
 import './signal.js';
@@ -109,7 +109,7 @@ function titleScreen(view = 'main', opt = {}) {
   msg.textContent = '';
   if (view === 'main') {
     $('titleBtns').innerHTML = (hasSave() ? btn('bContinue', 'Continue') : '') + btn('bNew', 'New game') + btn('bSandbox', 'Sandbox') + btn('bLoad', 'Load game')
-      + btn('bHost', 'Host co-op') + btn('bJoin', 'Join co-op') + btn('bHelp', 'How to play');
+      + btn('bHost', 'Host co-op') + btn('bJoin', 'Join co-op') + btn('bHelp', 'How to play') + btn('bWiki', 'Wiki');
     $('bContinue')?.addEventListener('click', () => begin(false, false, latestSlot()));
     $('bNew').addEventListener('click', () => startNew(false));
     $('bSandbox').addEventListener('click', () => startNew(true));
@@ -117,6 +117,7 @@ function titleScreen(view = 'main', opt = {}) {
     $('bHost').addEventListener('click', () => titleScreen('slots', { mode: 'host' }));
     $('bJoin').addEventListener('click', () => titleScreen('join'));
     $('bHelp').addEventListener('click', () => openMenu('guide'));
+    $('bWiki').addEventListener('click', openWiki);
   } else if (view === 'slots') {
     // load: load / export / delete each world, or load one from a file. new: pick a slot to start in (replacing
     // what is there, after a second click). host: host a saved world, or start a new one to host.
@@ -200,6 +201,7 @@ $('help').addEventListener('click', e => {
   if (a.startsWith('tab:')) setMenuTab(a.slice(4));
   else if (a === 'resume') closeModals();
   else if (a === 'back') openModal('title');
+  else if (a === 'wiki') openWiki();
   else if (a === 'save') saveNow();
   else if (a === 'export') { if (S.net.role === 'client') toast('only the host can export this world'); else { exportSave(); toast('saved to a file in your downloads'); } }
   else if (a === 'quit') { if (started) save(); started = false; leave(); location.reload(); }
@@ -252,7 +254,11 @@ const effDy = type => { const k = ENTITIES[type]?.kind; return k === 'lift' ? (S
 // ---------------------------------------------------------------- keyboard (Factorio layout)
 const held = c => keys.has(c);
 addEventListener('keydown', e => {
-  if (!started || e.target.tagName === 'INPUT') return;
+  if (e.target.tagName === 'INPUT') return;
+  // the wiki opens anywhere, the title screen included
+  if (is('wiki', e.code)) { e.preventDefault(); keys.clear(); toggleWiki(); return; }
+  if (e.code === 'Escape' && S.modal === 'wiki') { closeWiki(); return; }
+  if (!started) return;
   keys.add(e.code);
   const c = e.code;
   if (is('depthMode', c)) { e.preventDefault(); toggleMode(); return; }
@@ -594,7 +600,7 @@ function frame() {
   requestAnimationFrame(frame);
   const n = performance.now(), dt = Math.min(.05, (n - last) / 1000); last = n; lastFrame = n;
   try {
-    const paused = S.modal === 'help' && S.net.role === 'solo';   // the menu pauses a solo game
+    const paused = (S.modal === 'help' || S.modal === 'wiki') && S.net.role === 'solo';   // the menu and the wiki pause a solo game
     if (started && S.modal !== 'title' && !paused) {
       hover = pick();
       if (hover) hover.ctrl = held('ControlLeft') || held('ControlRight');   // Ctrl: mine single tiles

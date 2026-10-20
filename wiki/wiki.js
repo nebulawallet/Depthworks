@@ -770,6 +770,10 @@ function initSearch() {
   document.addEventListener('keydown', e => { if (e.key === '/' && document.activeElement !== q && !/input|textarea/i.test(document.activeElement.tagName)) { e.preventDefault(); q.focus(); } });
 }
 function initChrome() {
+  // inside the game, Esc and F2 close the wiki (the game can't hear keys pressed in here)
+  if (window.parent !== window) addEventListener('keydown', e => {
+    if (e.key === 'F2' || (e.key === 'Escape' && $('suggest').hidden)) { e.preventDefault(); window.parent.postMessage('depthworks:closewiki', '*'); }
+  });
   $('menuBtn').addEventListener('click', () => { const open = $('side').classList.toggle('open'); $('menuBtn').setAttribute('aria-expanded', String(open)); });
   $('themeBtn').addEventListener('click', () => {
     const root = document.documentElement, dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;

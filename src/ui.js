@@ -57,7 +57,7 @@ function recipeTip(r) {
 }
 
 // ---------------------------------------------------------------- modals
-const modals = ['inventory', 'research', 'help', 'title', 'map', 'logistics', 'factories'];
+const modals = ['inventory', 'research', 'help', 'title', 'map', 'logistics', 'factories', 'wiki'];
 export function openModal(id) {
   for (const m of modals) $(m).style.display = m === id ? '' : 'none';
   S.modal = id;
@@ -78,6 +78,26 @@ function renderModal() {
 bus.on('openmap', () => openModal('map'));
 bus.on('openlogistics', () => openModal('logistics'));
 bus.on('closemap', () => closeModals());
+
+// ---------------------------------------------------------------- the wiki (F2)
+// The player wiki (wiki/) in a window over the game. It loads the first time it opens, and closing it goes back to
+// the title screen or the menu if that is where it was opened from.
+let wikiBack = null;
+export function openWiki() {
+  if (S.modal === 'wiki') return;
+  wikiBack = S.modal === 'title' || S.modal === 'help' ? S.modal : null;
+  const f = $('wikiFrame'); if (!f.getAttribute('src')) f.src = 'wiki/';
+  openModal('wiki');
+}
+export function closeWiki() {
+  if (S.modal !== 'wiki') return;
+  $('wikiFrame').blur(); window.focus();
+  if (wikiBack) openModal(wikiBack); else closeModals();
+}
+export const toggleWiki = () => S.modal === 'wiki' ? closeWiki() : openWiki();
+$('wikiClose').addEventListener('click', closeWiki);
+// Esc and F2 pressed inside the wiki reach the game as a message (keys in a frame never reach the page around it)
+addEventListener('message', e => { if (e.source === $('wikiFrame').contentWindow && e.data === 'depthworks:closewiki') closeWiki(); });
 
 // ---------------------------------------------------------------- hide UI
 // One switch for the whole interface: CSS hides every element on the page except the game view (so anything

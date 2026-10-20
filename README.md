@@ -88,6 +88,7 @@ conversation with something that only understands machines.
 | Alt | Toggle the small arrows, recipe icons and factory tags |
 | H | Hide the interface |
 | F1 or Esc | Menu: settings, controls and key bindings, how to play, save, export, quit (pauses solo games) |
+| F2 | The wiki, in a window over the game (also on the title screen and in the menu) |
 
 ## Co-op
 
