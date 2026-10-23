@@ -471,6 +471,23 @@ export function makeMesh(e) {
     }
     case 'belt': {
       const tread = treadMat(e.type);
+      if (e.dy) {   // angled: one tile along, between this layer's floor and the next one up, on legs under its high end
+        const dy = e.dy, ang = Math.atan2(dy, 1), len = Math.hypot(1, 1), h = .5, trim = M(0xffffff & (def.color + 0x202020)), bus3 = def.lanes === 3;
+        const W = bus3 ? .98 : .9, TW = bus3 ? .86 : .78, RX = bus3 ? .47 : .44;   // a bus is wider, with its lanes marked
+        // every piece sits where it would on a flat belt, measured out from the slope's surface along its normal, so the
+        // tread lies on top of the base instead of inside it
+        const ny = Math.cos(ang), nz = Math.sin(ang), on = (geo, mat, x, off) => st(geo, mat, x, h + off * ny, off * nz, ang);
+        const tg = new THREE.PlaneGeometry(TW, len), uv = tg.attributes.uv;
+        for (let i = 0; i < uv.count; i++) uv.setY(i, uv.getY(i) * len);   // the chevrons keep their size over the longer run
+        on(box(W, .07, len), dark, 0, .06);
+        on(tg.rotateX(-Math.PI / 2), tread, 0, .1);
+        if (bus3) for (const x of [-.145, .145]) on(box(.025, .02, len), M(C.mid), x, .108);
+        for (const x of [-RX, RX]) { on(box(.08, .14, len), col, x, .09); on(box(.1, .03, len), trim, x, .17); }
+        const zl = -.3 * dy, top = h - zl * dy, foot = 0;
+        for (const x of [-RX + .04, RX - .04]) { st(box(.06, top - foot, .06), steel, x, (top + foot) / 2, zl); st(box(.14, .03, .14), dark, x, foot + .015, zl); }
+        st(box(W - .1, .04, .04), steel, 0, (top + foot) / 2, zl);
+        break;
+      }
       if (def.lanes === 3) {   // bus belt: wider, with lane dividers, side channels and a stop on the middle lane
         const div = M(C.mid), out = M(0xffa53d);
         if (!e.curve) {
@@ -493,21 +510,7 @@ export function makeMesh(e) {
           sp.renderOrder = 10; sp.layers.set(UI_LAYER); g.add(sp);
         }
         if (e.midOff) st(box(.24, .1, .06), M(0xd84a3a), 0, .15, -.47);
-        break;
-      }
-      if (e.dy) {   // angled: one tile along, between this layer's floor and the next one up, on legs under its high end
-        const dy = e.dy, ang = Math.atan2(dy, 1), len = Math.hypot(1, 1), h = .5, trim = M(0xffffff & (def.color + 0x202020));
-        // every piece sits where it would on a flat belt, measured out from the slope's surface along its normal, so the
-        // tread lies on top of the base instead of inside it
-        const ny = Math.cos(ang), nz = Math.sin(ang), on = (geo, mat, x, off) => st(geo, mat, x, h + off * ny, off * nz, ang);
-        const tg = new THREE.PlaneGeometry(.78, len), uv = tg.attributes.uv;
-        for (let i = 0; i < uv.count; i++) uv.setY(i, uv.getY(i) * len);   // the chevrons keep their size over the longer run
-        on(box(.9, .07, len), dark, 0, .06);
-        on(tg.rotateX(-Math.PI / 2), tread, 0, .1);
-        for (const x of [-.44, .44]) { on(box(.08, .14, len), col, x, .09); on(box(.1, .03, len), trim, x, .17); }
-        const zl = -.3 * dy, top = h - zl * dy, foot = 0;
-        for (const x of [-.4, .4]) { st(box(.06, top - foot, .06), steel, x, (top + foot) / 2, zl); st(box(.14, .03, .14), dark, x, foot + .015, zl); }
-        st(box(.8, .04, .04), steel, 0, (top + foot) / 2, zl);
+        if (e.chF && e.chF !== 'off') { const sp = new THREE.Sprite(iconSpriteMat(e.chF)); sp.scale.set(.36, .36, 1); sp.position.set(0, .62, -.55); sp.renderOrder = 10; sp.layers.set(UI_LAYER); g.add(sp); }   // the one item it feeds ahead
         break;
       }
       if (!e.curve) {
@@ -545,8 +548,10 @@ export function makeMesh(e) {
       break;
     }
     case 'splitter': {
-      st(box(.9, .07, 1), dark, 0, .06, 0);
-      st(new THREE.PlaneGeometry(.78, 1).rotateX(-Math.PI / 2), treadMat('belt'), 0, .1, 0);
+      const bus3 = def.lanes === 3;   // the bus splitter: wider, its three lanes marked, in the bus's purple
+      st(box(bus3 ? .98 : .9, .07, 1), dark, 0, .06, 0);
+      st(new THREE.PlaneGeometry(bus3 ? .86 : .78, 1).rotateX(-Math.PI / 2), treadMat(bus3 ? 'bus_belt' : 'belt'), 0, .1, 0);
+      if (bus3) for (const x of [-.145, .145]) st(box(.025, .02, 1), M(C.mid), x, .108, 0);
       st(box(1, .32, .38), col, 0, .2, 0);
       st(box(.94, .06, .32), mid, 0, .39, 0);
       const arrow = M(0xf2f2f2);

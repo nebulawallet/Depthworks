@@ -3,6 +3,20 @@
 // CLAUDE.md for how versions are numbered and what an entry should say. Text may use <b> and <i>.
 export const CHANGELOG = [
   {
+    version: '0.6.2', stage: 'beta', date: '2026-10-23', title: 'Real gunshots, and bus belts that do more',
+    summary: 'Every gun has a new, much fuller shot, and bus belts fill evenly, climb, feed buildings and get a splitter of their own.',
+    changes: [
+      '<b>New gunshots.</b> Each shot now has a sharp crack, a boom that darkens as it fades, a low thump, a rumble rolling away across the land and, for the single-shot guns, an echo coming back. Before, a shot was a short hiss and a beep.',
+      'The shotgun is pumped and the rifle\'s bolt worked after each shot, and you hear it. The SMG and assault rifle are short and punchy, so a burst stays clear.',
+      'Gunfire is louder than other sounds, and other people\'s shots get quieter with distance.',
+      '<b>Two-lane belts fill a bus evenly.</b> A belt feeding the back of a bus now spreads its items over all three lanes in turn, instead of leaving the middle lane empty. To keep the old way (the belt\'s left lane to the bus\'s left, right to right, middle free), click the bus and choose <i>keep to the outer lanes</i> under its line.',
+      '<b>Angled bus belts.</b> Bus belts slope up or down a layer like any other belt: press V with one in hand.',
+      '<b>A bus feeds the building it ends at.</b> A bus that runs into a chest, a machine or a depot puts its items straight in, from all three lanes. The new <i>front</i> setting on its last tile picks anything, one item, or nothing.',
+      '<b>Bus splitter</b> (Bus belts research): splits one bus three ways, front, left and right, all three lanes at once, with a filter on each way.',
+      'Placing a chest or a machine beside a bus channel now connects it at once. Before, the channel only found it after the next belt was built or moved.',
+    ],
+  },
+  {
     version: '0.6.1', stage: 'beta', date: '2026-10-21', title: 'Hits you can see',
     summary: 'Shooting an animal now shows, shots come out of the gun, and animals go down sooner.',
     changes: [

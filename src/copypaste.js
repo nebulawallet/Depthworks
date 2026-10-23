@@ -33,7 +33,7 @@ export function copyBuilding(e) {
   if (e.kind === 'inserter') { d.dy = e.dy; d.dir = e.dir; }
   if (def.augSlots && e.aug?.some(Boolean)) { d.aug = [...e.aug]; what.push('augments'); }
   if (e.kind === 'splitter' && e.sf?.some(Boolean)) { d.sf = [...e.sf]; what.push('splitter filters'); }
-  if (isBus(e)) { d.bus = { chL: e.chL ?? null, chR: e.chR ?? null, midOff: !!e.midOff, sort: !!e.sort }; what.push('bus channels'); }
+  if (isBus(e)) { d.bus = { chL: e.chL ?? null, chR: e.chR ?? null, chF: e.chF ?? null, midOff: !!e.midOff, sort: !!e.sort }; what.push('bus channels'); }
   if (e.bout) { d.bout = { L: e.bout.L ?? null, R: e.bout.R ?? null }; what.push('outputs'); }
   if (e.line) { d.line = copyLine(e.line); if (d.line.filter.length || d.line.augs.length) what.push('line filter and speed'); }
   if (e.kind === 'depot') { d.depot = { dname: e.dname, prio: e.prio, vlimit: e.vlimit, rules: e.rules.map(r => ({ ...r })), fuelFluid: e.fuelFluid }; what.push('name, priority, limit and rules'); }
@@ -42,7 +42,7 @@ export function copyBuilding(e) {
   d.dir ??= e.dir;
   return { kind: 'building', from: def.name, what, data: d };
 }
-export const copyLine = ln => ({ filter: [...ln.cfg.filter], augs: ln.segs.flatMap(s => (s.aug || []).filter(Boolean)), name: ln.cfg.name || '' });
+export const copyLine = ln => ({ filter: [...ln.cfg.filter], augs: ln.segs.flatMap(s => (s.aug || []).filter(Boolean)), name: ln.cfg.name || '', feed: ln.cfg.feed });
 
 // Apply what fits. Runs on the host as the player pasting (augments come from their inventory). Returns what changed.
 export function applyToBuilding(e, clip, cmd) {
@@ -92,6 +92,7 @@ const fits = (e, it) => { const a = AUGMENTS[ITEMS[it]?.aug]; return !!a && (!a.
 // A belt line: its filter, and its speed augments from the player's inventory (up to the line's slots).
 export function applyLine(ln, data) {
   ln.cfg.filter.length = 0; ln.cfg.filter.push(...(data.filter || []).filter(it => ITEMS[it]));
+  if (ln.n === 3 && 'feed' in data) ln.cfg.feed = data.feed === 'sides' ? 'sides' : undefined;
   const have = ln.segs.flatMap(s => (s.aug || []).filter(Boolean)), want = [...(data.augs || [])];
   for (const a of have) { const i = want.indexOf(a); if (i >= 0) want.splice(i, 1); }
   const head = ln.segs[0];

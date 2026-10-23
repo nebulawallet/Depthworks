@@ -10,7 +10,7 @@ export { BIOME_TEXT };
 
 // Other names people search for: alias -> 'Page' or 'Page#Section'.
 export const ALIASES = {
-  'Belts': 'Belt logistics', 'Belt lines': 'Belt logistics#Belt lines', 'Bus belts': 'Belt logistics#Bus belts', 'Splitters': 'Belt logistics#Splitters',
+  'Belts': 'Belt logistics', 'Belt lines': 'Belt logistics#Belt lines', 'Bus belts': 'Belt logistics#Bus belts', 'Bus': 'Belt logistics#Bus belts', 'Bus splitters': 'Bus splitter', 'Bus lanes': 'Belt logistics#Bus belts', 'Splitters': 'Belt logistics#Splitters',
   'Underground belts': 'Belt logistics#Underground belts', 'Lanes': 'Belt logistics#Lanes', 'Side-loading': 'Belt logistics#Lanes', 'Lifts': 'Belt logistics#Angled belts', 'Lift': 'Belt logistics#Angled belts', 'Slopes': 'Belt logistics#Angled belts', 'Inclines': 'Belt logistics#Angled belts',
   'Power': 'Electricity', 'Electric network': 'Electricity', 'Voltages': 'Electricity#Voltages', 'Brownout': 'Electricity#Brownouts', 'Direct wiring': 'Electricity#Direct wiring', 'Poles': 'Electricity#Poles',
   'Barrel': 'Empty barrel', 'Barrels': 'Fluids#Barrels', 'Pipes': 'Fluids', 'Valves': 'Fluids#Buildings', 'Oil': 'Oil processing', 'Refining': 'Oil processing#Refining', 'Chemistry': 'Oil processing#Chemistry',

@@ -50,8 +50,8 @@ export function machineStats(e) {
 function prodExtra(e, prod) { if (prod <= 0) return 0; e.pbar = (e.pbar || 0) + prod; const n = Math.floor(e.pbar); e.pbar -= n; return n; }
 
 // ---------------------------------------------------------------- entities
-// Ordinary two-lane belts can be angled (dy): one tile along, one layer up or down. Bus belts can't.
-export const canSlope = type => ENTITIES[type]?.kind === 'belt' && !ENTITIES[type].lanes;
+// Belts, bus belts included, can be angled (dy): one tile along, one layer up or down.
+export const canSlope = type => ENTITIES[type]?.kind === 'belt';
 // Where a slope going down is built when you point at cell (x, y, z). It stands on the lower layer, so normally
 // right there, bringing a belt down from the layer above. But pointing just past the end of a run on this layer (or the top
 // of a slope up) means "take this run down": then it goes one layer lower.

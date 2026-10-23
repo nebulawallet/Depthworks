@@ -30,7 +30,7 @@ const isBusTile = b => b.kind === 'belt' && lanesOf(b) === 3;
 export const isSloped = b => !!b && b.kind === 'belt' && !!b.dy;
 export const outRise = b => isSloped(b) && b.dy > 0 ? 1 : 0;   // the layer items leave on, above the slope's own
 export const inRise = b => isSloped(b) && b.dy < 0 ? 1 : 0;    // the layer items come in from, above the slope's own
-export const isBusNode = b => isBusTile(b) && !!(b.chL || b.chR || b.midOff || b.sort);
+export const isBusNode = b => isBusTile(b) && !b.dy && !!(b.chL || b.chR || b.midOff || b.sort);
 
 // ---------------------------------------------------------------- tiles and how they connect
 export function pickPoint(b) { return b.kind === 'underground' ? (b.role === 'in' ? .25 : b.len - .25) : b.len / 2; }
@@ -80,13 +80,14 @@ function continuation(b) {
   if (!isBeltLike(t) || t.kind === 'splitter' || t.speed !== b.speed || lanesOf(t) !== lanesOf(b) || entryFor(t, b.dir, b) !== 0) return null;
   return t;
 }
-// Lanes keep their side between belts. A two-lane belt feeding a bus fills its outer lanes; a bus feeding a two-lane
-// belt sends its outer lanes to the two lanes, and its middle lane (-1) only into a side its outer lane leaves empty.
+// Lanes keep their side between belts. A two-lane belt feeding a bus fills its outer lanes (when the bus line is set to
+// keep sides; by default it spreads over all three, see toTarget); a bus feeding a two-lane belt sends its outer lanes
+// to the two lanes, and its middle lane (-1) only into a side its outer lane leaves empty.
 const laneMap = (nIn, nOut) => nIn === nOut ? (nIn === 3 ? [0, 1, 2] : [0, 1]) : nIn === 2 ? [0, 2] : [0, -1, 1];
 function target(from, moveDir, t) {
   if (!isBeltLike(t)) return null;
   const q = entryFor(t, moveDir, from); if (q < 0) return null;
-  if (q === 0) return { line: t.line, at: t.off, map: laneMap(lanesOf(from), lanesOf(t)), seg: t };
+  if (q === 0) return { line: t.line, at: t.off, map: laneMap(lanesOf(from), lanesOf(t)), seg: t, spread: lanesOf(from) === 2 && lanesOf(t) === 3, rr: 0 };
   const rel = (moveDir - t.dir + 4) % 4;   // a side-load fills the lane on the side it comes in from
   return { line: t.line, at: t.off + q, side: rel === 1 ? 0 : lanesOf(t) - 1, seg: t };
 }
@@ -95,7 +96,15 @@ function channelTarget(b, d) {
   const n = neighbour(b, d);
   if (!n || !sameFac(b, n)) return null;
   if (isBeltLike(n)) return target(b, d, n);
-  return ['inserter', 'pole', 'frame', 'rail', 'pipe', 'upipe', 'fpump', 'valve', 'tank'].includes(n.kind) ? null : { ent: n };
+  return TAP_NOT.has(n.kind) ? null : { ent: n };
+}
+// The end of a bus that runs into a building feeds it from every lane: anything (the default), one item (`chF` an item),
+// or nothing ('off'). A bus that runs on into a belt is unaffected.
+function frontTarget(b) {
+  if (!isBusTile(b) || b.dy || b.chF === 'off') return null;
+  const n = world.ents.get(key(b.x + DIRS[b.dir][0], b.y, b.z + DIRS[b.dir][1]));
+  if (!n || isBeltLike(n) || !sameFac(b, n) || TAP_NOT.has(n.kind)) return null;
+  return { ent: n, f: b.chF || '*' };
 }
 
 // ---------------------------------------------------------------- building lines
@@ -152,9 +161,10 @@ function buildTaps(belts) {
   world.taps = taps; world.tapChests = chests;
 }
 const TAP_NOT = new Set(['inserter', 'pole', 'frame', 'rail', 'pipe', 'upipe', 'fpump', 'valve', 'tank']);
-// A building going up or coming down beside a tap changes where it pushes to.
-const nearTap = e => (world.taps || []).some(T => { const [dx, dz] = DIRS[T.d]; return T.b.y === e.y && (e.foot || [[e.x, e.z]]).some(([x, z]) => x === T.b.x + dx && z === T.b.z + dz); });
-for (const ev of ['placed', 'removed']) bus.on(ev, e => { if (e.kind !== 'frame' && nearTap(e)) world.beltDirty = true; });
+// A building going up or coming down beside a belt changes where that belt hands items: a tap, a bus channel, the end
+// of a bus feeding it.
+const besideBelt = e => (e.foot || [[e.x, e.z]]).some(([x, z]) => DIRS.some(([dx, dz]) => isBeltLike(world.ents.get(key(x + dx, e.y, z + dz)))));
+for (const ev of ['placed', 'removed']) bus.on(ev, e => { if (e.kind !== 'frame' && !e.belt && besideBelt(e)) world.beltDirty = true; });
 function tapsTick(dt) {
   for (const T of world.taps || []) {
     if ((T.cd -= dt) > 0 || !T.t) continue;
@@ -207,7 +217,7 @@ function lineSpeed(ln) {
 function endNode(ln) {
   const b = ln.segs[ln.segs.length - 1];
   if (b.kind === 'splitter') return { kind: 'split', b, outs: splitOuts(b).map(d => target(b, d, neighbour(b, d))), rr: [0, 0, 0, 0, 0, 0] };
-  const fwd = target(b, b.dir, primaryNext(b));
+  const fwd = target(b, b.dir, primaryNext(b)) || frontTarget(b);
   if (isBusNode(b)) return { kind: 'bus', b, fwd, ch: [b.chL ? { f: b.chL, t: channelTarget(b, (b.dir + 3) % 4) } : null, null, b.chR ? { f: b.chR, t: channelTarget(b, (b.dir + 1) % 4) } : null] };
   return fwd ? { kind: 'fwd', fwd } : null;
 }
@@ -376,8 +386,13 @@ function handOn(ln, li, type, over) {
   return true;
 }
 function toTarget(t, src, li, type, over) {
-  if (t.ent) { if (!canAccept(t.ent, type)) return false; insert(t.ent, type); return true; }
+  if (t.ent) { if ((t.f && t.f !== '*' && t.f !== type) || !canAccept(t.ent, type)) return false; insert(t.ent, type); return true; }
   const T = t.line; if (!T?.packed || !lineAccepts(T, type)) return false;
+  // two lanes onto a bus: spread over all three in turn (unless the bus keeps sides), each item to the next lane with room
+  if (t.spread && T.cfg.feed !== 'sides') {
+    for (let k = 0; k < 3; k++) { const lane = (t.rr + k) % 3; if (putAt(T, lane, type, Math.min(t.at + over, t.seg.off + t.seg.len))) { t.rr = (lane + 1) % 3; return true; } }
+    return false;
+  }
   let lane = t.side, x = t.at;
   if (lane === undefined) {
     lane = t.map[li]; x += over;
@@ -441,6 +456,7 @@ export function beltCommand(e, cmd, arg) {
     case 'lname': if (ln) { ln.cfg.name = cleanName(arg); syncLine(ln); } return true;
     case 'lfilter': if (ln && ITEMS[arg]) { const f = ln.cfg.filter, i = f.indexOf(arg); if (i >= 0) f.splice(i, 1); else f.push(arg); syncLine(ln); } return true;
     case 'lfilterclear': if (ln) { ln.cfg.filter.length = 0; syncLine(ln); } return true;
+    case 'lfeed': if (ln && ln.n === 3) { ln.cfg.feed = arg === 'sides' ? 'sides' : undefined; syncLine(ln); } return true;   // how two-lane belts feed a bus
     case 'laugput': {   // from the engineer's inventory into the line's first free slot
       if (!ln || !AUGMENTS[ITEMS[arg]?.aug]?.belts || !invGet(arg)) { notify('toast', 'only speed augments go on belts'); return true; }
       if (lineAugs(ln).length >= AUG_RULES.lineSlots) { notify('toast', 'this line\'s augment slots are full'); return true; }
@@ -463,6 +479,7 @@ export function beltCommand(e, cmd, arg) {
       if (side === 'L') e.chL = v; else if (side === 'R') e.chR = v;
       world.beltDirty = true; bus.emit('remesh', e); return true;
     }
+    case 'front': if (isBusTile(e)) { e.chF = arg === 'off' ? 'off' : ITEMS[arg] ? arg : null; world.beltDirty = true; bus.emit('remesh', e); } return true;   // what the end of a bus feeds a building ahead
     case 'midoff': if (isBusTile(e)) { e.midOff = !e.midOff; world.beltDirty = true; bus.emit('remesh', e); } return true;
     case 'bout': {   // "L:item", "L:*" or "L:" (off), and the same for R: a lane pushed out to that side
       if (e.kind !== 'belt' || lanesOf(e) !== 2) return true;

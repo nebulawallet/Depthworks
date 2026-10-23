@@ -449,9 +449,10 @@ export const ENTITIES = {
   express_underground: { name: 'Express underground belt', kind: 'underground', speed: 4.5, color: 0x3a9ad8, range: 11, vol: .8, glyph: 'tunnel', desc: 'Entrance and exit up to 10 tiles apart.' },
   // Bus belts carry three lanes and take items only from the belt behind them. Any tile can send its left or right
   // lane off to the side through a filtered channel (see belts.js); the middle lane always goes straight.
-  bus_belt:         { name: 'Bus belt', kind: 'belt', lanes: 3, speed: 3, color: 0x8a5ad8, vol: .4, glyph: 'flow', desc: 'Three lanes, fed only from behind. Click a tile to send its left or right lane off to the side, with a filter. The middle lane goes straight.' },
+  bus_belt:         { name: 'Bus belt', kind: 'belt', lanes: 3, speed: 3, color: 0x8a5ad8, vol: .4, glyph: 'flow', desc: 'Three lanes, fed only from behind: a two-lane belt feeding it is spread over all three. Angle it up or down a layer like any belt. Click a tile to send its left or right lane off to the side, with a filter; the middle lane goes straight. A bus that ends against a building feeds it.' },
   bus_underground:  { name: 'Bus underground', kind: 'underground', lanes: 3, speed: 3, color: 0x8a5ad8, range: 9, vol: .7, glyph: 'tunnel', desc: 'Takes a bus belt under anything, up to 8 tiles.' },
   splitter:         { name: 'Splitter', kind: 'splitter', speed: 3, color: 0xc9a227, vol: .8, glyph: 'split', desc: 'Deals items in turn to the belts in front, left and right of it. Each way can have a filter.' },
+  bus_splitter:     { name: 'Bus splitter', kind: 'splitter', lanes: 3, speed: 3, color: 0x8a5ad8, vol: 1, glyph: 'split', desc: 'A splitter for bus belts: three lanes in from behind, dealt in turn to the belts in front, left and right of it, each lane keeping its place. Each way can have a filter.' },
   burner_inserter:  { name: 'Burner inserter', kind: 'inserter', swing: .9, reach: 1, burner: true, color: 0x9a6a3a, vol: .4, glyph: 'swing', desc: 'Slow, needs no power. Burns fuel, and keeps fuel it carries when it runs dry.' },
   inserter:         { name: 'Inserter', kind: 'inserter', swing: .6, reach: 1, power: 13, color: 0xe0a92e, vol: .5, glyph: 'swing', desc: 'Moves items from behind it to in front of it.' },
   long_inserter:    { name: 'Long arm', kind: 'inserter', swing: .8, reach: 2, power: 20, color: 0xc8483a, vol: .75, glyph: 'swing', desc: 'Reaches two tiles.' },
@@ -750,6 +751,7 @@ export const RECIPES = [
   { ...R('express_underground', { fast_underground: 2, steel: 4, circuit: 2 }, 1, { tech: 'logistics3' }), out: { express_underground: 2 } },
   R('bus_belt', { fast_belt: 1, belt: 1, iron_plate: 2 }, .5, { tech: 'bus_belts' }),
   { ...R('bus_underground', { bus_belt: 6, steel: 4 }, 1, { tech: 'bus_belts' }), out: { bus_underground: 2 } },
+  R('bus_splitter', { splitter: 1, bus_belt: 2, circuit: 5 }, 1, { tech: 'bus_belts' }),
   R('big_drill', { drill: 4, steel: 20, adv_circuit: 5, gear: 10 }, 6, { tech: 'deep_drilling' }),   // four drills' worth, plus what reaches bedrock
   // fluids and oil
   R('pipe', { iron_plate: 1 }, .5),   // from the start: boilers, pumps and engines join by pipe
@@ -906,7 +908,7 @@ export const TECHS = [
   T('firearms', 'Firearms', [r], 30, 10, ['automation'], ['shotgun', 'shotgun_shells']),
   T('firearms_2', 'Firearms 2', [r, g], 60, 15, ['firearms', 'steel', 'logistic_science'], ['rifle', 'smg', 'rifle_ammo']),
   T('firearms_3', 'Firearms 3', [r, g, b], 100, 20, ['firearms_2', 'advanced_electronics'], ['assault_rifle']),
-  T('bus_belts', 'Bus belts', [r, g], 60, 15, ['logistics2'], ['bus_belt', 'bus_underground']),
+  T('bus_belts', 'Bus belts', [r, g], 60, 15, ['logistics2'], ['bus_belt', 'bus_underground', 'bus_splitter']),
   T('deep_drilling', 'Deep drilling', [r, g, b], 100, 20, ['advanced_electronics'], ['big_drill', augId('depth', 1)]),
   T('augments', 'Augments', [r, g], 75, 15, ['steel', 'logistic_science'], AUG3.map(a => augId(a, 1))),
   T('augments_2', 'Augments 2', [r, g, b], 100, 20, ['augments', 'advanced_electronics'], AUG3.map(a => augId(a, 2))),

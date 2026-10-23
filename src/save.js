@@ -23,10 +23,10 @@ const readMeta = () => { try { return JSON.parse(localStorage.getItem(META)) || 
 const writeMeta = m => { try { localStorage.setItem(META, JSON.stringify(m)); } catch { /* storage unavailable */ } };
 const rawSlot = n => { try { return localStorage.getItem(slotKey(n)); } catch { return null; } };
 const FIELDS = ['recipe', 'filter', 'inp', 'out', 'fuel', 'fuelType', 'burn', 'held', 'buffer', 'bufN', 'role', 'crafting', 'prog', 'charging', 'timer', 'load', 'unit',
-  'fac', 'fa', 'fluid', 'mode', 'dname', 'prio', 'vlimit', 'rules', 'fuelFluid', 'sig', 'aug', 'pbar', 'sf', 'chL', 'chR', 'midOff',
+  'fac', 'fa', 'fluid', 'mode', 'dname', 'prio', 'vlimit', 'rules', 'fuelFluid', 'sig', 'aug', 'pbar', 'sf', 'chL', 'chR', 'chF', 'midOff',
   'seed', 'seeds', 'grow', 'water', 'running', 'output', 'heat', 'broken', 'sort', 'compact', 'arm', 'bout', 'scanR'];
 // Belt settings that change how lines are put together: when a friend's copy changes, their lines get rebuilt.
-const BELT_SHAPE = ['aug', 'sf', 'chL', 'chR', 'midOff', 'sort', 'bout'];
+const BELT_SHAPE = ['aug', 'sf', 'chL', 'chR', 'chF', 'midOff', 'sort', 'bout'];
 const ORE_V = 2;   // ores as [key, type, amount, layer, base] (see newDeposit); older saves had [key, type, amount]
 // Objects and arrays in FIELDS are copied one level deep (rules are a list of small objects).
 const copy = v => Array.isArray(v) ? v.map(x => x && typeof x === 'object' ? { ...x } : x) : v && typeof v === 'object' ? { ...v } : v;
@@ -57,7 +57,7 @@ export function entToJSON(e) {
   if (e.fa) o.fa = Array.from(e.fa, v => Math.round(v || 0));
   if (e.belt) {   // items per tile as [type, p, lane]; line settings ride on the line's first tile
     o.items = segItems(e).map(([t, p, l]) => [t, +p.toFixed(3), l]);
-    if (e.lcfg && (!e.line || e.line.segs[0] === e) && (e.lcfg.name || e.lcfg.filter.length)) o.lcfg = { name: e.lcfg.name, filter: [...e.lcfg.filter] };
+    if (e.lcfg && (!e.line || e.line.segs[0] === e) && (e.lcfg.name || e.lcfg.filter.length || e.lcfg.feed)) o.lcfg = { name: e.lcfg.name, filter: [...e.lcfg.filter], ...(e.lcfg.feed ? { feed: e.lcfg.feed } : {}) };
   }
   if (e.store) o.store = e.store.toList();
   if (e.pair) o.pair = [e.pair.x, e.pair.z];
@@ -78,8 +78,8 @@ export function applyEntJSON(e, o, forceRemesh = false) {
   if (e.belt) {
     if (BELT_SHAPE.some(f => JSON.stringify(o[f] ?? null) !== JSON.stringify(e[f] ?? null))) world.beltDirty = true;
     if (!e.line || e.line.segs[0] === e) {   // only a line's first tile carries its settings
-      const cfg = { name: o.lcfg?.name || '', filter: [...(o.lcfg?.filter || [])] };
-      if (JSON.stringify(cfg) !== JSON.stringify({ name: e.lcfg?.name || '', filter: e.lcfg?.filter || [] })) { e.lcfg = cfg; world.beltDirty = true; }
+      const cfg = { name: o.lcfg?.name || '', filter: [...(o.lcfg?.filter || [])], feed: o.lcfg?.feed };
+      if (JSON.stringify(cfg) !== JSON.stringify({ name: e.lcfg?.name || '', filter: e.lcfg?.filter || [], feed: e.lcfg?.feed })) { e.lcfg = cfg; world.beltDirty = true; }
     }
   }
   for (const f of FIELDS) if (o[f] !== undefined) e[f] = copy(o[f]);
@@ -107,7 +107,7 @@ export function entFromJSON(o) {
   if (typeof e !== 'object' || !e) return e;
   for (const f of FIELDS) if (o[f] !== undefined) e[f] = copy(o[f]);
   if (o.items && e.belt) e.buf = o.items.map(([type, p, lane]) => [type, p, lane ?? 1]);   // older saves had one lane: those items go on the right
-  if (o.lcfg && e.belt) e.lcfg = { name: o.lcfg.name || '', filter: [...(o.lcfg.filter || [])] };
+  if (o.lcfg && e.belt) e.lcfg = { name: o.lcfg.name || '', filter: [...(o.lcfg.filter || [])], feed: o.lcfg.feed };
   const slots = ENTITIES[e.type].augSlots;
   if (slots) e.aug = Array.from({ length: slots }, (_, i) => o.aug?.[i] || null);
   loadStore(e, o.store);

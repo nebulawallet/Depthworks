@@ -28,11 +28,11 @@ The engineer can ride through it: step onto the entrance. In [[Depth|depth mode]
 
 == Splitters ==
 
-The {{i|splitter}} is a single tile that deals items in turn to the belts in front of it, to its left and to its right. Each of the three ways can have a '''filter''': a filtered way takes only its item, and the rest go to the unfiltered ways.
+The {{i|splitter}} is a single tile that deals items in turn to the belts in front of it, to its left and to its right. Each of the three ways can have a '''filter''': a filtered way takes only its item, and the rest go to the unfiltered ways. The {{i|bus_splitter}} does the same for [[Belt logistics#Bus belts|bus belts]], all three lanes at once, each lane keeping its place.
 
 == Angled belts ==
 
-From the start, an ordinary belt (plain, fast or express) can be '''angled''' to carry items one layer up or down, like an incline conveyor:
+From the start, any belt (plain, fast, express, and [[Belt logistics#Bus belts|bus belts]] once you have them) can be '''angled''' to carry items one layer up or down, like an incline conveyor:
 
 # Hold a belt and press {{k|pitch}} to choose: level, slopes up, or slopes down. The hand bar shows which.
 # Place it. A slope always '''stands on the lower of the two layers it joins''', on legs under its high end, so it never digs into the ground.
@@ -42,7 +42,7 @@ From the start, an ordinary belt (plain, fast or express) can be '''angled''' to
 
 '''Coming down:''' place the slope on the lower layer, on the tile just past the end of the raised belt (with a raised run on layer 1, that is on the ground). It takes items from the belt above and behind it and hands them on along the ground. Pointing just past the end of a belt on your own layer instead takes that belt down a layer: from the ground, down to layer −1 (which needs {{t|excavation}}).
 
-A slope up followed straight away by a slope down makes a hump over something in the way. The engineer can walk up a slope (or let the belt carry them) onto the frames, and down again. See [[Engineer#Climbing|climbing]]. Slopes never curve or take items from the side, and bus belts can't be angled.
+A slope up followed straight away by a slope down makes a hump over something in the way. The engineer can walk up a slope (or let the belt carry them) onto the frames, and down again. See [[Engineer#Climbing|climbing]]. Slopes never curve or take items from the side, and an angled bus tile has no channels.
 
 Angled belts replaced the old '''lift''' building and its research: lifts in older worlds turn into angled belts where they stand, and lift items come back as the belts, steel and frames they were made from.
 
@@ -50,7 +50,11 @@ Angled belts replaced the old '''lift''' building and its research: lifts in old
 
 The {{i|bus_belt}} carries '''three lanes''' and takes items only from the belt behind it: no side-loading, no inserters. Any bus tile can send its left or right lane off to the side through a '''channel''' with a filter; the middle lane always goes straight on. A channel only fills once the bus ahead of it backs up, so the first items arrive after the bus is full.
 
-Where a bus belt runs onto a two-lane belt, its outer lanes go onto that belt's lanes. A {{i|bus_underground}} takes a bus under anything for up to 8 tiles.
+'''Feeding a bus.''' A two-lane belt (or splitter) running into the back of a bus spreads its items over all three bus lanes in turn, so the bus fills evenly. A bus line can be set to '''keep to the outer lanes''' instead (click any tile of it, ''Line''): then the belt's left lane fills the bus's left lane, its right lane the right one, and the middle lane stays free for something else.
+
+'''The end of a bus.''' Where a bus runs onto a two-lane belt, its outer lanes go onto that belt's lanes, and the middle lane only into a side they leave empty. Where a bus ends against a building (a chest, a machine, a depot), it feeds that building from every lane. The ''front'' setting on the last tile picks what goes in: anything (the default), one item, or nothing.
+
+'''Shaping a bus.''' Bus belts turn corners, rotate ({{k|rotate}}) and [[Belt logistics#Angled belts|angle up or down a layer]] like any belt. A {{i|bus_underground}} takes a bus under anything for up to 8 tiles, and a {{i|bus_splitter}} divides one bus into three.
 
 == Belt lines ==
 

@@ -62,6 +62,59 @@ function tone(freq, dur, { type = 'sine', gain = .2, attack = .004, at = 0, f2, 
   o.start(t); o.stop(t + dur + .05);
 }
 
+// A gunshot, in the layers a real one has: a sharp crack (the first few milliseconds, all treble), a boom of noise
+// whose filter closes as it dies so it darkens from a snap to a thud, pushed through a soft clipper for punch, a low
+// thump you feel more than hear, a rumble rolling away across the land, and a dull echo coming back a moment later.
+// size: how big the gun is (1 a rifle); boom, tail: seconds; thump: the thump's starting pitch; bright: how much treble;
+// echo: when the echo returns (0: none, for guns that fire too fast for one).
+let clipCurve = null;
+// A layer's own envelope: up in under a millisecond, then dying away with time constant `tau` (setTargetAtTime), so a
+// layer's loudness is set by `peak` and its length by `tau` alone.
+function shot(src, t, peak, tau, len, at = 0, rise = .0008) {
+  const g = ctx.createGain(), t0 = t + at;
+  g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(peak * level, t0 + rise); g.gain.setTargetAtTime(0, t0 + rise, tau);
+  src.connect(g).connect(sfxBus); return [t0, t0 + len];
+}
+function noiseLayer(t, { type, f, f2, q = .7, peak, tau, len, at = 0, rise, sweep }) {
+  const src = ctx.createBufferSource(), filt = ctx.createBiquadFilter();
+  src.buffer = noiseBuf; filt.type = type; filt.Q.value = q; filt.frequency.setValueAtTime(f, t + at);
+  if (f2) filt.frequency.exponentialRampToValueAtTime(f2, t + at + (sweep ?? len));
+  src.connect(filt);
+  const [a, b] = shot(filt, t, peak, tau, len, at, rise);
+  src.start(a, Math.random()); src.stop(b);
+  return filt;
+}
+const GUN_LEVEL = .62;   // guns are the loudest thing in the game, but not by so much that a shot drowns everything
+function bang(o) {
+  const keep = level;
+  level *= GUN_LEVEL;
+  try { bangLayers(ctx.currentTime, o); } finally { level = keep; }
+}
+function bangLayers(t, { size = 1, crack = 1, boom = .25, tail = .6, thump = 110, bright = 1, echo = .2 }) {
+  if (!clipCurve) { clipCurve = new Float32Array(1024); for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; clipCurve[i] = Math.tanh(x * 3); } }
+  // the crack: a few milliseconds of nothing but treble
+  noiseLayer(t, { type: 'highpass', f: 2500 * bright, peak: 1.1 * crack, tau: .004, len: .03, rise: .0003 });
+  // the boom: broadband noise driven into a soft clipper, its filter closing as it dies
+  { const src = ctx.createBufferSource(), lp = ctx.createBiquadFilter(), drive = ctx.createGain(), clip = ctx.createWaveShaper();
+    src.buffer = noiseBuf; lp.type = 'lowpass'; lp.Q.value = .9;
+    lp.frequency.setValueAtTime(7000 * bright, t); lp.frequency.exponentialRampToValueAtTime(160, t + boom);
+    drive.gain.value = 3; clip.curve = clipCurve;
+    src.connect(lp).connect(drive).connect(clip);
+    const [a, b] = shot(clip, t, .7 * size, boom / 3, boom * 1.6); src.start(a, Math.random()); src.stop(b); }
+  // the thump: a sine falling from `thump` to almost nothing
+  { const o = ctx.createOscillator(); o.frequency.setValueAtTime(thump, t); o.frequency.exponentialRampToValueAtTime(30, t + .09 * size + .03);
+    const [a, b] = shot(o, t, .9 * Math.min(1.3, size), .03 + .03 * size, .3); o.start(a); o.stop(b); }
+  // the rumble rolling away over the land
+  noiseLayer(t, { type: 'lowpass', f: 1400 * bright, f2: 70, q: .5, peak: .32 * size, tau: tail / 3.5, len: tail * 1.3, at: .004, rise: .015 });
+  // and the echo coming back off whatever is out there, duller each time
+  if (echo) {
+    noiseLayer(t, { type: 'bandpass', f: 800, f2: 300, q: .8, peak: .16 * size, tau: .09 * size, len: .5, at: echo, rise: .006 });
+    noiseLayer(t, { type: 'lowpass', f: 500, f2: 120, q: .5, peak: .09 * size, tau: .14 * size, len: .7, at: echo * 2.2, rise: .02 });
+  }
+}
+// Metal on metal: the shotgun's pump and the rifle's bolt, after the shot.
+const clack = (at, f, g = .12) => { noise(.03, { type: 'bandpass', f, q: 4, gain: g, attack: .001, at }); tone(f / 3, .03, { type: 'square', gain: g * .25, at }); };
+
 // ---------------------------------------------------------------- one-shots
 const last = {};
 export function sfx(name, minGap = 0, loud = 1) {
@@ -106,11 +159,11 @@ function play(name, p) {
     case 'crackle': noise(.03, { type: 'highpass', f: 3000, gain: rnd(.03, .09) }); break;
     case 'spill': tone(300, .08, { type: 'square', gain: .04 }); tone(240, .1, { type: 'square', gain: .04, at: .07 }); break;
     // guns: a crack of filtered noise for the report, a falling square for the punch, a little tail for the big ones
-    case 'gun_pistol': noise(.13, { type: 'bandpass', f: 1900 * p, q: .7, gain: .45 }); tone(150 * p, .09, { type: 'square', gain: .1, f2: 55 }); break;
-    case 'gun_shotgun': noise(.32, { type: 'lowpass', f: 3000, f2: 380, gain: .6 }); tone(95 * p, .22, { type: 'square', gain: .16, f2: 38 }); noise(.4, { type: 'lowpass', f: 600, gain: .12, at: .08 }); break;
-    case 'gun_rifle': noise(.22, { type: 'bandpass', f: 2300 * p, q: .6, gain: .55 }); tone(120 * p, .22, { type: 'sawtooth', gain: .12, f2: 45 }); noise(.5, { type: 'lowpass', f: 700, gain: .1, at: .12 }); tone(900, .03, { type: 'triangle', gain: .03, at: .45 }); break;
-    case 'gun_smg': noise(.06, { type: 'bandpass', f: 2700 * p, q: .8, gain: .32 }); tone(190 * p, .05, { type: 'square', gain: .07, f2: 90 }); break;
-    case 'gun_assault_rifle': noise(.09, { type: 'bandpass', f: 2100 * p, q: .7, gain: .42 }); tone(150 * p, .07, { type: 'square', gain: .09, f2: 65 }); break;
+    case 'gun_pistol': bang({ size: .8, crack: .9, boom: .14 * p, tail: .5, thump: 160 * p, bright: 1.1, echo: .17 }); break;
+    case 'gun_shotgun': bang({ size: 1.3, crack: .8, boom: .3 * p, tail: 1, thump: 85 * p, bright: .75, echo: .22 }); clack(.45, 1300, .25); clack(.6, 900, .3); break;
+    case 'gun_rifle': bang({ size: 1.2, crack: 1.3, boom: .22 * p, tail: 1.2, thump: 110 * p, bright: 1.35, echo: .28 }); clack(.62, 1800, .2); clack(.78, 1100, .22); break;
+    case 'gun_smg': bang({ size: .55, crack: .7, boom: .07 * p, tail: .22, thump: 180 * p, bright: 1.2, echo: 0 }); break;
+    case 'gun_assault_rifle': bang({ size: .75, crack: .9, boom: .1 * p, tail: .35, thump: 140 * p, bright: 1.2, echo: 0 }); break;
     case 'dry': tone(1900, .02, { type: 'triangle', gain: .05 }); noise(.025, { type: 'highpass', f: 4000, gain: .06 }); break;
     case 'reload': noise(.05, { type: 'bandpass', f: 1300, q: 2, gain: .12 }); tone(420, .04, { type: 'square', gain: .03, at: .02 }); noise(.05, { type: 'bandpass', f: 2200, q: 2, gain: .1, at: .28 }); break;
     case 'reloaded': noise(.04, { type: 'bandpass', f: 1800, q: 3, gain: .12 }); tone(620, .05, { type: 'square', gain: .035, at: .03 }); break;
@@ -119,6 +172,19 @@ function play(name, p) {
     case 'animal_hit': noise(.07, { type: 'lowpass', f: 900, gain: .14 }); tone(220 * p, .05, { type: 'triangle', gain: .03, f2: 150 }); break;
     case 'chime': [1568, 2093, 2637, 3136].forEach((f, i) => tone(f * p, .5, { type: 'triangle', gain: .04, at: i * .05 + Math.random() * .03 })); break;
   }
+}
+
+// For tuning sounds without ears on: plays a one-shot into an offline context with the same bus, cut and compressor,
+// and returns the rendered samples (console: (await import('/src/audio.js')).renderSfx('gun_rifle')).
+export async function renderSfx(name, secs = 1.5) {
+  const real = { ctx, sfxBus, noiseBuf }, off = new OfflineAudioContext(1, Math.ceil(48000 * secs), 48000);
+  const comp = off.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 4;
+  const soft = off.createBiquadFilter(); soft.type = 'highshelf'; soft.frequency.value = 5000; soft.gain.value = -9;
+  const bus2 = off.createGain(); bus2.gain.value = .9; bus2.connect(soft); soft.connect(comp); comp.connect(off.destination);
+  const nb = off.createBuffer(1, 48000 * 2, 48000), d = nb.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  ctx = off; sfxBus = bus2; noiseBuf = nb;
+  try { play(name, 1); } finally { ({ ctx, sfxBus, noiseBuf } = real); }
+  return (await off.startRendering()).getChannelData(0);
 }
 
 // ---------------------------------------------------------------- ambient loops

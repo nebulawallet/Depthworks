@@ -692,7 +692,7 @@ Cooked meat is the best food in the game. See [[Hunting]] and [[Animals]] for wh
 ; Brownout
 : When a power network needs more than it has, every machine on it slows down.
 ; Bus belt
-: A three-lane belt fed only from behind, with filtered side channels. See [[Belt logistics#Bus belts|bus belts]].
+: A three-lane belt fed only from behind (a two-lane belt feeding it spreads over all three lanes), with filtered side channels and its own splitter. See [[Belt logistics#Bus belts|bus belts]].
 ; Clarity
 : How much of the aliens' messages you can read. See [[The Signal#Clarity|The Signal]].
 ; Depth mode

@@ -210,7 +210,7 @@ export function renderHotbar() {
     : it?.road ? ` · drag to lay · R turns it (${S.dir % 2 ? 'east-west' : 'north-south'})` : it?.vehicle ? ` · click to put it down · R turns it · facing ${DIR_NAMES[S.dir]}`
     : it?.tool === 'signal' ? ` · click a rail · faces ${DIR_NAMES[S.dir]}` : it?.food ? ' · click to eat' : it?.weapon ? gunLine(S.sel) : ` · Ctrl+click a machine to put it in${S.picks.length && S.pickMode ? ` (${TRANSFER_MODES[S.pickMode].name.toLowerCase()} mode on the selection)` : ''}${S.picks.length > 1 ? ` · Ctrl+click a selected one: shared over all ${S.picks.length}` : ''} · Z drops one`)
     + (ent?.kind === 'inserter' && S.mode === 'depth' ? ` · ${['level', 'lift ↑', 'drop ↓'][[0, 1, -1].indexOf(S.dy)]}` : '')
-    + (ent?.kind === 'belt' && !ent.lanes ? ` · ${['level', 'slopes up ↑', 'slopes down ↓'][[0, 1, -1].indexOf(S.dy)]} (${keyName('pitch')} angles it)` : '')
+    + (ent?.kind === 'belt' ? ` · ${['level', 'slopes up ↑', 'slopes down ↓'][[0, 1, -1].indexOf(S.dy)]} (${keyName('pitch')} angles it)` : '')
     : '';
   setHTML($('hand'), hand);
   $('hand').style.display = hand ? '' : 'none';
@@ -420,7 +420,7 @@ function beltHTML(e) {
   if (e.kind === 'splitter') {   // a filter per way: matching items go only that way, the rest round the unfiltered ways
     h += `<h4>Filters</h4>` + ['front', 'left', 'right'].map((w, k) => { const f = e.sf?.[k]; return `<div class="row">${w}: ${f ? `${iconHTML(f)} ${itemName(f)} only <span class="x" data-act="sfilter:${k}:"${tipAttr('clear')}>✕</span>` : '<span class="dim">anything else</span>'} <button data-act="bpick:sf${k}">${beltPick === 'sf' + k ? 'cancel' : 'set'}</button></div>` + pickGrid('sf' + k); }).join('');
   }
-  if (n === 3 && e.kind === 'belt') {   // bus channels: a side lane sent off to the side, after the bus ahead is served
+  if (n === 3 && e.kind === 'belt' && !e.dy) {   // bus channels: a side lane sent off to the side, after the bus ahead is served (not on a slope)
     const node = ln && ln.segs[ln.segs.length - 1] === e && ln.out?.kind === 'bus' ? ln.out : null;
     h += `<h4>Channels</h4><div class="dim">A channel sends its side lane out to whatever this tile faces on that side: a belt, a machine, a depot. The bus ahead gets served first; only what it can't take goes out.</div>`;
     for (const [side, key2, li] of [['left', 'chL', 0], ['right', 'chR', 2]]) {
@@ -430,6 +430,12 @@ function beltHTML(e) {
         ${f ? (ch?.t ? (S.T - (ch.T ?? -99) < 3 ? `<span class="okc">pulling ${iconHTML(ch.last)} · ${ch.n} so far</span>` : `<span class="dim">waiting${ch.n ? ` · ${ch.n} so far` : ''}</span>`) : '<span class="warn">nothing on that side takes items</span>') : ''}</div>` + pickGrid(key2);
     }
     h += `<div class="row"><b>middle</b> ${e.midOff ? '<span class="warn">stopped here</span>' : 'goes straight on'} <button data-act="midoff">${e.midOff ? 'let it through' : 'stop it here'}</button></div>`;
+    {   // the front: a bus that ends against a building feeds it from every lane
+      const f = e.chF, ahead = world.ents.get(key(e.x + DIRS[e.dir][0], e.y, e.z + DIRS[e.dir][1])), bld = ahead && !ahead.belt ? ENTITIES[ahead.type].name.toLowerCase() : null;
+      h += `<div class="row chan"><b>front</b> ${f === 'off' ? '<span class="dim">off</span>' : f ? `${iconHTML(f)} ${itemName(f)} only` : 'anything'}
+        <button data-act="front:off" class="${f === 'off' ? 'on' : ''}">off</button><button data-act="front:*" class="${!f ? 'on' : ''}"${tipAttr('feed every item into the building ahead')}>any</button><button data-act="bpick:chF" class="${f && f !== 'off' ? 'on' : ''}">${beltPick === 'chF' ? 'cancel' : 'filter…'}</button>
+        ${bld ? `<span class="dim">into the ${bld}</span>` : ahead?.belt ? '<span class="dim">the bus runs on</span>' : '<span class="dim">nothing ahead: place a building to feed it</span>'}</div>` + pickGrid('chF');
+    }
     h += `<div class="row"><b>sort</b> <button data-act="sort" class="${e.sort ? 'on' : ''}"${tipAttr('Filtered channels take their item from any lane, before the bus ahead: a mixed belt (crops and seeds from a greenhouse, say) comes apart into the two channels')}>${e.sort ? 'sorting: channels take their item from any lane' : 'sort by channel filters'}</button></div>`;
   }
   if (n === 2 && e.kind === 'belt') {   // outputs: a lane pushed out to the side, into whatever stands there
@@ -445,6 +451,7 @@ function beltHTML(e) {
     h += `<h4>Line</h4><div>${esc(lineName(ln))} <span class="dim">${ln.segs.length} tile${ln.segs.length > 1 ? 's' : ''} · ${lineItems(ln)} items${lineAugs(ln).length ? ` · ${lineAugs(ln).map(a => iconHTML(a)).join('')}` : ''}${ln.cfg.filter.length ? ` · only ${ln.cfg.filter.map(f => iconHTML(f)).join('')}` : ''}</span></div>`;
     h += `<div class="dim">${lineEndHTML(ln)}</div>`;
     if (lineWarn(ln)) h += `<div class="warn">${lineWarn(ln)}</div>`;
+    if (ln.n === 3) h += `<div class="row"><b>two-lane belts feeding it</b> <button data-act="lfeed:spread" class="${ln.cfg.feed !== 'sides' ? 'on' : ''}"${tipAttr('their items go to all three lanes in turn')}>spread over all three</button><button data-act="lfeed:sides" class="${ln.cfg.feed === 'sides' ? 'on' : ''}"${tipAttr('their left lane fills the left lane, their right the right; the middle stays free')}>keep to the outer lanes</button></div>`;
   }
   h += `<div class="btns"><button data-act="rotate">rotate</button>${items.length ? '<button data-act="takebelt">pick up items</button>' : ''}${ln ? '<button data-act="beltnet">Network</button><button data-act="beltline">Line settings</button>' : ''}</div>`;
   return h;
@@ -748,7 +755,7 @@ function act(a, ev) {
     case 'facdel': if (facDelArm !== +arg) { facDelArm = +arg; renderFactories(); setTimeout(() => { facDelArm = null; }, 3000); return; } facDelArm = null; doAction({ a: 'factory', do: 'remove', id: +arg }); return;
     case 'openlog': closeEntity(); openModal('logistics'); return;
     case 'bpick': beltPick = beltPick === arg ? null : arg; renderEntity(); return;
-    case 'bpickset': if (e && beltPick) { const p = beltPick; beltPick = null; doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: p.startsWith('sf') ? 'sfilter' : p.startsWith('bo') ? 'bout' : 'chan', arg: p.startsWith('sf') ? p.slice(2) + ':' + arg : p.startsWith('bo') ? p.slice(2) + ':' + arg : (p === 'chL' ? 'L:' : 'R:') + arg }); renderEntity(); } return;
+    case 'bpickset': if (e && beltPick) { const p = beltPick; beltPick = null; doAction({ a: 'cmd', x: e.x, y: e.y, z: e.z, cmd: p === 'chF' ? 'front' : p.startsWith('sf') ? 'sfilter' : p.startsWith('bo') ? 'bout' : 'chan', arg: p === 'chF' ? arg : p.startsWith('sf') ? p.slice(2) + ':' + arg : p.startsWith('bo') ? p.slice(2) + ':' + arg : (p === 'chL' ? 'L:' : 'R:') + arg }); renderEntity(); } return;
     case 'beltnet': case 'beltline': if (e?.line) { const at = [e.x, e.y, e.z]; closeEntity(); openModal('logistics'); showBeltLine(at, cmd === 'beltnet' ? 'net' : 'map'); } return;
     case 'rulepick': rulePick = !rulePick; renderEntity(); return;
     case 'hot': {

@@ -204,7 +204,8 @@ function drawMachine(px, ent, col) {
     case 'belt': if (def.lanes === 3) { px(0, 2, '#2b2f36', 16, 12); for (const y of [2, 6, 10]) for (let i = 0; i < 3; i++) { px(3 + i * 4, y + 1, 1, 2, 1); px(4 + i * 4, y + 2, 1, 2, 1); px(3 + i * 4, y + 3, 1, 2, 1); } px(0, 5, '#5c6470', 16, 1); px(0, 9, '#5c6470', 16, 1); px(0, 2, .7, 16, 1); px(0, 13, .7, 16, 1); break; }
       px(1, 3, '#2b2f36', 14, 10); for (let i = 0; i < 3; i++) { px(4 + i * 3, 5, 1, 2, 1); px(5 + i * 3, 6, 1, 2, 1); px(6 + i * 3, 7, 1, 2, 2); px(5 + i * 3, 9, 1, 2, 1); px(4 + i * 3, 10, 1, 2, 1); } px(1, 3, .7, 14, 1); px(1, 12, .7, 14, 1); break;
     case 'underground': px(1, 4, '#2b2f36', 7, 8); px(8, 2, 1, 7, 12); px(9, 4, '#111', 5, 8); px(2, 7, 1, 5, 2); px(5, 6, 1, 1, 4); break;
-    case 'splitter': px(1, 6, '#2b2f36', 6, 4); px(6, 2, 1, 4, 12); px(10, 1, '#2b2f36', 5, 4); px(10, 11, '#2b2f36', 5, 4); px(10, 6, '#2b2f36', 5, 4); break;
+    case 'splitter': if (def.lanes === 3) { px(0, 5, '#2b2f36', 6, 6); for (const y of [6, 8]) px(0, y, '#5c6470', 6, 1); px(5, 1, 1, 5, 14); px(5, 1, 1.3, 5, 1); for (const y of [0, 6, 12]) { px(10, y, '#2b2f36', 6, 4); px(10, y + 1, '#5c6470', 6, 1); px(10, y + 2, '#5c6470', 6, 1); } break; }
+      px(1, 6, '#2b2f36', 6, 4); px(6, 2, 1, 4, 12); px(10, 1, '#2b2f36', 5, 4); px(10, 11, '#2b2f36', 5, 4); px(10, 6, '#2b2f36', 5, 4); break;
     case 'lift': for (let i = 0; i < 6; i++) px(2 + i * 2, 12 - i * 2, 1, 3, 2); px(7, 1, '#ffffff', 2, 5); px(6, 2, '#ffffff', 4, 1); break;
     case 'inserter': px(4, 12, '#34373e', 8, 3); px(7, 6, 1, 2, 6); px(7, 5, 1, 6, 2); px(12, 4, '#34373e', 3, 4); px(6, 10, .7, 4, 2); break;
     case 'drill': if (def.size) {   // big mining drill: a wide deck, a tall derrick, the cutter turning under it
